@@ -154,6 +154,209 @@ class block_feedback_tracker_generator extends testing_block_generator {
     }
 
     /**
+     * Create a course the plugin will actually process.
+     *
+     * The plugin is strict opt-in: `course_access::is_processable()` returns
+     * false unless a `feedback_tracker` block instance lives on the course's
+     * own context. This bundles the three steps every DB test needs — create
+     * the course, drop the block on it, and flush the per-request memo (which
+     * may hold a stale `false` against a recycled courseid from an earlier
+     * test in the same class).
+     *
+     * @param array $opts Passed to create_course(); `groupmode` and
+     *                    `groupmodeforce` are honoured for group-visibility tests.
+     * @return \stdClass The course record.
+     */
+    public function create_tracked_course(array $opts = []): \stdClass {
+        $course = \phpunit_util::get_data_generator()->create_course((object) $opts);
+        \phpunit_util::get_data_generator()->create_block('feedback_tracker', [
+            'parentcontextid' => \context_course::instance($course->id)->id,
+        ]);
+        \block_feedback_tracker\local\sla\course_access::reset_memo();
+        return $course;
+    }
+
+    /**
+     * Enrol a new user in a course, optionally adding them to a group.
+     *
+     * @param int $courseid
+     * @param string $roleshortname Archetype shortname, e.g. 'editingteacher'.
+     * @param int|null $groupid When set, the user joins this group.
+     * @return \stdClass The user record.
+     */
+    public function create_user_in_role(int $courseid, string $roleshortname, ?int $groupid = null): \stdClass {
+        $course = get_course($courseid);
+        $user = \phpunit_util::get_data_generator()->create_and_enrol($course, $roleshortname);
+        if ($groupid !== null) {
+            groups_add_member($groupid, $user->id);
+        }
+        return $user;
+    }
+
+    /**
+     * Prohibit one capability for a role in a context.
+     *
+     * The `accesslib_clear_all_caches_for_unit_testing()` call is not optional:
+     * without it the change is invisible to `has_capability()` for the rest of
+     * the request, which is the classic cause of a capability test that passes
+     * alone and fails when the suite runs in a different order.
+     *
+     * @param string $capability
+     * @param \context $context
+     * @param string $roleshortname
+     * @return void
+     */
+    public function deny_capability(string $capability, \context $context, string $roleshortname): void {
+        global $DB;
+        $roleid = (int) $DB->get_field('role', 'id', ['shortname' => $roleshortname], MUST_EXIST);
+        assign_capability($capability, CAP_PROHIBIT, $roleid, $context->id, true);
+        accesslib_clear_all_caches_for_unit_testing();
+    }
+
+    /**
+     * Insert a {block_feedback_tracker_group} rollup row.
+     *
+     * Seeding this table is a hard prerequisite for anything that walks it —
+     * `calendar\observer::enqueue_all_groups()` iterates these rows, so a test
+     * that skips this helper enqueues nothing and passes vacuously.
+     *
+     * @param array $overrides Any column of the rollup table; only courseid is required by the schema.
+     * @return int Row id.
+     */
+    public function create_rollup_row(array $overrides = []): int {
+        global $DB;
+        $now = time();
+        $defaults = [
+            'courseid'             => 1,
+            'groupid'              => 0,
+            'pending'              => 0,
+            'critical'             => 0,
+            'overgoal'             => 0,
+            'numgraded30d'         => 0,
+            'compliance_pct'       => 100.0,
+            'median_eff_h'         => 0.0,
+            'responsiveness_score' => 100.0,
+            'score_band'           => 'excellent',
+            'timerecomputed'       => $now,
+            'timemodified'         => $now,
+        ];
+        return (int) $DB->insert_record('block_feedback_tracker_group', (object) array_merge($defaults, $overrides));
+    }
+
+    /**
+     * Seed audit-log rows through the production writer.
+     *
+     * Goes via `recompute_log::record()` rather than hand-built inserts so the
+     * fixture keeps matching the schema (and the JSON shape of `details`)
+     * instead of rotting when either changes.
+     *
+     * @param int $count How many rows to write.
+     * @param array $overrides Keys: reason, affectedrows, triggeredby, details, timestarted, timefinished.
+     * @return array The inserted row ids, oldest first.
+     */
+    public function seed_audit_log(int $count, array $overrides = []): array {
+        $now = time();
+        $ids = [];
+        for ($i = 0; $i < $count; $i++) {
+            $ids[] = \block_feedback_tracker\local\audit\recompute_log::record(
+                (string) ($overrides['reason'] ?? 'manual'),
+                (int) ($overrides['affectedrows'] ?? 1),
+                array_key_exists('triggeredby', $overrides) ? $overrides['triggeredby'] : null,
+                array_key_exists('details', $overrides) ? $overrides['details'] : null,
+                (int) ($overrides['timestarted'] ?? $now - (($count - $i) * 60)),
+                (int) ($overrides['timefinished'] ?? $now - (($count - $i) * 60) + 1)
+            );
+        }
+        return $ids;
+    }
+
+    /**
+     * Switch the display ruler to days (or back to hours).
+     *
+     * The unit and its thresholds must move together — setting one without the
+     * other leaves a day-mode test silently asserting against the hour ruler.
+     *
+     * @param string $unit 'business_days' or 'hours'.
+     * @param string $daythresholds Comma-separated day thresholds for the bucket ladder.
+     * @return void
+     */
+    public function set_display_unit(string $unit = 'business_days', string $daythresholds = '2,5,10'): void {
+        set_config('display_time_unit', $unit, 'block_feedback_tracker');
+        set_config('bucket_thresholds_days', $daythresholds, 'block_feedback_tracker');
+    }
+
+    /**
+     * Create a graded assign submission and fire the submission_graded event.
+     *
+     * Wraps the whole mod_assign dance: the module, the {assign_submission}
+     * row the ledger upsert requires, the {assign_grades} row, and the event —
+     * which must go through `create_from_grade()` because `::create()` throws.
+     *
+     * The grade record is deliberately **re-read from the database** before the
+     * event is built. `add_record_snapshot()` validates the snapshot's field
+     * list against the live table, so a hand-built object is missing whatever
+     * column core added last (`penalty`, as of Moodle 5.1) and raises an
+     * unexpected debugging() notice.
+     *
+     * @param \stdClass $course Course to attach the assign to.
+     * @param \stdClass $user The submitting user.
+     * @param int $timesubmitted
+     * @param int $timegraded
+     * @param array $opts Keys: cm (reuse an existing course module), grade (float), attemptnumber (int).
+     * @return array [cm, submission, grade] with the grade re-read from the database.
+     */
+    public function create_graded_submission(
+        \stdClass $course,
+        \stdClass $user,
+        int $timesubmitted,
+        int $timegraded,
+        array $opts = []
+    ): array {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/mod/assign/locallib.php');
+
+        $cm = $opts['cm'] ?? null;
+        if ($cm === null) {
+            $instance = \phpunit_util::get_data_generator()->create_module('assign', ['course' => $course->id]);
+            $cm = get_coursemodule_from_instance('assign', $instance->id);
+        }
+        $context = \context_module::instance($cm->id);
+        $assign = $DB->get_record('assign', ['id' => $cm->instance], '*', MUST_EXIST);
+        $attempt = (int) ($opts['attemptnumber'] ?? 0);
+
+        $submission = (object) [
+            'assignment'    => $assign->id,
+            'userid'        => $user->id,
+            'attemptnumber' => $attempt,
+            'timecreated'   => $timesubmitted,
+            'timemodified'  => $timesubmitted,
+            'status'        => 'submitted',
+            'groupid'       => 0,
+            'latest'        => 1,
+        ];
+        $submission->id = $DB->insert_record('assign_submission', $submission);
+
+        $grade = (object) [
+            'assignment'    => $assign->id,
+            'userid'        => $user->id,
+            'attemptnumber' => $attempt,
+            'grader'        => 2,
+            'grade'         => (float) ($opts['grade'] ?? 50.0),
+            'timecreated'   => $timegraded,
+            'timemodified'  => $timegraded,
+        ];
+        $grade->id = $DB->insert_record('assign_grades', $grade);
+        /* Re-read so the record snapshot carries every column core defines,
+         * including any added after this helper was written. */
+        $grade = $DB->get_record('assign_grades', ['id' => $grade->id], '*', MUST_EXIST);
+
+        $assigninst = new \assign($context, $cm, $course);
+        \mod_assign\event\submission_graded::create_from_grade($assigninst, $grade)->trigger();
+
+        return [$cm, $submission, $grade];
+    }
+
+    /**
      * Seed a scale fixture: N courses × M groups × K submissions per group.
      * Returns aggregate counts so tests can size their assertions.
      *
