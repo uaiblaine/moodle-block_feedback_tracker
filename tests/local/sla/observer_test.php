@@ -121,6 +121,10 @@ final class observer_test extends \advanced_testcase {
             'timemodified'  => $tgrade,
         ];
         $grade->id = $DB->insert_record('assign_grades', $grade);
+        /* Re-read so the record snapshot carries every column core defines.
+         * A hand-built object is missing whatever was added last (penalty, as
+         * of 5.1) and add_record_snapshot() raises a debugging() notice. */
+        $grade = $DB->get_record('assign_grades', ['id' => $grade->id], '*', MUST_EXIST);
 
         // The submission_graded::create() throws in modern Moodle —
         // create_from_grade() is the only supported factory.
