@@ -131,19 +131,28 @@ class get_grader_priority_list extends external_api {
                 // Day-ruler bucket ranges over the stored elapsed-day count
                 // (inclusive bounds, mirroring bucket::for_effective_days).
                 [$d1, $d2, $d3] = \block_feedback_tracker\local\sla\bucket::parse_thresholds_days();
+                /* Rows still awaiting the effectivedays backfill would compare
+                 * against NULL and drop out of every bucket — which on a
+                 * priority list silently hides the most overdue work. Fall back
+                 * to elapsed calendar days, always >= business days, so a row
+                 * is never filed as less urgent than it is. */
+                $days = sprintf(
+                    'COALESCE(sub.effectivedays, (%d - sub.timesubmitted) / 86400.0)',
+                    time()
+                );
                 if ($bucket === 'excellent') {
-                    $where .= ' AND sub.effectivedays <= :bktda';
+                    $where .= " AND $days <= :bktda";
                     $sqlparams['bktda'] = $d1;
                 } else if ($bucket === 'good') {
-                    $where .= ' AND sub.effectivedays > :bktda AND sub.effectivedays <= :bktdb';
+                    $where .= " AND $days > :bktda AND $days <= :bktdb";
                     $sqlparams['bktda'] = $d1;
                     $sqlparams['bktdb'] = $d2;
                 } else if ($bucket === 'regular') {
-                    $where .= ' AND sub.effectivedays > :bktda AND sub.effectivedays <= :bktdb';
+                    $where .= " AND $days > :bktda AND $days <= :bktdb";
                     $sqlparams['bktda'] = $d2;
                     $sqlparams['bktdb'] = $d3;
                 } else if ($bucket === 'critical') {
-                    $where .= ' AND sub.effectivedays > :bktda';
+                    $where .= " AND $days > :bktda";
                     $sqlparams['bktda'] = $d3;
                 }
             } else {

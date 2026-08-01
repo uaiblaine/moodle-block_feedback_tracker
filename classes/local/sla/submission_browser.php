@@ -188,13 +188,49 @@ class submission_browser {
                 // counts + band filter so the per-row Status badge can never
                 // disagree with the bar.
                 'pendingband'      => $usedays
-                    ? self::pending_band_days($storeddays, $daygoal, $daycrit)
+                    ? self::pending_band_days($storeddays ?? (float) $days['business'], $daygoal, $daycrit)
                     : self::pending_band($eff, $goal, $crit),
                 'submissionstatus' => (string) $r->submissionstatus,
             ];
         }
 
         return ['total' => $total, 'counts' => $counts, 'rows' => $out];
+    }
+
+    /**
+     * SQL expression for a row's elapsed-day count, with a fallback for rows
+     * whose `effectivedays` was never backfilled.
+     *
+     * Without a fallback every day-mode predicate compares against NULL, which
+     * is never true, so an un-backfilled row silently leaves every band while
+     * still being counted in the total — the distribution stops summing to the
+     * number of rows on screen.
+     *
+     * The fallback measures the same interval the stored column would have:
+     * submission to grading for graded rows, submission to now for pending
+     * ones (which is what `pending_recomputer` writes).
+     *
+     * It counts *calendar* days, because the business-day calendar engine has
+     * no SQL equivalent. Calendar days are always >= business days, so the
+     * estimate can only place a row in a worse band, never a better one. That
+     * is the safe direction: an un-backfilled row may look more urgent than it
+     * is, but it is never quietly reported as excellent — which for a priority
+     * list would hide exactly the rows that need attention most.
+     *
+     * Transitional — once `backfill_effectivedays` completes, no row reaches
+     * the fallback at all.
+     *
+     * @param string $mode Browse mode.
+     * @param int $now Reference timestamp for pending rows.
+     * @return string SQL expression usable anywhere sub.effectivedays was.
+     */
+    private static function days_expr(string $mode, int $now): string {
+        if ($mode === self::MODE_GRADED) {
+            return 'COALESCE(sub.effectivedays, (sub.timegraded - sub.timesubmitted) / 86400.0)';
+        }
+        // The reference time is server-generated, so inlining it keeps the
+        // expression free of parameters the four call sites would each rebind.
+        return sprintf('COALESCE(sub.effectivedays, (%d - sub.timesubmitted) / 86400.0)', $now);
     }
 
     /**
@@ -284,16 +320,17 @@ class submission_browser {
             if ($bucket !== '') {
                 if ($usedays) {
                     [$d1, $d2] = bucket::parse_thresholds_days();
+                    $days = self::days_expr(self::MODE_GRADED, time());
                     if ($bucket === bucket::EXCELLENT) {
-                        $where .= ' AND sub.effectivedays <= :bktda';
+                        $where .= " AND $days <= :bktda";
                         $params['bktda'] = $d1;
                     } else if ($bucket === bucket::GOOD) {
-                        $where .= ' AND sub.effectivedays > :bktda AND sub.effectivedays <= :bktdb';
+                        $where .= " AND $days > :bktda AND $days <= :bktdb";
                         $params['bktda'] = $d1;
                         $params['bktdb'] = $d2;
                     } else if ($bucket === bucket::REGULAR || $bucket === bucket::CRITICAL) {
                         // Regular folds in critical: everything past the Good ceiling.
-                        $where .= ' AND sub.effectivedays > :bktda';
+                        $where .= " AND $days > :bktda";
                         $params['bktda'] = $d2;
                     }
                 } else if ($bucket === bucket::REGULAR || $bucket === bucket::CRITICAL) {
@@ -316,15 +353,16 @@ class submission_browser {
         if ($band !== '') {
             if ($usedays) {
                 [$dgoal, , $dcrit] = bucket::parse_thresholds_days();
+                $days = self::days_expr($mode, time());
                 if ($band === 'prioridade') {
-                    $where .= ' AND sub.effectivedays > :bandcrit';
+                    $where .= " AND $days > :bandcrit";
                     $params['bandcrit'] = $dcrit;
                 } else if ($band === 'atencao') {
-                    $where .= ' AND sub.effectivedays > :bandgoal AND sub.effectivedays <= :bandcrit';
+                    $where .= " AND $days > :bandgoal AND $days <= :bandcrit";
                     $params['bandgoal'] = $dgoal;
                     $params['bandcrit'] = $dcrit;
                 } else if ($band === 'aguardando') {
-                    $where .= ' AND sub.effectivedays <= :bandgoal';
+                    $where .= " AND $days <= :bandgoal";
                     $params['bandgoal'] = $dgoal;
                 }
             } else {
@@ -370,13 +408,14 @@ class submission_browser {
                 // Day-ruler result bands over the stored elapsed-day count
                 // (inclusive bounds, mirroring bucket::for_effective_days).
                 [$d1, $d2, $d3] = bucket::parse_thresholds_days();
+                $days = self::days_expr(self::MODE_GRADED, time());
                 $sql = "SELECT
-                            SUM(CASE WHEN sub.effectivedays <= :d1a THEN 1 ELSE 0 END) AS excellent,
-                            SUM(CASE WHEN sub.effectivedays > :d1b AND sub.effectivedays <= :d2a THEN 1 ELSE 0 END)
+                            SUM(CASE WHEN $days <= :d1a THEN 1 ELSE 0 END) AS excellent,
+                            SUM(CASE WHEN $days > :d1b AND $days <= :d2a THEN 1 ELSE 0 END)
                                 AS good,
-                            SUM(CASE WHEN sub.effectivedays > :d2b AND sub.effectivedays <= :d3a THEN 1 ELSE 0 END)
+                            SUM(CASE WHEN $days > :d2b AND $days <= :d3a THEN 1 ELSE 0 END)
                                 AS regular,
-                            SUM(CASE WHEN sub.effectivedays > :d3b THEN 1 ELSE 0 END) AS critical
+                            SUM(CASE WHEN $days > :d3b THEN 1 ELSE 0 END) AS critical
                           $from WHERE $basewhere";
                 $params = $baseparams
                     + ['d1a' => $d1, 'd1b' => $d1, 'd2a' => $d2, 'd2b' => $d2, 'd3a' => $d3, 'd3b' => $d3];
@@ -402,11 +441,12 @@ class submission_browser {
 
         if ($usedays) {
             [$dgoal, , $dcrit] = bucket::parse_thresholds_days();
+            $days = self::days_expr($mode, time());
             $sql = "SELECT
-                        SUM(CASE WHEN sub.effectivedays <= :goala THEN 1 ELSE 0 END) AS aguardando,
-                        SUM(CASE WHEN sub.effectivedays > :goalb AND sub.effectivedays <= :critb THEN 1 ELSE 0 END)
+                        SUM(CASE WHEN $days <= :goala THEN 1 ELSE 0 END) AS aguardando,
+                        SUM(CASE WHEN $days > :goalb AND $days <= :critb THEN 1 ELSE 0 END)
                             AS atencao,
-                        SUM(CASE WHEN sub.effectivedays > :crita THEN 1 ELSE 0 END) AS prioridade
+                        SUM(CASE WHEN $days > :crita THEN 1 ELSE 0 END) AS prioridade
                       $from WHERE $basewhere";
             $params = $baseparams + ['goala' => $dgoal, 'goalb' => $dgoal, 'crita' => $dcrit, 'critb' => $dcrit];
             $agg = $DB->get_record_sql($sql, $params);
