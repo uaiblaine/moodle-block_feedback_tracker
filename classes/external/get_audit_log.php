@@ -98,10 +98,24 @@ class get_audit_log extends external_api {
             $where .= ' AND triggeredby = :actor';
             $sqlparams['actor'] = $actor;
         }
-        // The log table doesn't carry courseid directly; filter is applied
-        // post-decode against the JSON `details` field. SQL-side filtering
-        // would require schema and isn't worth it for a <90-day audit
-        // window that's rarely queried with a course filter.
+        /* The log table carries no courseid column, so the filter matches the
+         * fragment inside the JSON `details` field. It has to happen in SQL:
+         * filtering after the LIMIT made the count and the page describe
+         * different sets, so a page could come back empty while the total
+         * promised hundreds of rows.
+         *
+         * Two fragments because a JSON value is terminated by either a comma
+         * or the closing brace, and matching the bare number would also match
+         * courseid 880 when asked for 88. */
+        if ($courseid > 0) {
+            $fragment = '"courseid":' . $courseid;
+            $likemid = $DB->sql_like('details', ':needlemid', true, true);
+            $likeend = $DB->sql_like('details', ':needleend', true, true);
+            $where .= " AND ($likemid OR $likeend)";
+            $sqlparams['needlemid'] = '%' . $DB->sql_like_escape($fragment . ',') . '%';
+            $sqlparams['needleend'] = '%' . $DB->sql_like_escape($fragment . '}') . '%';
+        }
+
         $total = (int) $DB->count_records_select(
             'block_feedback_tracker_log',
             $where,
@@ -139,10 +153,9 @@ class get_audit_log extends external_api {
                     $details = implode(', ', $parts);
                 }
             }
-            // Apply the post-decode courseid filter.
-            if ($courseid > 0 && $detailscourseid !== $courseid) {
-                continue;
-            }
+            /* No post-decode filtering here: the predicate lives in SQL so the
+             * count and this page stay in agreement. The decoded value is kept
+             * only to populate details_courseid for the client. */
             $entries[] = [
                 'id'              => (int) $r->id,
                 'reason'          => (string) $r->reason,
