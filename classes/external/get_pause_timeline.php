@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use block_feedback_tracker\local\sla\group_access;
 use core_external\external_api;
 use core_external\external_function_parameters;
 use core_external\external_multiple_structure;
@@ -65,7 +66,7 @@ class get_pause_timeline extends external_api {
      * @return array
      */
     public static function execute(int $submissionid): array {
-        global $DB;
+        global $DB, $USER;
 
         $params = self::validate_parameters(self::execute_parameters(), [
             'submissionid' => $submissionid,
@@ -76,6 +77,19 @@ class get_pause_timeline extends external_api {
         $context = \context_course::instance((int) $sub->courseid);
         self::validate_context($context);
         require_capability('block/feedback_tracker:viewresponsiveness', $context);
+
+        /* The course capability is not enough on its own: submission ids are
+         * sequential, so without the group gate a separate-groups teacher can
+         * enumerate them and read timings for groups they cannot see. Every
+         * other per-submission read surface goes through group_access. */
+        if (!group_access::can_see_group((int) $sub->courseid, (int) $USER->id, (int) $sub->groupid)) {
+            throw new \required_capability_exception(
+                $context,
+                'block/feedback_tracker:viewresponsiveness',
+                'nopermissions',
+                ''
+            );
+        }
 
         // Recompute the pause timeline from the calendar engine — same
         // method the write paths call internally. Endpoint is rarely hit
