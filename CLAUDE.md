@@ -22,10 +22,11 @@ and that mount only exists **inside the container** — on the host,
 A linter pointed at the stack checkout therefore scans nothing and passes
 vacuously; target the repo itself, or go through `mdl`.
 
-Repo layout (Moodle 5.x split): the webroot is `public/` (plugin code +
-`public/config.php`), but **core CLI scripts live in `admin/cli/` at the
-repo root, outside `public/`** — e.g. `php admin/cli/purge_caches.php`.
-Plugin CLIs resolve `public/config.php` via `__DIR__/../../../config.php`.
+This plugin's own CLIs sit at `cli/*.php`, three levels below the webroot,
+so they resolve core through `__DIR__ . '/../../../config.php'` — which
+lands on `public/config.php` under the 5.x split layout and on the webroot's
+`config.php` on 4.5. That relative depth is what keeps them runnable on both
+mounted stacks.
 
 | Command | What it does |
 |---------|--------------|
@@ -33,20 +34,13 @@ Plugin CLIs resolve `public/config.php` via `__DIR__/../../../config.php`.
 | `mdl ci moodle-block_feedback_tracker --only grunt` | The CI JS/CSS gate itself: `grunt --max-lint-warnings 0` (ESLint + Stylelint). |
 | `xmllint --noout --schema ~/dev/moodle-501/public/lib/xmldb/xmldb.xsd db/install.xml` | Validate the XMLDB schema. Core libs sit under `public/` on the 5.x split layout; against `~/dev/moodle-405` drop that segment. |
 
-CI (moodle-an-hochschulen/moodle-workflows, full `moodle-plugin-ci install`
-per job) gates on: a static leg (`phplint`, `phpmd` informational,
-`phpcs --max-warnings 0` — **warnings fail**, `phpdoc --max-warnings 0`, a
-development-leftover checker that fails on stray to-do markers, test-me
-annotations, or merge-conflict markers in ANY file — docs included, never
-write those tokens literally, `validate`, `savepoints`, `mustache`,
-`grunt --max-lint-warnings 0` incl. stylelint) plus runtime legs running
-**PHPUnit (`--fail-on-warning`) and Behat (`--profile chrome`) on every
-PHP × DB combination**, with Behat faildumps uploaded as artifacts on
-failure. `.moodle-plugin-ci.yml` filters `node_modules`/`vendor` because
-the install step npm-installs inside the plugin and phpcs would scan the
-result. Reproduce the whole pipeline locally with
-`mdl ci moodle-block_feedback_tracker` before pushing — see
-*Debugging CI failures* for this plugin's invocations.
+CI runs the fleet-standard gate set (static leg, then PHPUnit and Behat per
+runtime leg), with Behat faildumps uploaded as artifacts on failure. One
+detail is local to this repo: `.moodle-plugin-ci.yml` filters
+`node_modules`/`vendor`, because the install step npm-installs **inside**
+the plugin and phpcs would otherwise scan the result. Reproduce the whole
+pipeline locally with `mdl ci moodle-block_feedback_tracker` before pushing
+— see *Debugging CI failures* for this plugin's invocations.
 
 PHPUnit runs as `mdl phpunit m501 block_feedback_tracker`. Its `phpunit.xml`
 is generated at the **stack checkout root** (`$CFG->root`, above `public/`),
