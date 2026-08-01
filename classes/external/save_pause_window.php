@@ -124,6 +124,15 @@ class save_pause_window extends external_api {
 
         if ($id > 0) {
             $existing = $DB->get_record('block_feedback_tracker_cpause', ['id' => $id], '*', MUST_EXIST);
+            /* Authorise against the context the row already lives in, not just
+             * the scope the caller asked for. Checking only the requested scope
+             * would let anyone holding the capability in any course rewrite a
+             * row belonging to another course — or to the whole site. The
+             * sibling delete_pause_window does the same. */
+            $existingcontext = \context::instance_by_id((int) $existing->contextid);
+            self::validate_context($existingcontext);
+            require_capability('block/feedback_tracker:managepausewindows', $existingcontext);
+
             $record->id = (int) $existing->id;
             $DB->update_record('block_feedback_tracker_cpause', $record);
         } else {
