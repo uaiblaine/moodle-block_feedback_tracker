@@ -964,17 +964,33 @@ name) — keep each branch's own when resolving cherry-picks.
 ### Debugging CI failures
 
 - Read a failed job's raw log with
-  `gh api repos/uaiblaine/feedback_tracker/actions/jobs/<jobid>/logs`
+  `gh api repos/uaiblaine/moodle-block_feedback_tracker/actions/jobs/<jobid>/logs`
   (get `<jobid>` from `gh run view <runid> --json jobs`). For the MAH
   reusable-workflow jobs `gh run view --log-failed` often returns empty —
   use the API endpoint. Failures cluster in the "Static checks" job
   (phplint/phpcs/phpdoc/grunt/leftover) since runtime legs rarely break.
-- Pre-push, only the grunt gate runs locally (from the Moodle root):
-  `npx eslint public/blocks/feedback_tracker/amd/src` and
-  `npx stylelint public/blocks/feedback_tracker/styles.css`. phpcs, phpdoc,
-  PHPUnit and Behat have **no local runner** here (no moodle-plugin-ci
-  checkout, no local DB) — they are only verifiable by pushing, so eyeball
-  those at write time against the rules above.
+- **The whole gate runs locally — don't push to find out whether phpcs
+  passes.** The repo dir is `moodle-block_feedback_tracker`; it mounts at
+  `blocks/feedback_tracker` on the `m405` and `m501` stacks
+  (`$plugin->supported = [405, 502]` keeps it off `m53`). This plugin's
+  invocations:
+
+  ```sh
+  mdl ci moodle-block_feedback_tracker --only phpcs,phpdoc   # fast static pass
+  mdl ci moodle-block_feedback_tracker --only grunt          # ESLint + Stylelint
+  mdl ci moodle-block_feedback_tracker                       # full static + PHPUnit
+  mdl ci moodle-block_feedback_tracker --behat               # add the Behat leg
+  mdl phpunit m501 block_feedback_tracker                    # this plugin's testsuite
+  mdl behat m501 @block_feedback_tracker                     # this plugin's scenarios
+  mdl grunt m501 blocks/feedback_tracker                     # rebuild amd/build
+  ```
+
+- `mdl ci` defaults to the 5.1 leg (`--branch MOODLE_501_STABLE --php 8.3
+  --db pgsql`) and skips Behat unless asked. Because `supported` starts at
+  405, anything version-conditional needs the 4.5 leg run too:
+  `mdl ci moodle-block_feedback_tracker --branch MOODLE_405_STABLE`. The
+  MariaDB leg (`--db mariadb`) is worth a run whenever the change touches
+  SQL — CI runs it only on the highest branch.
 
 ## When in doubt
 
