@@ -70,15 +70,22 @@ class rollup_service {
      * silently. The math is idempotent so the winning worker produces the
      * same rollup row either way; the lock just elides duplicate I/O.
      *
+     * The return value distinguishes "recomputed" from "skipped because
+     * another worker held the lock". Callers that retire a queue entry
+     * afterwards must not do so on a skip: the tuple would be dequeued
+     * without anyone having recomputed it, leaving the materialized rollup
+     * stale until some later event happens to touch the same tuple.
+     *
      * @param int $courseid
      * @param int $groupid
      * @param int|null $now Override "now" for tests; defaults to time().
-     * @return void
+     * @return bool True when the rollup was recomputed, false when the lock
+     *              was held elsewhere and this call did nothing.
      */
-    public static function recompute_group(int $courseid, int $groupid, ?int $now = null): void {
+    public static function recompute_group(int $courseid, int $groupid, ?int $now = null): bool {
         [$lock, $proceed] = self::acquire_recompute_lock($courseid, $groupid);
         if (!$proceed) {
-            return;
+            return false;
         }
         try {
             self::recompute_group_locked($courseid, $groupid, $now);
@@ -87,6 +94,7 @@ class rollup_service {
                 $lock->release();
             }
         }
+        return true;
     }
 
     /**

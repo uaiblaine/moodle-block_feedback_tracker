@@ -60,10 +60,26 @@ class recompute_one extends \core\task\adhoc_task {
         if ($courseid <= 0) {
             return;
         }
-        rollup_service::recompute_group($courseid, $groupid);
-        $DB->delete_records('block_feedback_tracker_queue', [
-            'courseid' => $courseid,
-            'groupid' => $groupid,
-        ]);
+        $started = time();
+        if (!rollup_service::recompute_group($courseid, $groupid)) {
+            /* Another worker holds the tuple's lock, so nothing was
+             * recomputed. Leaving the queue row in place keeps the tuple dirty
+             * for the next drain tick; deleting it here would retire work that
+             * was never done. */
+            return;
+        }
+
+        /* Retire the queue row only if it has not been re-enqueued while we
+         * were recomputing. dirty_queue::enqueue() refreshes timeenqueued on
+         * an existing row, so a newer stamp means fresh dirt arrived after our
+         * reads and must survive. (timeenqueued has second granularity, so a
+         * re-enqueue inside the same second as $started is indistinguishable
+         * from one that preceded it — the next event on the tuple recovers
+         * it.) */
+        $DB->delete_records_select(
+            'block_feedback_tracker_queue',
+            'courseid = :courseid AND groupid = :groupid AND timeenqueued <= :started',
+            ['courseid' => $courseid, 'groupid' => $groupid, 'started' => $started]
+        );
     }
 }
