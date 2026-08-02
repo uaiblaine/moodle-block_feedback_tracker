@@ -49,6 +49,16 @@ class behat_block_feedback_tracker extends behat_base {
         switch ($page) {
             case 'Teacher dashboard':
                 return new moodle_url('/blocks/feedback_tracker/pages/teacher_dashboard.php');
+            case 'Manage':
+                return new moodle_url('/blocks/feedback_tracker/manage.php');
+            case 'Audit log':
+                return new moodle_url('/blocks/feedback_tracker/pages/audit_log.php');
+            case 'Reset':
+                return new moodle_url('/blocks/feedback_tracker/pages/reset.php');
+            case 'Score simulator':
+                return new moodle_url('/blocks/feedback_tracker/pages/score_simulator.php');
+            case 'Calendar editor':
+                return new moodle_url('/blocks/feedback_tracker/pages/calendar_editor.php');
         }
         throw new Exception("Unrecognised block_feedback_tracker page: '{$page}'.");
     }
@@ -69,6 +79,12 @@ class behat_block_feedback_tracker extends behat_base {
             case 'Pending report':
                 return new moodle_url(
                     '/blocks/feedback_tracker/pages/pending_report.php',
+                    ['courseid' => $this->get_course_id($identifier)]
+                );
+            case 'Group drilldown':
+                // Course-bound: the page takes a required courseid.
+                return new moodle_url(
+                    '/blocks/feedback_tracker/pages/group_drilldown.php',
                     ['courseid' => $this->get_course_id($identifier)]
                 );
         }
