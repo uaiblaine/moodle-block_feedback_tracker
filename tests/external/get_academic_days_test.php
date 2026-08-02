@@ -145,4 +145,20 @@ final class get_academic_days_test extends \advanced_testcase {
         $this->assertTrue($result['success']);
         $this->assertSame([], $result['days']);
     }
+
+    /**
+     * A student holds no viewresponsiveness capability in the course.
+     *
+     * @return void
+     */
+    public function test_student_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $this->setUser($student);
+
+        $this->expectException(\required_capability_exception::class);
+        get_academic_days::execute((int) $course->id);
+    }
 }

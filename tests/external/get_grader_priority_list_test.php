@@ -331,4 +331,21 @@ final class get_grader_priority_list_test extends \advanced_testcase {
 
         return [$cm, $user];
     }
+
+    /**
+     * The priority list authorises through dashboard_scope rather than
+     * require_capability: an empty visible-course scope is the refusal.
+     *
+     * @return void
+     */
+    public function test_user_with_empty_scope_is_refused(): void {
+        $this->resetAfterTest();
+
+        $nobody = $this->getDataGenerator()->create_user();
+        $this->setUser($nobody);
+        \block_feedback_tracker\local\sla\dashboard_scope::reset_memo();
+
+        $this->expectException(\required_capability_exception::class);
+        get_grader_priority_list::execute();
+    }
 }

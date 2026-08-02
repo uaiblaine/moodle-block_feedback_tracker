@@ -112,4 +112,21 @@ CSV;
 
         $this->assertGreaterThan(5, $result['calver']);
     }
+
+    /**
+     * The import is gated by managecalendar at system context; a course role
+     * is not a way in.
+     *
+     * @return void
+     */
+    public function test_teacher_without_managecalendar_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+
+        $this->expectException(\required_capability_exception::class);
+        bulk_import_calendar::execute("daydate,daytype\n20260601,holiday\n");
+    }
 }
