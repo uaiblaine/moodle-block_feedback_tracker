@@ -123,4 +123,20 @@ final class get_calendar_test extends \advanced_testcase {
             ]);
         }
     }
+
+    /**
+     * Reading the calendar requires managecalendar at system context.
+     *
+     * @return void
+     */
+    public function test_teacher_without_managecalendar_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+
+        $this->expectException(\required_capability_exception::class);
+        get_calendar::execute(20260601, 20260630);
+    }
 }

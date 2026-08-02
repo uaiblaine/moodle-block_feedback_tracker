@@ -31,13 +31,21 @@ namespace block_feedback_tracker\external;
  *   - the class exists,
  *   - it extends \core_external\external_api,
  *   - execute_parameters() / execute() / execute_returns() are defined,
- *   - the listed capability exists in db/access.php (or is a core capability).
+ *   - the listed capability exists in db/access.php (or is a core capability),
+ *   - a test file exists for it and claims coverage of the class,
+ *   - and, when the function is capability-gated, that test file exercises a
+ *     refusal.
+ *
+ * The last two turn coverage from something an audit notices into something
+ * the build enforces: registering a web service without a test, or without a
+ * failure-path test for its gate, fails here. The missing refusal test is
+ * precisely how a cross-context write IDOR reached production once.
  *
  * Catches the common drift modes — renaming a class without updating
  * services.php, deleting a capability someone still references — at
  * the cost of one cheap PHPUnit pass per CI run.
  *
- * @covers ::__construct
+ * @coversNothing
  */
 final class services_coverage_test extends \advanced_testcase {
     public function test_every_declared_service_has_a_valid_class(): void {
@@ -93,6 +101,60 @@ final class services_coverage_test extends \advanced_testcase {
                     "WS function `{$name}` references unknown capability `{$cap}`"
                 );
             }
+        }
+    }
+
+    /**
+     * Every declared web service has a test file that claims coverage of it.
+     *
+     * @return void
+     */
+    public function test_every_declared_service_has_a_test_file(): void {
+        foreach (self::load_functions() as $name => $def) {
+            $classname = (string) $def['classname'];
+            $short = substr($classname, (int) strrpos($classname, '\\') + 1);
+            $path = __DIR__ . '/' . $short . '_test.php';
+
+            $this->assertFileExists(
+                $path,
+                "WS function `{$name}` has no test file — expected tests/external/{$short}_test.php"
+            );
+            $this->assertStringContainsString(
+                '@covers \\' . $classname,
+                (string) file_get_contents($path),
+                "tests/external/{$short}_test.php must declare @covers \\{$classname}"
+            );
+        }
+    }
+
+    /**
+     * Every capability-gated web service has a test that exercises the
+     * refusal, not just the happy path.
+     *
+     * Removing a gate must turn exactly one test red. Without this assertion
+     * a gate can be deleted in silence, which is how the save_pause_window
+     * authorisation hole shipped.
+     *
+     * @return void
+     */
+    public function test_every_gated_service_has_a_refusal_test(): void {
+        foreach (self::load_functions() as $name => $def) {
+            if (!isset($def['capabilities']) || $def['capabilities'] === '') {
+                continue;
+            }
+            $classname = (string) $def['classname'];
+            $short = substr($classname, (int) strrpos($classname, '\\') + 1);
+            $path = __DIR__ . '/' . $short . '_test.php';
+            if (!file_exists($path)) {
+                // The previous test already reports this; do not double-fail.
+                continue;
+            }
+            $this->assertStringContainsString(
+                'required_capability_exception',
+                (string) file_get_contents($path),
+                "WS function `{$name}` is capability-gated but tests/external/{$short}_test.php "
+                    . 'never asserts a refusal'
+            );
         }
     }
 

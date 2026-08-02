@@ -530,4 +530,20 @@ final class get_responsiveness_test extends \advanced_testcase {
             ]);
         }
     }
+
+    /**
+     * A student cannot read the responsiveness payload for their course.
+     *
+     * @return void
+     */
+    public function test_student_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $this->setUser($student);
+
+        $this->expectException(\required_capability_exception::class);
+        get_responsiveness::execute((int) $course->id);
+    }
 }
