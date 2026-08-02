@@ -20,6 +20,7 @@
     * zoneheight  Height of the top-anchored zone band (equals zoney)
     * showlabel   Truthy when there is room for the text caption
     * zonelabel   Localised "Desired speed: 0 to N" caption
+    * arialabel   Localised label announced by assistive technology (string)
 
     Example context (json):
     {
@@ -31,12 +32,13 @@
         "zoney": 12,
         "zoneheight": 12,
         "showlabel": true,
-        "zonelabel": "Desired speed: 0 to 24"
+        "zonelabel": "Desired speed: 0 to 24",
+        "arialabel": "Trend over the last 14 days"
     }
 }}
 <svg class="bft-sparkline" viewBox="0 0 {{width}} {{height}}"
      width="{{width}}" height="{{height}}"
-     role="img" aria-label="30-day trend">
+     role="img" aria-label="{{arialabel}}">
     {{#haszone}}
         <rect class="bft-sparkline-zone" x="0" y="0" width="{{width}}" height="{{zoneheight}}"/>
         <line class="bft-sparkline-zone-base" x1="0" y1="0" x2="{{width}}" y2="0"/>

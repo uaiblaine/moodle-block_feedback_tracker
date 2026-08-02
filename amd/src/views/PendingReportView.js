@@ -242,11 +242,12 @@ const SortableHeader = ({label, sortKey, currentKey, currentOrder, onClick}) => 
         ariaSort = currentOrder === 'asc' ? 'ascending' : 'descending';
     }
     return html`
-        <th class=${'bft-th-sortable' + (active ? ' is-active' : '')}>
+        <th scope="col"
+            class=${'bft-th-sortable' + (active ? ' is-active' : '')}
+            aria-sort=${ariaSort}>
             <button type="button"
                     class="bft-th-sortable-btn"
-                    onClick=${() => onClick(sortKey)}
-                    aria-sort=${ariaSort}>
+                    onClick=${() => onClick(sortKey)}>
                 ${label}${arrow}
             </button>
         </th>

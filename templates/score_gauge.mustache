@@ -15,6 +15,7 @@
     * label          Score label to render inside the ring (string)
     * texty          Y-coordinate of the score label (number)
     * fontsize       Font size for the score label in user units (number)
+    * arialabel      Localised label announced by assistive technology (string)
 
     Example context (json):
     {
@@ -26,11 +27,12 @@
         "colour": "#047857",
         "label": "95",
         "texty": 57,
-        "fontsize": 28
+        "fontsize": 28,
+        "arialabel": "Responsiveness score 95"
     }
 }}
 <svg class="bft-gauge" viewBox="0 0 {{size}} {{size}}" width="{{size}}" height="{{size}}"
-     role="img" aria-label="Responsiveness score {{label}}">
+     role="img" aria-label="{{arialabel}}">
     <circle cx="{{cx}}" cy="{{cx}}" r="{{r}}" fill="none" stroke="#e5e7eb" stroke-width="8"/>
     <circle cx="{{cx}}" cy="{{cx}}" r="{{r}}" fill="none" stroke="{{colour}}" stroke-width="8"
             stroke-linecap="round"

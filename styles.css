@@ -711,6 +711,12 @@
     color: var(--bft-band-good-fg);
 }
 
+.bft-badge-draft {
+    background: var(--bft-band-pending-bg);
+    color: var(--bft-band-pending-fg);
+    opacity: 0.75;
+}
+
 .bft-badge-regular {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
@@ -746,6 +752,14 @@
 .badge.badge-pending {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
+}
+/* Drafts had no rule at all, so under Bootstrap 5 a bare .badge sets
+   color:#fff with no background and the label rendered white on white.
+   Reuses the pending tokens, de-emphasised to match how drafts are shown. */
+.badge.badge-draft {
+    background: var(--bft-band-pending-bg);
+    color: var(--bft-band-pending-fg);
+    opacity: 0.75;
 }
 
 /* ------------------------------------------------------------------------

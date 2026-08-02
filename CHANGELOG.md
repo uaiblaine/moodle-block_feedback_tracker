@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.36] - Unreleased
+
+### Fixed
+- **Sortable tables are reachable by keyboard.** The group drill-down's column
+  headers attached their click listener to the `<th>` itself, so sorting could
+  only be triggered with a mouse and the active column was never announced —
+  a WCAG 2.1.1 failure. Headers now carry a real `<button>`, and `aria-sort`
+  moves onto the `<th>` where it is valid. The pending report had the same
+  `aria-sort` misplacement (on the button rather than the header) and is
+  corrected to match.
+- **Assistive technology is no longer read English on a pt_br site.** The score
+  gauge and the sparkline hard-coded their `aria-label`; both now come from
+  lang strings. The sparkline's label also said "30-day trend" while the card
+  renders 14 days, so screen-reader users were told the wrong window.
+- **The hero info dot is focusable.** It was a bare `<span>`, so its
+  explanatory tooltip could not be reached without a mouse and its
+  `aria-label` was ignored on a generic element. It is a `<button>` now.
+- **Draft badges are visible.** `.badge-draft` had no rule at all, so under
+  Bootstrap 5 a bare `.badge` set white text with no background and the label
+  rendered white-on-white.
+- **Sorting no longer inverts after a double init.** `pending_table.js` gained
+  the idempotency guard every other entrypoint already had; without it a
+  second init bound a second listener per header, so one click sorted
+  ascending then immediately re-sorted descending.
+
 ## [1.0.31] - Unreleased
 
 ### Added
