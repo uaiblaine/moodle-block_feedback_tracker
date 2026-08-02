@@ -21,6 +21,31 @@ cross-context write IDOR, because no test exercises that gate at all (item 4.1).
 
 ---
 
+## Status — 2026-08-02
+
+The test programme was executed in full; the defect backlog was not. **Section 8
+records what shipped, what did not, and what the work itself uncovered that this
+audit missed.**
+
+| | at audit | now |
+|---|---|---|
+| PHPUnit tests | 258 | **465** |
+| Assertions | 904 | **1443** |
+| Behat scenarios | 6 | **11** |
+| Suite notices | 1 | **0** |
+| Classes with a `@covers` target | 39 of 78 | **64 of 78** |
+
+**The test programme (section 7) is complete. The defect backlog is not** — 8 of the
+23 numbered findings in sections 2 to 5 remain open, and section 1 (the Preact bump)
+was not started. Section 8.1 is the verified item-by-item ledger; do not infer status
+from a finding's absence there.
+
+Read sections 2 through 7 as the record of what was found and why it mattered; read
+section 8 for what shipped, what did not, and the corrections to this document's own
+claims.
+
+---
+
 ## 1. The Preact update
 
 Current: Preact **10.29.2** + htm **3.1.1**, concatenated into
@@ -595,6 +620,11 @@ three `<location>` entries.
 Steps 1-3 are worth doing regardless of what else is scheduled. Step 4 is what prevents
 the next occurrence of step 1.
 
+> **Closed out.** All ten steps shipped, with two deliberate reorderings: the
+> structural gate (step 13 in 7.10) was pulled forward to lock in the coverage
+> invariant while it held, and the scheduled-task tests came before the SLA engines
+> because `backfill_effectivedays` was outstanding Tier 0 work. See 8.1.
+
 Run `mdl ci moodle-block_feedback_tracker` before pushing any of these, and add
 `--branch MOODLE_405_STABLE` for anything version-conditional plus `--db mariadb` for
 anything touching SQL (3.3 and 4.2 both qualify).
@@ -611,6 +641,14 @@ file, which produces false positives — `local/calendar/observer.php` looks cov
 `local\sla\observer` and `submission_ledger`):
 
 **78 production classes, 39 covered, 39 uncovered — exactly half.**
+
+> **Update 2026-08-02.** 64 of 78 now carry a `@covers` target. Four of the fourteen
+> remaining are the ones 7.7 argues need no dedicated file (`submission_status`,
+> `renderer`, and the two forms without `validation()`). The other ten are genuine
+> remaining gaps: the three `cal_*` events, `score_gauge`, `sparkline`,
+> `business_hours_lookup`, `calendar`, `effective_day_cache`,
+> `responsiveness_payload` and `dirty_queue` — the last of which is the missing test
+> for open item 3.7.
 
 | Area | Uncovered | Classes |
 |---|---|---|
@@ -1009,3 +1047,150 @@ Two supporting habits: keep `tests/lockstep/` as the drift detector for every PH
 with a JS twin, and keep `mdl ci <repo> --db mariadb` mandatory for any PR touching
 `submission_browser`, `get_grader_priority_list` or `recompute_log` — every bug found in
 those three so far has been SQL-semantics-shaped.
+
+---
+
+## 8. Close-out — 2026-08-02
+
+### 8.1 The ledger
+
+Sixteen pull requests against `main`, each verified on PostgreSQL, MariaDB and the
+Moodle 4.5 leg before merge. Status below was re-checked against the tree on
+2026-08-02 rather than inferred from the PR titles.
+
+**Fixed**
+
+| Item | Where |
+|---|---|
+| 2.1 write IDOR on `save_pause_window` | #3 |
+| 2.2 / 2.3 GDPR delete and export at system context | #7 |
+| 2.4 group leak on `get_pause_timeline` | #3 |
+| 3.2 audit log counts what it pages | #5 |
+| 3.3 day-mode bands drop no rows | #4 |
+| 3.5 draft badge is visible | #16 |
+| 3.6 queue survives a lock-skipped recompute | #6 |
+| 3.8 `pending_table.js` idempotency guard | #16 |
+| 4.1 web-service failure paths | #8 |
+| 4.2 scheduled-task coverage | #10 |
+| 4.3 privacy userlist coverage | #7 |
+| 4.6 privacy metadata completeness | #7 |
+| 4.9 hand-built `assign_grades` snapshot | #2 |
+| §5 accessibility (all five) | #16 |
+| 7.11 structural coverage gate | #9, #10 |
+
+**Still open — carried forward**
+
+| Item | Why it did not land |
+|---|---|
+| §1 Preact 10.29.2 → 10.29.7 | Blocked on 4.4 by design; neither was reached |
+| 2.5 raw exception through a triple-stash sink | Low exploitability, but the only P0 left |
+| 3.1 drill-down badge shows the raw band slug | pt_br users still see `critical` |
+| 3.4 `api.js getCalendar` sends the wrong parameters | Still dead on arrival for its first caller |
+| 3.7 check-then-insert races on unique indexes | The concurrency item that shipped *without* its fix — #6 covered 3.6 only |
+| 4.4 vendor bundle path duplicated in five files | Prerequisite for §1 |
+| 4.5 dead `responsiveness.js` still ships | Holds the only stray `Ajax.call` |
+| 4.7 / 4.8 CHANGELOG backlog, `install.xml` VERSION | Housekeeping; 1.0.36 was added correctly |
+| 4.11 `js/vendor/README.md` points at the wrong place | One sentence, rides with §1 |
+
+**Deliberately not to be acted on:** 4.10 (PHPUnit doc-comment metadata) — core still
+uses doc-comments everywhere, so migrating alone diverges for no gain.
+
+Two fixes also landed in `moodle-dev`: parallel-safe CI databases, and a `mdl grunt`
+that actually builds the plugin (8.2).
+
+### 8.2 What the work found that this audit did not
+
+These are the ones worth carrying forward, because each is a class of defect the
+static sweep could not reach.
+
+**The audit-log course filter can never match.** Item 3.2 described a pager whose
+`total` disagreed with its page. True, but the deeper fact only surfaced when the fix
+was written: **no production writer records `courseid` in the log's `details`**. All
+five call sites write `source`/`calver`/`lastid`/`failures`/`took_ms`. The filter
+queries a key nothing writes, so on a real site it matches nothing at all. The fix
+makes the result honest rather than contradictory; whether to drop the parameter,
+or teach the writers to record the key, is recorded as an open decision in #5.
+
+**The lock-skip test cannot be written the obvious way.** Section 7.3.1 predicted this
+from reading core; the work confirmed it empirically. Under the default factory,
+`recompute_group()` returns `true` **while a lock is held** — `postgres_lock_factory`
+keeps its held-lock map static and treats a repeat acquire as a hash collision, and
+`mysql_lock_factory` re-acquires on the same session. A test written the natural way
+would have passed green having never reached the skip path.
+
+**A same-named test file is not coverage.** `local/calendar/observer.php` looked
+covered because `tests/local/sla/observer_test.php` shares its filename; that file
+declares coverage of the SLA observer only. Mapping by `@covers` target rather than
+by filename is what caught it, and it is why 7.1's inventory was built that way.
+
+**Seven older web-service tests had no refusal case.** The structural gate found them
+the minute it was installed — and in doing so corrected a claim made when #8 landed
+("every capability gate now has an explicit refusal test"), which was true of the
+seven functions written in that PR but not of the suite.
+
+**`resetdata` was the only genuinely uncovered capability.** The audit said "six page
+gates uncovered". Mapping capability *use* with `ast-grep` sharpened that: of nine
+declared capabilities, six are used by web services and already covered; four of the
+five page gates reuse those. Exactly one — `resetdata`, `RISK_DATALOSS`, guarding the
+irreversible wipe — was reachable by no web service and tested nowhere.
+
+**Two behaviours were documented rather than "fixed".** A site admin is refused by
+`get_insights` and the score simulator unless `enable_admin_view_all` is on or a role
+grants `viewalldata` — that is `dashboard_scope` suppressing `doanything` on purpose.
+And the five score weights read through `?: default`, so a deliberately stored `0`
+returns the default; zeroing a term happens at read-time normalisation instead. Both
+now have tests stating the intent, so neither gets "corrected" into something else.
+
+**Three fixture traps, each of which makes a test seed less than it appears to.**
+`submission_browser`'s query inner-joins `{course_modules}`, `{assign}` and `{user}`,
+so the generator's synthetic cmid and literal userids drop every row; `dashboard_scope`
+memoises by userid in a static while PHPUnit recycles ids between tests; and a test
+helper named `run()` collides with PHPUnit's `final TestCase::run()` and fails at parse
+time.
+
+**Two Behat facts worth knowing before writing more.** A *new* `.feature` file needs
+`mdl behat-init` before Behat sees it, because suite paths are fixed at init; editing
+an existing one does not. And blocked-path scenarios do not translate — `behat_navigation`
+detects rendered exceptions and re-throws them as failures — which is why negative
+paths stay in PHPUnit, as `teacher_dashboard.feature` already recorded.
+
+**`mdl grunt` was rebuilding nothing.** It mounted the host checkout, where the plugin
+directory is empty because the mount exists only inside the stack container — so it
+compiled an empty directory, printed `Done.` and exited 0. Since `amd/build` is what
+Moodle serves and CI lints the source rather than comparing it to the artefact, nothing
+downstream would have contradicted a developer who believed they had rebuilt. Fixed in
+`moodle-dev`, which now refuses to run when it finds no `amd/src`.
+
+### 8.3 Suggested order for the remainder
+
+The nine open items are small and mostly independent. Risk-first again:
+
+1. **3.7** — the only open item that corrupts data under load. A duplicate enqueue
+   should be success, not `dml_write_exception` failing a whole adhoc batch. It was
+   scoped with 3.6 and slipped when #6 focused on the queue-retirement seam; its
+   planned test (`dirty_queue_test`) is still unwritten.
+2. **3.1** — pt_br users read `critical` as a badge label today. One literal switch.
+3. **2.5** — escape the exception path; low exploitability, but it is the last P0.
+4. **4.5** — delete the dead module and the stray `Ajax.call` with it.
+5. **4.4 → §1 → 4.11** — centralise the bundle path, then bump Preact, then fix the
+   README sentence. In that order, for the reason section 1 gives.
+6. **3.4** — correct the `getCalendar` wrapper before its first caller meets it.
+7. **4.7 / 4.8** — fold into whichever release-touching commit comes next.
+
+The coverage gates now protect what was built: a new web service without a refusal
+test, or a new scheduled task without a test, fails the build rather than waiting for
+the next audit.
+
+### 8.4 The pattern worth keeping
+
+Every item in 8.2 emerged from *writing the test or the fix*, not from reading the
+code. The audit was a good map; it was not the territory. Three habits did the work:
+
+1. **Write the regression test first and watch it fail.** A test that never went red
+   proves nothing — that is how the lock-factory trap and the drift detector were
+   caught, and how the IDOR's reachability was demonstrated rather than argued.
+2. **When a test fails, suspect the test.** Most failures here were wrong assumptions
+   about the product, and each one taught something the audit had missed.
+3. **Prefer a build-time gate to a periodic audit.** The two structural gates turn
+   "someone should check coverage again" into a failing build, which is the only
+   version of that intention that survives a deadline.
