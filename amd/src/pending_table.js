@@ -69,13 +69,22 @@ const compareKeys = (a, b) => {
 const enhanceTable = (table) => {
     const headers = table.querySelectorAll('thead th[data-sort]');
     headers.forEach((th) => {
-        th.addEventListener('click', () => {
+        // The listener goes on the button, not the cell: a button is
+        // focusable and fires on Enter and Space for free, which a th does
+        // not. Sorting used to be reachable by mouse only.
+        const trigger = th.querySelector('.bft-th-sortable-btn') || th;
+        trigger.addEventListener('click', () => {
             const colIdx = Array.from(th.parentElement.children).indexOf(th);
             const isAsc = !th.classList.contains('bft-sort-asc');
             th.parentElement.querySelectorAll('th').forEach((x) => {
                 x.classList.remove('bft-sort-asc', 'bft-sort-desc');
+                if (x.hasAttribute('aria-sort')) {
+                    x.setAttribute('aria-sort', 'none');
+                }
             });
             th.classList.add(isAsc ? 'bft-sort-asc' : 'bft-sort-desc');
+            // Announce the active column and direction to assistive tech.
+            th.setAttribute('aria-sort', isAsc ? 'ascending' : 'descending');
 
             const tbody = table.tBodies[0];
             if (!tbody) {
@@ -95,5 +104,12 @@ const enhanceTable = (table) => {
  * Initialise sortable tables in the current page.
  */
 export const init = () => {
+    // Without this guard a second init binds a second listener to every
+    // header, so one click sorts ascending then immediately re-sorts
+    // descending and the indicator no longer matches the row order.
+    if (window.bftPendingTableInitDone) {
+        return;
+    }
+    window.bftPendingTableInitDone = true;
     document.querySelectorAll('table.bft-sortable').forEach(enhanceTable);
 };

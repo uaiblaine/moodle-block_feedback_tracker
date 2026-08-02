@@ -129,6 +129,10 @@ class sparkline implements \renderable, \templatable {
             'zoneheight' => $haszone ? $zoney : null,
             'showlabel'  => $showlabel,
             'zonelabel'  => $zonelabel,
+            /* Localised, and it names the window the sparkline actually draws.
+             * The previous hard-coded label said 30 days while the card
+             * renders 14, so assistive tech was told the wrong period. */
+            'arialabel'  => get_string('sparkline_aria', 'block_feedback_tracker'),
         ];
     }
 }

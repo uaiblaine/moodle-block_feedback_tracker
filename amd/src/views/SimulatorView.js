@@ -259,7 +259,8 @@ export default function SimulatorView({initial}) {
                 <aside class="bft-sim-result">
                     <div class="bft-sim-result-sticky">
                         <div class=${'bft-sim-gauge bft-sim-tone-' + (result.band || 'pending')}>
-                            <${ScoreGauge} score=${result.score} band=${result.band} size=${168} />
+                            <${ScoreGauge} score=${result.score} band=${result.band} size=${168}
+                                arialabel=${i18n.gauge_aria || ''} />
                             <${Badge} band=${result.band} label=${bandLabel} />
                         </div>
 

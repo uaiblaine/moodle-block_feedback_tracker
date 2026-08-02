@@ -63,13 +63,27 @@
     <table class="generaltable bft-sortable">
         <thead>
             <tr>
-                <th data-sort="text">{{cols.student}}</th>
-                <th data-sort="text">{{cols.activity}}</th>
-                <th data-sort="text">{{cols.group}}</th>
-                <th data-sort="num">{{cols.submitted}}</th>
-                <th data-sort="num">{{cols.waiting}}</th>
-                <th data-sort="num">{{cols.effective}}</th>
-                <th data-sort="text">{{cols.status}}</th>
+                <th scope="col" data-sort="text" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.student}}</button>
+                </th>
+                <th scope="col" data-sort="text" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.activity}}</button>
+                </th>
+                <th scope="col" data-sort="text" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.group}}</button>
+                </th>
+                <th scope="col" data-sort="num" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.submitted}}</button>
+                </th>
+                <th scope="col" data-sort="num" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.waiting}}</button>
+                </th>
+                <th scope="col" data-sort="num" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.effective}}</button>
+                </th>
+                <th scope="col" data-sort="text" aria-sort="none">
+                    <button type="button" class="bft-th-sortable-btn">{{cols.status}}</button>
+                </th>
             </tr>
         </thead>
         <tbody>

@@ -102,6 +102,8 @@ class score_gauge implements \renderable, \templatable {
             'circumference' => round($circumference, 2),
             'colour'        => $this->colour(),
             'label'         => $label,
+            // Localised so assistive tech is not read English on a pt_br site.
+            'arialabel'     => get_string('gauge_aria', 'block_feedback_tracker', $label),
             'texty'         => round($cx + $size * 0.07, 2),
             'fontsize'      => (int) round($size * 0.28),
         ];

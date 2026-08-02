@@ -35,9 +35,12 @@ import {colourFor} from 'block_feedback_tracker/lib/bands';
  * @param {number|null} props.score  0..100, or null for "no data".
  * @param {string|null} props.band   Band slug — drives the stroke colour.
  * @param {number} [props.size]      Square pixel size; defaults to 100.
+ * @param {string} [props.arialabel] Localised label for assistive tech. Falls
+ *                                   back to English only when a caller omits
+ *                                   it; every caller should pass one.
  * @returns {object} vnode
  */
-export default function ScoreGauge({score, band, size = 100}) {
+export default function ScoreGauge({score, band, size = 100, arialabel = ''}) {
     const r = size / 2 - 6;
     const cx = size / 2;
     const circumference = 2 * Math.PI * r;
@@ -53,7 +56,7 @@ export default function ScoreGauge({score, band, size = 100}) {
         <svg class="bft-gauge"
              viewBox="0 0 ${size} ${size}"
              width=${size} height=${size}
-             role="img" aria-label=${'Responsiveness score ' + label}>
+             role="img" aria-label=${arialabel || ('Responsiveness score ' + label)}>
             <circle cx=${cx} cy=${cx} r=${r.toFixed(2)}
                     fill="none" stroke="#e5e7eb" stroke-width="8" />
             <circle cx=${cx} cy=${cx} r=${r.toFixed(2)}

@@ -40,7 +40,8 @@ export default function HeroMetricCard({eyebrow, tip, wide, children}) {
         <div class=${'bft-hero-card' + (wide ? ' bft-hero-card-wide' : '')}>
             <div class="bft-hero-card-eyebrow">
                 <span>${eyebrow}</span>
-                ${tip && html`<span class="bft-info-dot" title=${tip} aria-label=${tip}>i</span>`}
+                ${tip && html`<button type="button" class="bft-info-dot"
+                    title=${tip} aria-label=${tip}>i</button>`}
             </div>
             <div class="bft-hero-card-body">${children}</div>
         </div>
