@@ -36,6 +36,9 @@ namespace block_feedback_tracker\external;
  *   - and, when the function is capability-gated, that test file exercises a
  *     refusal.
  *
+ * It also asserts that every scheduled task in db/tasks.php is claimed by a
+ * test under tests/task/.
+ *
  * The last two turn coverage from something an audit notices into something
  * the build enforces: registering a web service without a test, or without a
  * failure-path test for its gate, fails here. The missing refusal test is
@@ -154,6 +157,36 @@ final class services_coverage_test extends \advanced_testcase {
                 (string) file_get_contents($path),
                 "WS function `{$name}` is capability-gated but tests/external/{$short}_test.php "
                     . 'never asserts a refusal'
+            );
+        }
+    }
+
+    /**
+     * Every scheduled task declared in db/tasks.php is claimed by a test file.
+     *
+     * The three service wrappers are covered collectively in
+     * scheduled_tasks_test rather than one file each, so the check is that
+     * some test in tests/task/ names the class — not that a file exists per
+     * task.
+     *
+     * @return void
+     */
+    public function test_every_scheduled_task_is_claimed_by_a_test(): void {
+        $tasks = [];
+        require(__DIR__ . '/../../db/tasks.php');
+        $this->assertNotEmpty($tasks, 'db/tasks.php should declare at least one task.');
+
+        $claimed = '';
+        foreach (glob(__DIR__ . '/../task/*_test.php') ?: [] as $file) {
+            $claimed .= (string) file_get_contents($file);
+        }
+
+        foreach ($tasks as $def) {
+            $classname = (string) $def['classname'];
+            $this->assertStringContainsString(
+                $classname,
+                $claimed,
+                "Scheduled task {$classname} is not named by any test in tests/task/"
             );
         }
     }
