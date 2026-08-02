@@ -64,6 +64,23 @@ class provider implements
     \core_privacy\local\request\plugin\provider,
     \core_privacy\local\request\user_preference_provider {
     /**
+     * Site-configuration tables that record which administrator last touched
+     * a row, and the column holding that id.
+     *
+     * These live at system context, which is why get_contexts_for_userid()
+     * offers it — and therefore why the export and delete paths must handle
+     * it too.
+     *
+     * @var array Table name => attribution column.
+     */
+    private const SYSTEM_ATTRIBUTION = [
+        'block_feedback_tracker_cday' => 'usermodified',
+        'block_feedback_tracker_chours' => 'usermodified',
+        'block_feedback_tracker_cpause' => 'usermodified',
+        'block_feedback_tracker_log' => 'triggeredby',
+    ];
+
+    /**
      * Describe what the plugin stores.
      *
      * @param collection $collection
@@ -73,15 +90,18 @@ class provider implements
         $collection->add_database_table(
             'block_feedback_tracker_sub',
             [
-                'courseid'       => 'privacy:metadata:sub:courseid',
-                'groupid'        => 'privacy:metadata:sub:groupid',
-                'cmid'           => 'privacy:metadata:sub:cmid',
-                'userid'         => 'privacy:metadata:sub:userid',
-                'timesubmitted'  => 'privacy:metadata:sub:timesubmitted',
-                'timegraded'     => 'privacy:metadata:sub:timegraded',
-                'waitinghours'   => 'privacy:metadata:sub:waitinghours',
-                'effectivehours' => 'privacy:metadata:sub:effectivehours',
-                'slabucket'      => 'privacy:metadata:sub:slabucket',
+                'courseid'         => 'privacy:metadata:sub:courseid',
+                'groupid'          => 'privacy:metadata:sub:groupid',
+                'cmid'             => 'privacy:metadata:sub:cmid',
+                'userid'           => 'privacy:metadata:sub:userid',
+                'attemptnumber'    => 'privacy:metadata:sub:attemptnumber',
+                'submissionstatus' => 'privacy:metadata:sub:submissionstatus',
+                'timesubmitted'    => 'privacy:metadata:sub:timesubmitted',
+                'timegraded'       => 'privacy:metadata:sub:timegraded',
+                'waitinghours'     => 'privacy:metadata:sub:waitinghours',
+                'effectivehours'   => 'privacy:metadata:sub:effectivehours',
+                'effectivedays'    => 'privacy:metadata:sub:effectivedays',
+                'slabucket'        => 'privacy:metadata:sub:slabucket',
             ],
             'privacy:metadata:sub'
         );
@@ -255,6 +275,10 @@ class provider implements
         $userid = $contextlist->get_user()->id;
 
         foreach ($contextlist->get_contexts() as $context) {
+            if ($context instanceof \context_system) {
+                self::export_system_attribution($context, (int) $userid);
+                continue;
+            }
             if (!($context instanceof \context_course)) {
                 continue;
             }
@@ -278,10 +302,12 @@ class provider implements
                     'cmid'           => (int) $r->cmid,
                     'groupid'        => (int) $r->groupid,
                     'attemptnumber'  => (int) $r->attemptnumber,
+                    'submissionstatus' => (string) $r->submissionstatus,
                     'timesubmitted'  => transform::datetime((int) $r->timesubmitted),
                     'timegraded'     => $r->timegraded !== null ? transform::datetime((int) $r->timegraded) : null,
                     'waitinghours'   => $r->waitinghours !== null ? (float) $r->waitinghours : null,
                     'effectivehours' => $r->effectivehours !== null ? (float) $r->effectivehours : null,
+                    'effectivedays'  => $r->effectivedays !== null ? (float) $r->effectivedays : null,
                     'slabucket'      => (string) $r->slabucket,
                 ];
             }
@@ -301,6 +327,10 @@ class provider implements
      * @return void
      */
     public static function delete_data_for_all_users_in_context(\context $context): void {
+        if ($context instanceof \context_system) {
+            self::clear_system_attribution(null);
+            return;
+        }
         if (!($context instanceof \context_course)) {
             return;
         }
@@ -316,6 +346,10 @@ class provider implements
     public static function delete_data_for_user(approved_contextlist $contextlist): void {
         $userid = (int) $contextlist->get_user()->id;
         foreach ($contextlist->get_contexts() as $context) {
+            if ($context instanceof \context_system) {
+                self::clear_system_attribution([$userid]);
+                continue;
+            }
             if ($context instanceof \context_course) {
                 self::delete_course_data((int) $context->instanceid, $userid);
             }
@@ -330,15 +364,85 @@ class provider implements
      */
     public static function delete_data_for_users(approved_userlist $userlist): void {
         $context = $userlist->get_context();
-        if (!($context instanceof \context_course)) {
-            return;
-        }
         $userids = $userlist->get_userids();
         if (empty($userids)) {
             return;
         }
+        if ($context instanceof \context_system) {
+            self::clear_system_attribution(array_map('intval', $userids));
+            return;
+        }
+        if (!($context instanceof \context_course)) {
+            return;
+        }
         foreach ($userids as $userid) {
             self::delete_course_data((int) $context->instanceid, (int) $userid);
+        }
+    }
+
+    /**
+     * Export the site-configuration rows one user is attributed on.
+     *
+     * These rows are site configuration rather than the user's own content,
+     * so what is exported is the attribution: which rows they last touched,
+     * and when.
+     *
+     * @param \context $context The system context.
+     * @param int $userid
+     * @return void
+     */
+    private static function export_system_attribution(\context $context, int $userid): void {
+        global $DB;
+
+        $entries = [];
+        foreach (self::SYSTEM_ATTRIBUTION as $table => $column) {
+            $rows = $DB->get_records($table, [$column => $userid]);
+            foreach ($rows as $r) {
+                $entry = ['table' => $table, 'id' => (int) $r->id];
+                if (isset($r->timemodified)) {
+                    $entry['timemodified'] = transform::datetime((int) $r->timemodified);
+                } else if (isset($r->timestarted)) {
+                    $entry['timestarted'] = transform::datetime((int) $r->timestarted);
+                }
+                $entries[] = $entry;
+            }
+        }
+
+        if (empty($entries)) {
+            return;
+        }
+
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:siteconfig', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['records' => $entries]);
+    }
+
+    /**
+     * Drop the user link from the site-configuration tables.
+     *
+     * The rows themselves are site configuration and must survive — deleting
+     * them would silently rewrite the academic calendar for everyone. Only the
+     * attribution is removed, which is what the metadata declares and all that
+     * an erasure request covers here.
+     *
+     * @param int[]|null $userids Users to clear, or null for every user.
+     * @return void
+     */
+    private static function clear_system_attribution(?array $userids): void {
+        global $DB;
+
+        foreach (self::SYSTEM_ATTRIBUTION as $table => $column) {
+            if ($userids === null) {
+                $DB->set_field_select($table, $column, null, "$column IS NOT NULL");
+                continue;
+            }
+            if (empty($userids)) {
+                continue;
+            }
+            [$insql, $inparams] = $DB->get_in_or_equal($userids, SQL_PARAMS_NAMED, 'u');
+            $DB->set_field_select($table, $column, null, "$column $insql", $inparams);
         }
     }
 
