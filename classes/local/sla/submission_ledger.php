@@ -1078,6 +1078,107 @@ class submission_ledger {
     }
 
     /**
+     * Delete every ledger row matching a where clause, then re-enqueue each
+     * distinct (course, group) tuple the deletion touched.
+     *
+     * The read-then-delete order matters: the tuples have to be collected
+     * while the rows still exist, or the rollup keeps whatever totals it had
+     * when the rows disappeared. Shared by the three user-scoped entry points
+     * below so the predicate, the early return and the enqueue never drift
+     * apart — they were three separate copies before.
+     *
+     * @param string $where SQL predicate over {block_feedback_tracker_sub}.
+     * @param array $params Named parameters for the predicate.
+     * @param string $reason A dirty_queue REASON_* constant.
+     * @return int Rows deleted.
+     */
+    private static function delete_rows_and_requeue(string $where, array $params, string $reason): int {
+        global $DB;
+
+        $rows = $DB->get_records_select(
+            'block_feedback_tracker_sub',
+            $where,
+            $params,
+            '',
+            'id, courseid, groupid'
+        );
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $tuples = [];
+        foreach ($rows as $r) {
+            $tuples[(int) $r->courseid . ':' . (int) $r->groupid] = [
+                (int) $r->courseid, (int) $r->groupid,
+            ];
+        }
+
+        $DB->delete_records_select('block_feedback_tracker_sub', $where, $params);
+
+        foreach ($tuples as [$courseid, $groupid]) {
+            dirty_queue::enqueue($courseid, $groupid, $reason);
+        }
+        return count($rows);
+    }
+
+    /**
+     * Delete one user's ledger rows in one course.
+     *
+     * Every attempt and every cycle goes, closed ones included. The rows
+     * describe a response owed to somebody who is no longer a participant, so
+     * keeping them would leave the course's pending counts, priority list and
+     * medians answering for work nobody can act on.
+     *
+     * @param int $courseid
+     * @param int $userid
+     * @param string $reason A dirty_queue REASON_* constant.
+     * @return int Rows deleted.
+     */
+    public static function delete_for_course_user(
+        int $courseid,
+        int $userid,
+        string $reason = dirty_queue::REASON_SUBMISSION
+    ): int {
+        if ($courseid <= 0 || $userid <= 0) {
+            return 0;
+        }
+        return self::delete_rows_and_requeue(
+            'courseid = :courseid AND userid = :userid',
+            ['courseid' => $courseid, 'userid' => $userid],
+            $reason
+        );
+    }
+
+    /**
+     * Delete one user's ledger rows across every course.
+     *
+     * For a deleted account. Note what this deliberately does NOT do: rows
+     * where the deleted user is the allocated marker (`allocmarkerid`) keep
+     * that id. Scrubbing it belongs to the privacy provider, which declares
+     * the column and today neither lists a marker among a context's users nor
+     * clears the field — closing that gap here would hide it in the wrong
+     * place and would silently move the allocation-coverage figure of courses
+     * the account merely marked in.
+     *
+     * @param int $userid
+     * @param string $reason A dirty_queue REASON_* constant.
+     * @return int Rows deleted.
+     */
+    public static function delete_for_user(
+        int $userid,
+        string $reason = dirty_queue::REASON_SUBMISSION
+    ): int {
+        if ($userid <= 0) {
+            return 0;
+        }
+        return self::delete_rows_and_requeue(
+            'userid = :userid',
+            ['userid' => $userid],
+            $reason
+        );
+    }
+
+    /**
      * Delete all ledger rows for one course-module (and cascade pause rows).
      *
      * @param int $cmid
