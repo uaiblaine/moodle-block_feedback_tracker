@@ -48,6 +48,7 @@ final class discard_course_data_test extends \advanced_testcase {
     protected function setUp(): void {
         parent::setUp();
         course_access::reset_memo();
+        removal_grace::reset_uninstalling();
         ob_start();
     }
 
@@ -297,6 +298,34 @@ final class discard_course_data_test extends \advanced_testcase {
         $before = $DB->count_records('task_adhoc');
         $this->remove_block_instances((int) $course->id);
         $this->assertSame($before, $DB->count_records('task_adhoc'));
+    }
+
+    /**
+     * Uninstalling the plugin removes every instance on the site, which looks
+     * exactly like somebody removing the block from each course. Queuing a
+     * grace-period task per course would be pointless — the tables are dropped
+     * moments later — and on a large site it would mean thousands of adhoc rows
+     * nobody will ever run.
+     *
+     * @return void
+     */
+    public function test_uninstalling_the_plugin_queues_nothing(): void {
+        global $DB;
+        $this->resetAfterTest();
+        set_config('removal_cleanup_active', '1', 'block_feedback_tracker');
+        [$course] = $this->build_course_with_data();
+
+        /* Core signals an uninstall by calling before_delete() once, on its own
+         * object, before deleting the instances. */
+        block_instance('feedback_tracker')->before_delete();
+
+        $before = $DB->count_records('task_adhoc');
+        $this->remove_block_instances((int) $course->id);
+        $this->assertSame(
+            $before,
+            $DB->count_records('task_adhoc'),
+            'An uninstall must not queue delayed cleanups.'
+        );
     }
 
     /**

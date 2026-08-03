@@ -56,6 +56,61 @@ final class removal_grace {
     public const MIN_SECONDS = 3600;
 
     /**
+     * Set while the whole plugin is being uninstalled.
+     *
+     * @var bool
+     */
+    private static $uninstalling = false;
+
+    /**
+     * Record that every block instance is being deleted by an uninstall.
+     *
+     * Static because the two halves of the signal reach different objects:
+     * core calls the block's `before_delete()` once on an instance-less object,
+     * then `instance_delete()` on a different object per instance. An instance
+     * property would silently never be seen.
+     *
+     * It lives here rather than on the block class for a second reason.
+     * `moodle-plugin-ci validate` parses `block_feedback_tracker.php` with a
+     * php-parser that, on the Moodle 5.2 leg, resolves a v4 `ParserAbstract`
+     * against a v5 `Class_`; the first combined member modifier in that file
+     * (`private static`) reaches `Class_::verifyModifier()`, which v5 removed,
+     * and the step dies with a PHP fatal. Nothing is wrong with the PHP — no
+     * other file is affected, because that file is the only one the validator
+     * parses this way. Keeping its members to single modifiers costs nothing
+     * and this is where the lifecycle state belongs anyway.
+     *
+     * @return void
+     */
+    public static function mark_uninstalling(): void {
+        self::$uninstalling = true;
+    }
+
+    /**
+     * Whether the current request is uninstalling the plugin.
+     *
+     * @return bool
+     */
+    public static function is_uninstalling(): bool {
+        return self::$uninstalling;
+    }
+
+    /**
+     * Clear the uninstall flag.
+     *
+     * A web request either uninstalls the plugin or it does not, so production
+     * never needs this. A PHPUnit process is one request running many tests: a
+     * test that exercises the uninstall path would otherwise leave the flag set
+     * for every test after it, silently disabling the queuing those tests are
+     * checking. Mirrors course_access::reset_memo().
+     *
+     * @return void
+     */
+    public static function reset_uninstalling(): void {
+        self::$uninstalling = false;
+    }
+
+    /**
      * Seconds a removed block's data is kept before it may be discarded.
      *
      * @return int

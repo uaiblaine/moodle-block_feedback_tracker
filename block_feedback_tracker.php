@@ -167,17 +167,6 @@ class block_feedback_tracker extends block_base {
     }
 
     /**
-     * Set while the whole plugin is being uninstalled.
-     *
-     * Static on purpose. `before_delete()` is called once, on a separate
-     * instance-less object, while `instance_delete()` runs on a different
-     * object per instance — an instance property would silently never be seen.
-     *
-     * @var bool
-     */
-    private static $uninstalling = false;
-
-    /**
      * Called once by core before every instance of this block type is deleted
      * during plugin uninstall.
      *
@@ -187,10 +176,12 @@ class block_feedback_tracker extends block_base {
      * about to be dropped — and on a large site it would mean thousands of
      * adhoc rows nobody will ever run.
      *
+     * The flag itself is held by removal_grace, which explains why.
+     *
      * @return void
      */
     public function before_delete() {
-        self::$uninstalling = true;
+        \block_feedback_tracker\local\sla\removal_grace::mark_uninstalling();
     }
 
     /**
@@ -212,7 +203,7 @@ class block_feedback_tracker extends block_base {
      * @return bool
      */
     public function instance_delete() {
-        if (self::$uninstalling) {
+        if (\block_feedback_tracker\local\sla\removal_grace::is_uninstalling()) {
             return true;
         }
         if (!\block_feedback_tracker\local\sla\removal_grace::is_active()) {
