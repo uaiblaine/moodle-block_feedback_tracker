@@ -157,6 +157,18 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
      * told about), of a restored course, and of any event lost in flight.
      *
+     * Restricted to users who are still active participants, matching
+     * {@see self::sweep_departed_participants()}'s
+     * `get_enrolled_sql($context, '', 0, true)` predicate — deleted account,
+     * suspended enrolment, suspended method, or an enrolment outside its
+     * start/end window all disqualify. Without that restriction the two sweeps
+     * fight: this one runs first on every tick and rebuilds exactly the rows
+     * the departed-participant sweep deleted on the previous one, so an
+     * unenrolled student's rows reappear for ever, each round trip costing a
+     * backfill dispatch and a rollup recompute. The predicate is spelled out
+     * inline rather than reusing `get_enrolled_sql()` because that helper is
+     * course-scoped while this sweep is deliberately cross-course.
+     *
      * @param array $processable Course ids in scope.
      * @param int $batch Row ceiling for this sweep.
      * @param string $key Cursor key.
@@ -165,10 +177,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function sweep_missing_rows(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $now = time();
         $rows = $DB->get_records_sql(
             "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
                     s.userid, s.groupid, s.attemptnumber
                FROM {assign_submission} s
+               JOIN {user} u ON u.id = s.userid AND u.deleted = 0
                JOIN {assign} a ON a.id = s.assignment
                JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -182,11 +196,23 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 AND cm.course $csql
                 AND l.id IS NULL
                 AND s.timemodified >= :retention
+                AND EXISTS (
+                    SELECT 1
+                      FROM {user_enrolments} ue
+                      JOIN {enrol} en ON en.id = ue.enrolid AND en.courseid = cm.course
+                     WHERE ue.userid = s.userid
+                       AND ue.status = 0
+                       AND en.status = 0
+                       AND (ue.timestart = 0 OR ue.timestart <= :nowstart)
+                       AND (ue.timeend = 0 OR ue.timeend > :nowend)
+                )
            ORDER BY s.id ASC",
             $cparams + [
                 'modname' => 'assign',
                 'cursor' => $this->cursor($key),
                 'retention' => $this->retention_floor(),
+                'nowstart' => $now,
+                'nowend' => $now,
             ],
             0,
             $batch

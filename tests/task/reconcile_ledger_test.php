@@ -219,6 +219,98 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * The departed-participant deletion must survive the next tick.
+     *
+     * The missing-row sweep runs first on every tick and reads
+     * {assign_submission} directly, so without an enrolment predicate it
+     * rebuilds precisely the rows the participant sweep removed on the tick
+     * before — an unenrolled student's work reappearing for ever, one backfill
+     * dispatch and one rollup recompute per round trip. One tick cannot show
+     * this: the deletion happens after the rebuild within a single run, so the
+     * assertion has to be made on the second.
+     *
+     * @return void
+     */
+    public function test_departed_participant_rows_stay_deleted_on_the_next_tick(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment();
+
+        $now = time();
+        $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
+
+        /* Unenrol only. The {assign_submission} row deliberately stays: it is
+         * what the missing-row sweep reads, and leaving it is the whole point
+         * of the test. */
+        foreach (enrol_get_instances($course->id, true) as $instance) {
+            if ($instance->enrol === 'manual') {
+                enrol_get_plugin('manual')->unenrol_user($instance, $student->id);
+            }
+        }
+
+        $this->run_reconciler();
+        $this->assertSame(
+            0,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'The participant sweep must delete the unenrolled student\'s row.'
+        );
+
+        $this->run_reconciler();
+        $this->assertSame(
+            0,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'The missing-row sweep must not resurrect an unenrolled student\'s row.'
+        );
+    }
+
+    /**
+     * A deleted account with its enrolment still standing is never rebuilt.
+     *
+     * `delete_user()` unenrols on its way through, so it exercises the
+     * enrolment predicate rather than this one and would pass with or without
+     * the `deleted` test. The state pinned here — `{user}.deleted = 1` with the
+     * enrolment intact — is what a delete interrupted partway leaves behind,
+     * and it is the state the departed-participant sweep already deletes,
+     * because `get_enrolled_sql()` joins `{user}` with `u.deleted = 0`. The two
+     * sweeps have to agree on it or they resume fighting.
+     *
+     * @return void
+     */
+    public function test_deleted_account_with_live_enrolment_is_not_rebuilt(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $now = time();
+        $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
+
+        $DB->set_field('user', 'deleted', 1, ['id' => $student->id]);
+        $this->assertTrue(
+            $DB->record_exists_sql(
+                'SELECT 1
+                   FROM {user_enrolments} ue
+                   JOIN {enrol} en ON en.id = ue.enrolid
+                  WHERE ue.userid = :userid AND en.courseid = :courseid',
+                ['userid' => $student->id, 'courseid' => $cm->course]
+            ),
+            'The fixture is only meaningful while the enrolment survives the deletion.'
+        );
+
+        $this->run_reconciler();
+
+        $this->assertSame(
+            0,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'A deleted account must never be given a fresh ledger row.'
+        );
+    }
+
+    /**
      * Convergence. A second pass over a ledger the first pass already made
      * correct must dispatch nothing — otherwise the task would re-repair the
      * same rows on every cron tick for ever.
