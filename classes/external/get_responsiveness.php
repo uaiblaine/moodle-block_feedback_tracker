@@ -152,6 +152,34 @@ class get_responsiveness extends external_api {
             'cur_median_raw_h'     => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_eff_days'  => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_perc_days' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
+            'unallocated' => new external_value(
+                PARAM_INT,
+                'Pending submissions with no marker allocated yet',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'median_queue_h' => new external_value(
+                PARAM_FLOAT,
+                'Median effective hours from hand-in to first allocation',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'median_alloc_h' => new external_value(
+                PARAM_FLOAT,
+                'Median effective hours from allocation to grading (marker turnaround)',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'alloc_coverage_pct' => new external_value(
+                PARAM_FLOAT,
+                'Share of the graded window carrying a usable marker-turnaround measurement',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
             'responsiveness_score' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'score_band'           => new external_value(PARAM_ALPHA, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'comp_compliance'      => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),

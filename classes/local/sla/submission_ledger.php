@@ -42,35 +42,95 @@ use block_feedback_tracker\local\calendar\day_counter;
  */
 class submission_ledger {
     /**
-     * Upsert one ledger row for (cmid, userid, attemptnumber).
+     * Whether this core version keeps allocations in their own table (5.2+)
+     * rather than in an {assign_user_flags} column. Memoised per request.
+     *
+     * @var bool|null
+     */
+    private static ?bool $hasallocationtable = null;
+
+    /** Allocation instant captured from a marker_updated event: exact. */
+    public const ALLOC_SOURCE_OBSERVED = 'observed';
+
+    /**
+     * Allocation first seen by a reconciliation sweep, because core fired no
+     * event for it. The stamp is the moment of discovery, so the recorded
+     * turnaround is an over-estimate bounded by the sweep period — kept
+     * separable from observed stamps so a median is never built from a mix
+     * without saying so.
+     */
+    public const ALLOC_SOURCE_RECONCILED = 'reconciled';
+
+    /**
+     * The allocation landed at or after the grading, so the marker's own
+     * turnaround cannot be measured. Recorded rather than silently stored as
+     * zero: a zero interval bands as `excellent`, which would read as a
+     * flawless turnaround — the worst possible failure direction for a metric
+     * attached to a person.
+     */
+    public const ALLOC_SOURCE_LATE = 'late';
+
+    /**
+     * Upsert one ledger row for (cmid, userid, attemptnumber), in its current
+     * measurement cycle.
      *
      * Reads the current submission + grade + overrides from the assign
-     * tables, computes raw/effective hours, classifies the bucket, rewrites
-     * the per-submission pause audit ledger, and enqueues the (course, group)
-     * tuple. Returns the ledger row id or null if the inputs are not
-     * resolvable (cm missing, not an assign, etc.).
+     * tables, computes raw/effective hours, classifies the bucket, and
+     * enqueues the (course, group) tuple. Returns the ledger row id or null if
+     * the inputs are not resolvable (cm missing, not an assign, etc.).
+     *
+     * A *cycle* is one measurement of teacher response. Work resubmitted after
+     * it already carried a mark opens a new cycle rather than rewriting the
+     * closed one, so a completed response time is never destroyed and the
+     * re-look gets its own clock.
      *
      * @param int $cmid
      * @param int $userid
      * @param int $attemptnumber
+     * @param int|null $releasedat Observed marking-workflow release instant,
+     *                             supplied by the workflow_state_updated
+     *                             observer; mod_assign persists none.
      * @return int|null
      */
     public static function upsert_for_cm_user_attempt(
         int $cmid,
         int $userid,
-        int $attemptnumber
+        int $attemptnumber,
+        ?int $releasedat = null
     ): ?int {
         global $DB;
 
-        $cm = $DB->get_record_sql(
-            "SELECT cm.id, cm.course, cm.instance, m.name AS modulename
-               FROM {course_modules} cm
-               JOIN {modules} m ON m.id = cm.module
-              WHERE cm.id = :cmid",
-            ['cmid' => $cmid]
-        );
-        if (!$cm || $cm->modulename !== 'assign') {
+        /* userid 0 is not a user: it is the container row mod_assign writes
+         * for a team submission (one row per group, userid 0, groupid G).
+         * Mirroring it verbatim produced a ledger row the rollup counted (it
+         * does not join {user}) but every list hid (they all do), i.e. a
+         * pending item nobody could clear. has_capability() cannot catch it
+         * either — it evaluates userid 0 as a real, capability-less user. */
+        if ($userid <= 0) {
             return null;
+        }
+
+        $cm = self::resolve_assign_cm($cmid);
+        if (!$cm) {
+            return null;
+        }
+
+        $assign = $DB->get_record('assign', ['id' => $cm->instance]);
+        if (!$assign) {
+            return null;
+        }
+
+        /* A team assignment stores the work once per group, so the per-user
+         * row (when one exists at all) carries no timing of its own. Route to
+         * the fan-out, which reads the group row for timing and each member's
+         * own grade row. */
+        if (!empty($assign->teamsubmission)) {
+            $group = self::team_group_for_user($assign, (int) $cm->course, $userid);
+            if ($group === null) {
+                return null;
+            }
+            $ids = self::upsert_for_team_attempt($cmid, $group, $attemptnumber, $releasedat);
+            return $ids[$userid] ?? null;
         }
 
         // Filter out submissions from users who actually hold grading
@@ -78,11 +138,6 @@ class submission_ledger {
         // staff, content-QA admins, etc.). Their submissions are almost
         // always internal testing rather than real student work.
         if (self::should_skip_submitter((int) $cm->course, $userid)) {
-            return null;
-        }
-
-        $assign = $DB->get_record('assign', ['id' => $cm->instance]);
-        if (!$assign) {
             return null;
         }
 
@@ -101,26 +156,254 @@ class submission_ledger {
             'attemptnumber' => $attemptnumber,
         ]);
 
+        return self::build_and_store(
+            $cm,
+            $assign,
+            $userid,
+            $attemptnumber,
+            isset($submission->status) ? (string) $submission->status : submission_status::NEW,
+            (int) $submission->timemodified,
+            (int) ($submission->latest ?? 1),
+            0,
+            $grade ?: null,
+            $releasedat
+        );
+    }
+
+    /**
+     * Upsert one ledger row per member of a team submission.
+     *
+     * mod_assign stores a team's work in a single {assign_submission} row with
+     * userid 0 and groupid G, and grades it per member. Timing and status
+     * therefore come from the group row while the mark comes from each
+     * member's own {assign_grades} row — which is why the per-user entry point
+     * cannot serve teams: with `requireallteammemberssubmit` on, a member who
+     * did not personally save has no submission row at all, so a per-user
+     * lookup finds nothing and the member silently drops out of the SLA.
+     *
+     * @param int $cmid
+     * @param int $groupid The team's group id; 0 is mod_assign's default group
+     *                     (everyone not in exactly one group of the grouping).
+     * @param int $attemptnumber
+     * @param int|null $releasedat Observed marking-workflow release instant.
+     * @return array Ledger row ids keyed by userid.
+     */
+    public static function upsert_for_team_attempt(
+        int $cmid,
+        int $groupid,
+        int $attemptnumber,
+        ?int $releasedat = null
+    ): array {
+        global $DB;
+
+        $cm = self::resolve_assign_cm($cmid);
+        if (!$cm) {
+            return [];
+        }
+        $assign = $DB->get_record('assign', ['id' => $cm->instance]);
+        if (!$assign || empty($assign->teamsubmission)) {
+            return [];
+        }
+
+        $submission = $DB->get_record('assign_submission', [
+            'assignment' => $assign->id,
+            'groupid' => $groupid,
+            'userid' => 0,
+            'attemptnumber' => $attemptnumber,
+        ]);
+        if (!$submission) {
+            return [];
+        }
+
+        $status = isset($submission->status) ? (string) $submission->status : submission_status::NEW;
+        $livesubmitted = (int) $submission->timemodified;
+        $latest = (int) ($submission->latest ?? 1);
+
+        $out = [];
+        foreach (self::team_member_ids($assign, (int) $cm->course, $groupid) as $memberid) {
+            if (self::should_skip_submitter((int) $cm->course, $memberid)) {
+                continue;
+            }
+            $grade = $DB->get_record('assign_grades', [
+                'assignment' => $assign->id,
+                'userid' => $memberid,
+                'attemptnumber' => $attemptnumber,
+            ]);
+            $subid = self::build_and_store(
+                $cm,
+                $assign,
+                $memberid,
+                $attemptnumber,
+                $status,
+                $livesubmitted,
+                $latest,
+                $groupid,
+                $grade ?: null,
+                $releasedat
+            );
+            if ($subid !== null) {
+                $out[$memberid] = $subid;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Build and store one ledger row for a resolved (cm, user, attempt).
+     *
+     * The single implementation of the cycle model, shared by the individual
+     * and team entry points so there is exactly one predicate in the codebase.
+     * Callers supply the authoritative submission facts because they differ:
+     * an individual reads them from that user's own row, a team member from
+     * the shared group row.
+     *
+     * @param \stdClass $cm Resolved course-module (id, course, instance).
+     * @param \stdClass $assign The {assign} row.
+     * @param int $userid
+     * @param int $attemptnumber
+     * @param string $status Submission status governing this row.
+     * @param int $livesubmitted Current hand-in time from the authoritative row.
+     * @param int $latest assign_submission.latest of the authoritative row.
+     * @param int $teamgroupid Group the row was fanned out from; 0 for individuals.
+     * @param \stdClass|null $grade The member's {assign_grades} row, or null.
+     * @param int|null $releasedat Observed marking-workflow release instant.
+     * @return int|null Ledger row id.
+     */
+    private static function build_and_store(
+        \stdClass $cm,
+        \stdClass $assign,
+        int $userid,
+        int $attemptnumber,
+        string $status,
+        int $livesubmitted,
+        int $latest,
+        int $teamgroupid,
+        ?\stdClass $grade,
+        ?int $releasedat
+    ): ?int {
+        global $DB;
+
+        $cmid = (int) $cm->id;
         $groupid = group_resolver::resolve_group_for_user((int) $cm->course, $userid);
         $rule = rule_resolver::resolve_rule($assign, $userid, $groupid);
 
-        $timesubmitted = (int) $submission->timemodified;
+        $flags = null;
+        if (!empty($assign->markingworkflow)) {
+            $flags = $DB->get_record('assign_user_flags', [
+                'assignment' => $assign->id,
+                'userid' => $userid,
+            ]) ?: null;
+        }
+
+        $isgradable = self::is_activity_gradable($assign);
+
+        /* Resolve the current measurement cycle. Only the highest cycle of a
+         * tuple is ever written; lower ones are closed history. */
+        $rows = $DB->get_records(
+            'block_feedback_tracker_sub',
+            ['cmid' => $cmid, 'userid' => $userid, 'attemptnumber' => $attemptnumber],
+            'cycle DESC',
+            'id, cycle, submissionstatus, timesubmitted, timegraded, timemarked, timereleased,
+             timeallocated, timeallocmarker',
+            0,
+            1
+        );
+        $existing = $rows ? reset($rows) : null;
+
+        $cycle = 0;
+        $timesubmitted = $livesubmitted;
+        $storedclosed = null;
+        $storedreleased = null;
+        $newcycle = false;
+
+        if ($existing !== null) {
+            $cycle = (int) $existing->cycle;
+            $prevsubmitted = (int) $existing->timesubmitted;
+            $prevmarked = $existing->timemarked !== null ? (int) $existing->timemarked : 0;
+
+            if ($prevmarked > 0 && $prevmarked >= $prevsubmitted && $livesubmitted > $prevmarked) {
+                /* The student moved the work after this cycle was marked. Core
+                 * keeps reporting "Graded" on every per-user surface while its
+                 * needs-grading counter re-flags the row and the grading table
+                 * labels it "Graded - resubmitted". Open a NEW cycle instead of
+                 * rewriting the closed one: the completed turnaround stays in
+                 * the history and the re-look gets its own clock. Keyed on
+                 * timemarked, not timegraded, so a marking-workflow row that
+                 * was marked but never released is detected too. */
+                $cycle++;
+                $existing = null;
+                $newcycle = true;
+                $timesubmitted = $livesubmitted;
+            } else {
+                $storedclosed = $existing->timegraded !== null ? (int) $existing->timegraded : null;
+                $storedreleased = $existing->timereleased !== null ? (int) $existing->timereleased : null;
+                if (
+                    $prevsubmitted > 0
+                    && (string) $existing->submissionstatus === submission_status::SUBMITTED
+                    && $status === submission_status::SUBMITTED
+                ) {
+                    /* The clock starts at hand-in; later edits inside the same
+                     * open cycle must not move it. A draft that becomes
+                     * submitted does move it, because the work only arrives on
+                     * submit. */
+                    $timesubmitted = min($prevsubmitted, $livesubmitted);
+                }
+            }
+        }
+
+        $state = grading_state::resolve($assign, $grade ?: null, $flags, $timesubmitted, $isgradable);
+
+        /* The release instant exists nowhere in core — {assign_user_flags} has
+         * no time columns on any supported version — so it is only ever known
+         * from the observed workflow_state_updated event, or from what a
+         * previous observation already stored. */
+        $timereleased = $storedreleased;
+        if ($state['isreleased'] && $state['usesworkflow']) {
+            if ($timereleased === null && $releasedat !== null) {
+                /* The grading form fires workflow_state_updated before it saves
+                 * the grade, so a naive assignment could close the row seconds
+                 * before the feedback existed. */
+                $timereleased = max($releasedat, (int) ($state['timemarked'] ?? 0)) ?: null;
+            }
+            if ($timereleased === null) {
+                // Rebuilt after the fact: the mark time is the documented lower bound.
+                $timereleased = $state['timemarked'];
+            }
+        }
+
+        /* Which event stops the clock. Off (the default) keeps the historical
+         * behaviour — the mark stops it — so no displayed number moves on
+         * upgrade. On, the clock stops when the feedback actually reaches the
+         * student, which on a marking-workflow activity is the release. Either
+         * way timereleased and gradestate are recorded, so the UI can flag a
+         * marked-but-unreleased submission to the teacher who entered the mark
+         * (frequently not the one who may release it). */
+        $requirerelease = self::release_stops_the_clock();
+        $isclosed = $requirerelease ? $state['isclosed'] : $state['markbelongs'];
+
         $timegraded = null;
-        // Moodle creates {assign_grades} rows with `grade` NULL or `-1` in
-        // several edge cases that are *not* real gradings — workflow init,
-        // a teacher opening the grading page, plagiarism plugins touching
-        // the row, etc. Mirror mod_assign's own `is_graded()` convention
-        // and require a real grade (>=0) before treating the row as graded.
-        // Without this check, fresh submissions show up as "already graded"
-        // and never appear in the pending list.
-        if (
-            $grade
-            && (int) $grade->timemodified > 0
-            && (int) $grade->timemodified >= $timesubmitted
-            && $grade->grade !== null
-            && (float) $grade->grade >= 0
-        ) {
-            $timegraded = (int) $grade->timemodified;
+        if ($isclosed) {
+            /* First response wins: a re-grade refreshes timemarked but never
+             * moves the recorded response time of a cycle that already closed. */
+            if ($storedclosed !== null) {
+                $timegraded = $storedclosed;
+            } else if ($requirerelease && $state['usesworkflow']) {
+                $timegraded = $timereleased ?? $state['timemarked'];
+            } else {
+                $timegraded = $state['timemarked'];
+            }
+        }
+
+        /* timeclosed records when the response reached the STUDENT, whatever
+         * the score clock is set to, so switching the setting later needs no
+         * re-derivation. It is deliberately NOT a coalesce: on a
+         * marking-workflow activity a mark that was never released has not
+         * reached anybody. */
+        $timeclosed = null;
+        if ($state['isclosed']) {
+            $timeclosed = !empty($assign->markingworkflow)
+                ? ($timereleased ?? $state['timemarked'])
+                : $state['timemarked'];
         }
 
         $now = time();
@@ -134,11 +417,18 @@ class submission_ledger {
             : ['hours' => 0.0, 'pauses' => []];
         $effectivehours = $audit['hours'];
 
-        $existing = $DB->get_record('block_feedback_tracker_sub', [
-            'cmid' => $cmid,
-            'userid' => $userid,
-            'attemptnumber' => $attemptnumber,
-        ], 'id');
+        /* The response interval, split by who owns each part. A submission
+         * that sat ten days waiting to be allocated and was then marked in two
+         * hours must not read as a ten-day marker turnaround: that is the
+         * coordinator's queue, not the marker's work. The student-experience
+         * clock above is unchanged — it is still the institution's SLA. */
+        $alloc = self::allocation_measures(
+            $existing,
+            (int) $cm->course,
+            $groupid,
+            $timesubmitted,
+            $timegraded
+        );
 
         $record = (object) [
             'courseid'         => (int) $cm->course,
@@ -147,9 +437,17 @@ class submission_ledger {
             'iteminstance'     => (int) $assign->id,
             'userid'           => $userid,
             'attemptnumber'    => $attemptnumber,
-            'submissionstatus' => isset($submission->status) ? (string) $submission->status : 'new',
+            'cycle'            => $cycle,
+            'submissionstatus' => $status,
             'timesubmitted'    => $timesubmitted,
             'timegraded'       => $timegraded,
+            'timemarked'       => $state['timemarked'],
+            'timereleased'     => $timereleased,
+            'timeclosed'       => $timeclosed,
+            'islatest'         => $latest,
+            'iscurrent'        => 1,
+            'gradestate'       => $state['gradestate'],
+            'teamgroupid'      => $teamgroupid,
             'timeopens'        => $rule['timeopens'],
             'timecloses'       => $rule['timecloses'],
             'timecutoff'       => $rule['timecutoff'],
@@ -162,21 +460,53 @@ class submission_ledger {
             'effectiveasof'    => $now,
             'effectivecalver'  => calendar::current_version(),
             'slabucket'        => bucket::for_effective($effectivehours),
+            'queuehours'       => $alloc['queuehours'],
+            'allochours'       => $alloc['allochours'],
+            'allocdays'        => $alloc['allocdays'],
+            'allocbucket'      => $alloc['allocbucket'],
             'timemodified'     => $now,
         ];
+        if ($alloc['late']) {
+            $record->allocsource = self::ALLOC_SOURCE_LATE;
+        }
 
-        if ($existing) {
+        if ($existing !== null) {
             $record->id = $existing->id;
             $subid = (int) $existing->id;
             $DB->update_record('block_feedback_tracker_sub', $record);
         } else {
             $record->timecreated = $now;
-            $subid = (int) $DB->insert_record('block_feedback_tracker_sub', $record);
+            $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle);
         }
 
         // V2.0.0+: the per-submission pause ledger was removed. The
         // pause timeline is recomputed on demand by get_pause_timeline.
         // $audit['pauses'] is intentionally unused here.
+
+        /* islatest is an attempt-wide fact, so it is maintained set-based
+         * across every cycle of the tuple — the upsert above only touches the
+         * highest one, and a superseded attempt whose cycle-0 row still
+         * claimed islatest = 1 would stay pending for ever. */
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET islatest = :islatest
+              WHERE cmid = :cmid AND userid = :userid AND attemptnumber = :att',
+            [
+                'islatest' => $latest,
+                'cmid' => $cmid,
+                'userid' => $userid,
+                'att' => $attemptnumber,
+            ]
+        );
+        if ($newcycle) {
+            $DB->execute(
+                'UPDATE {block_feedback_tracker_sub}
+                    SET iscurrent = 0
+                  WHERE cmid = :cmid AND userid = :userid
+                    AND attemptnumber = :att AND cycle < :cycle',
+                ['cmid' => $cmid, 'userid' => $userid, 'att' => $attemptnumber, 'cycle' => $cycle]
+            );
+        }
 
         dirty_queue::enqueue(
             (int) $cm->course,
@@ -185,6 +515,422 @@ class submission_ledger {
         );
 
         return $subid;
+    }
+
+    /**
+     * The marker currently allocated to a student, across core versions.
+     *
+     * Moodle 4.5 and 5.1 store a single marker in
+     * `{assign_user_flags}.allocatedmarker`. Moodle 5.2 dropped that column
+     * and moved allocation into `{assign_allocated_marker}`, which holds one
+     * row per marker — so reading the old column there raises a DML error, and
+     * `marker_updated` does fire on 5.2, which would take the observer with it.
+     *
+     * With several markers the lowest id is chosen deterministically rather
+     * than trusting the event payload: 5.2+ fires one event per marker in
+     * insertion order, so "the last event wins" and a re-read would disagree
+     * on every multi-marker student and rewrite the row on every poll.
+     *
+     * @param int $assignid
+     * @param int $userid
+     * @return int Marker user id, or 0 when unallocated.
+     */
+    private static function allocated_marker_id(int $assignid, int $userid): int {
+        global $DB;
+
+        if (self::$hasallocationtable === null) {
+            self::$hasallocationtable = $DB->get_manager()->table_exists('assign_allocated_marker');
+        }
+        if (self::$hasallocationtable) {
+            $marker = $DB->get_field_sql(
+                "SELECT MIN(am.marker)
+                   FROM {assign_allocated_marker} am
+                  WHERE am.assignment = :assignid AND am.student = :userid AND am.marker > 0",
+                ['assignid' => $assignid, 'userid' => $userid]
+            );
+            return (int) ($marker ?: 0);
+        }
+        return (int) $DB->get_field(
+            'assign_user_flags',
+            'allocatedmarker',
+            ['assignment' => $assignid, 'userid' => $userid],
+            IGNORE_MISSING
+        );
+    }
+
+    /**
+     * Split the response interval into the coordination queue and the marker's
+     * own turnaround.
+     *
+     * `queuehours` runs from hand-in to the FIRST allocation and belongs to
+     * whoever runs the allocation. `allochours` runs from the CURRENT marker's
+     * allocation to the grading and is the only part that is theirs — which is
+     * why the current stamp is used rather than the first: someone who
+     * inherits a submission on day 8 and grades it on day 9 turned it round in
+     * a day, not nine.
+     *
+     * A non-positive interval yields NULL, never 0.0. Zero effective hours
+     * bands as `excellent`, so a stamp that landed at or after the grading —
+     * which the reconciler produces whenever it discovers an allocation after
+     * the fact — would read as a flawless turnaround. That failure direction
+     * is unacceptable for a figure attached to a person, so the row is marked
+     * unmeasurable instead and excluded from the medians.
+     *
+     * @param \stdClass|null $existing The current ledger row, or null when new.
+     * @param int $courseid
+     * @param int $groupid Reporting group, for the academic-time calendar.
+     * @param int $timesubmitted This cycle's hand-in time.
+     * @param int|null $timegraded The recorded response time, or null while open.
+     * @return array Keys: queuehours, allochours, allocdays, allocbucket, late.
+     */
+    private static function allocation_measures(
+        ?\stdClass $existing,
+        int $courseid,
+        int $groupid,
+        int $timesubmitted,
+        ?int $timegraded
+    ): array {
+        $none = [
+            'queuehours' => null,
+            'allochours' => null,
+            'allocdays' => null,
+            'allocbucket' => null,
+            'late' => false,
+        ];
+        if ($existing === null) {
+            return $none;
+        }
+
+        $allocated = $existing->timeallocated !== null ? (int) $existing->timeallocated : 0;
+        $current = $existing->timeallocmarker !== null ? (int) $existing->timeallocmarker : $allocated;
+        if ($allocated <= 0) {
+            return $none;
+        }
+
+        $out = $none;
+        if ($allocated > $timesubmitted) {
+            $out['queuehours'] = academic_time::elapsed_with_audit(
+                $courseid,
+                $groupid,
+                $timesubmitted,
+                $allocated
+            )['hours'];
+        } else {
+            // Allocated before or at hand-in: there was no queue at all.
+            $out['queuehours'] = 0.0;
+        }
+
+        $upper = $timegraded ?? time();
+        if ($current <= 0 || $upper <= $current) {
+            $out['late'] = $timegraded !== null;
+            return $out;
+        }
+        $hours = academic_time::elapsed_with_audit($courseid, $groupid, $current, $upper)['hours'];
+        $out['allochours'] = $hours;
+        $out['allocdays'] = day_counter::business_days($current, $upper);
+        $out['allocbucket'] = bucket::for_effective($hours);
+        return $out;
+    }
+
+    /**
+     * Resolve a course-module row, rejecting anything that is not an assign.
+     *
+     * @param int $cmid
+     * @return \stdClass|null Object with id, course and instance.
+     */
+    private static function resolve_assign_cm(int $cmid): ?\stdClass {
+        global $DB;
+        $cm = $DB->get_record_sql(
+            "SELECT cm.id, cm.course, cm.instance
+               FROM {course_modules} cm
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE cm.id = :cmid",
+            ['modname' => 'assign', 'cmid' => $cmid]
+        );
+        return $cm ?: null;
+    }
+
+    /**
+     * The submission group a user hands work in under a team assignment.
+     *
+     * Mirrors `assign::get_submission_group()`: the single group the user
+     * belongs to within the activity's grouping, or the default group (0) when
+     * they belong to none or to more than one. Returns null when the default
+     * group is not allowed to submit, in which case the user has no team.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param int $courseid
+     * @param int $userid
+     * @return int|null Group id, 0 for the default group, or null when none applies.
+     */
+    private static function team_group_for_user(\stdClass $assign, int $courseid, int $userid): ?int {
+        $groups = groups_get_all_groups(
+            $courseid,
+            $userid,
+            (int) ($assign->teamsubmissiongroupingid ?? 0),
+            'g.id',
+            false,
+            true
+        );
+        if (count($groups) === 1) {
+            $group = reset($groups);
+            return (int) $group->id;
+        }
+        // Not in exactly one group: mod_assign's default group, unless barred.
+        return empty($assign->preventsubmissionnotingroup) ? 0 : null;
+    }
+
+    /**
+     * Enrolled, active members whose work the given team submission covers.
+     *
+     * For a real group that is its membership; for the default group (0) it is
+     * every participant who is not in exactly one group of the activity's
+     * grouping, which is the same rule core applies in
+     * `assign::get_submission_group_members()`.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param int $courseid
+     * @param int $groupid
+     * @return array Member user ids.
+     */
+    private static function team_member_ids(\stdClass $assign, int $courseid, int $groupid): array {
+        global $DB;
+
+        try {
+            $context = \context_course::instance($courseid);
+        } catch (\Throwable $e) {
+            return [];
+        }
+        [$esql, $params] = get_enrolled_sql($context, 'mod/assign:submit', 0, true);
+        $enrolled = $DB->get_fieldset_sql("SELECT e.id FROM ($esql) e", $params);
+        if (empty($enrolled)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($enrolled as $userid) {
+            $userid = (int) $userid;
+            if (self::team_group_for_user($assign, $courseid, $userid) === $groupid) {
+                $out[] = $userid;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Insert one cycle row, tolerating a concurrent writer.
+     *
+     * The check-then-insert above races against a second request touching the
+     * same tuple, and the unique index turns that race into an exception that
+     * would abort the teacher's grade save. Outside a transaction it is safe to
+     * recover by re-reading; inside one it is not, because a failed INSERT has
+     * already poisoned the connection on PostgreSQL, so the exception is
+     * rethrown and the event manager downgrades it to a debugging notice.
+     *
+     * @param \stdClass $record Fully built ledger record.
+     * @param int $cmid
+     * @param int $userid
+     * @param int $attemptnumber
+     * @param int $cycle
+     * @return int Ledger row id.
+     */
+    private static function insert_cycle_row(
+        \stdClass $record,
+        int $cmid,
+        int $userid,
+        int $attemptnumber,
+        int $cycle
+    ): int {
+        global $DB;
+        try {
+            return (int) $DB->insert_record('block_feedback_tracker_sub', $record);
+        } catch (\dml_write_exception $e) {
+            if ($DB->is_transaction_started()) {
+                throw $e;
+            }
+            $row = $DB->get_record('block_feedback_tracker_sub', [
+                'cmid' => $cmid,
+                'userid' => $userid,
+                'attemptnumber' => $attemptnumber,
+                'cycle' => $cycle,
+            ], 'id', MUST_EXIST);
+            $record->id = (int) $row->id;
+            unset($record->timecreated);
+            $DB->update_record('block_feedback_tracker_sub', $record);
+            return (int) $row->id;
+        }
+    }
+
+    /**
+     * Whether the activity can carry a numeric mark at all.
+     *
+     * `assign.grade` is the grade type: greater than zero is a point scale,
+     * less than zero is a Moodle scale id, and exactly zero is grade type
+     * "None". A "None" activity can never receive a mark, so the ordinary
+     * grade-value test would leave every submission pending for ever.
+     *
+     * @param \stdClass $assign An {assign} row.
+     * @return bool
+     */
+    private static function is_activity_gradable(\stdClass $assign): bool {
+        return (float) ($assign->grade ?? 0) != 0.0;
+    }
+
+    /**
+     * Whether a marking-workflow grade only stops the SLA clock once released.
+     *
+     * Default off, so an upgrade moves no displayed number: a site that does
+     * not use marking workflow is unaffected either way, and a site that does
+     * keeps its historical figures until an admin opts in and recomputes. The
+     * stored `timereleased` / `timeclosed` / `gradestate` columns are
+     * maintained regardless, so turning it on needs no re-derivation of what
+     * the student actually saw.
+     *
+     * @return bool
+     */
+    private static function release_stops_the_clock(): bool {
+        return (int) (get_config('block_feedback_tracker', 'release_stops_clock') ?: 0) === 1;
+    }
+
+    /**
+     * Stamp a marking-workflow release across every ledger row of one student
+     * on one course-module.
+     *
+     * The upsert only ever touches the current cycle of the latest attempt,
+     * but a release covers whatever that student had marked and unreleased —
+     * earlier cycles, earlier attempts. mod_assign records no release
+     * timestamp of its own, so an unobserved release is lost for good; this
+     * writes it wherever it applies while the event is in hand.
+     *
+     * @param int $cmid
+     * @param int $userid
+     * @param int $when Observed release instant.
+     * @return void
+     */
+    public static function stamp_release_for_user(int $cmid, int $userid, int $when): void {
+        global $DB;
+
+        $params = ['when' => $when, 'cmid' => $cmid, 'userid' => $userid];
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET timereleased = :when, timeclosed = :when2, gradestate = :released
+              WHERE cmid = :cmid AND userid = :userid
+                AND timemarked IS NOT NULL AND timereleased IS NULL',
+            $params + ['when2' => $when, 'released' => grading_state::WORKFLOW_RELEASED]
+        );
+        /* Only rows the release policy left open are closed here; under the
+         * default policy the mark already stopped their clock. */
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET timegraded = :when
+              WHERE cmid = :cmid AND userid = :userid
+                AND timemarked IS NOT NULL AND timegraded IS NULL',
+            $params
+        );
+
+        $rows = $DB->get_records(
+            'block_feedback_tracker_sub',
+            ['cmid' => $cmid, 'userid' => $userid],
+            '',
+            'id, courseid, groupid'
+        );
+        $tuples = [];
+        foreach ($rows as $row) {
+            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
+                (int) $row->courseid, (int) $row->groupid,
+            ];
+        }
+        foreach ($tuples as [$courseid, $groupid]) {
+            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_GRADE);
+        }
+    }
+
+    /**
+     * Record when marking responsibility for a student landed.
+     *
+     * `timeallocated` is the first allocation and is sticky — it closes the
+     * coordination-queue measurement and must not move on reassignment.
+     * `timeallocmarker` tracks the current marker, so someone who inherits a
+     * long-queued submission is measured from their own start rather than from
+     * a queue they did not cause. The marker id is re-read from core rather
+     * than taken from the event payload, because Moodle 5.2 and later fire one event
+     * per marker and the last one to arrive is not necessarily the one the
+     * table settles on.
+     *
+     * @param int $cmid
+     * @param int $userid
+     * @param int $when Allocation instant, or the moment of discovery when
+     *                  reconciled.
+     * @param string $source One of the ALLOC_SOURCE_* constants; reconciled
+     *                       stamps are accurate only to the sweep period and
+     *                       are kept separable for that reason.
+     * @return void
+     */
+    public static function stamp_allocation_for_user(
+        int $cmid,
+        int $userid,
+        int $when,
+        string $source = self::ALLOC_SOURCE_OBSERVED
+    ): void {
+        global $DB;
+
+        $cm = $DB->get_record_sql(
+            "SELECT cm.id, cm.course, cm.instance
+               FROM {course_modules} cm
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE cm.id = :cmid",
+            ['modname' => 'assign', 'cmid' => $cmid]
+        );
+        if (!$cm) {
+            return;
+        }
+        $marker = self::allocated_marker_id((int) $cm->instance, $userid);
+
+        $rows = $DB->get_records(
+            'block_feedback_tracker_sub',
+            ['cmid' => $cmid, 'userid' => $userid],
+            '',
+            'id, courseid, groupid, timesubmitted, timeallocated, allocmarkerid'
+        );
+        $tuples = [];
+        foreach ($rows as $row) {
+            $update = (object) [
+                'id' => (int) $row->id,
+                'allocmarkerid' => $marker,
+                'timemodified' => time(),
+            ];
+            if ($marker > 0) {
+                if ($row->timeallocated === null) {
+                    $update->timeallocated = $when;
+                    /* The coordination queue closes now, so measure it now —
+                     * the value is final and nothing later can recover it if
+                     * the row is rebuilt from a different starting point. */
+                    $update->queuehours = $when > (int) $row->timesubmitted
+                        ? academic_time::elapsed_with_audit(
+                            (int) $row->courseid,
+                            (int) $row->groupid,
+                            (int) $row->timesubmitted,
+                            $when
+                        )['hours']
+                        : 0.0;
+                }
+                if ((int) $row->allocmarkerid !== $marker) {
+                    // A new marker starts their own clock; the queue metric stays put.
+                    $update->timeallocmarker = $when;
+                    $update->allochours = null;
+                    $update->allocdays = null;
+                    $update->allocbucket = null;
+                }
+                $update->allocsource = $source;
+            }
+            $DB->update_record('block_feedback_tracker_sub', $update);
+            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
+                (int) $row->courseid, (int) $row->groupid,
+            ];
+        }
+        foreach ($tuples as [$courseid, $groupid]) {
+            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
+        }
     }
 
     /**
@@ -203,12 +949,23 @@ class submission_ledger {
             return;
         }
 
-        $rows = $DB->get_records('block_feedback_tracker_sub', [
-            'iteminstance' => $assignid,
-            'groupid' => $groupid,
-        ], '', 'id, userid, courseid');
+        /* Selected by real membership of the overridden group, not by the
+         * ledger's own `groupid`. That column is the REPORTING attribution —
+         * the group a student was last added to, used to bucket the dashboard
+         * — and has no reason to match the group an override targets. Keying
+         * on it re-resolved the wrong students whenever the two differ, which
+         * is the normal case on any course where reporting groups and
+         * override groups are not the same set. */
+        $rows = $DB->get_records_sql(
+            "SELECT l.id, l.userid, l.courseid, l.groupid
+               FROM {block_feedback_tracker_sub} l
+               JOIN {groups_members} gm ON gm.userid = l.userid AND gm.groupid = :groupid
+              WHERE l.iteminstance = :assignid",
+            ['groupid' => $groupid, 'assignid' => $assignid]
+        );
 
         $now = time();
+        $tuples = [];
         foreach ($rows as $row) {
             $rule = rule_resolver::resolve_rule($assign, (int) $row->userid, $groupid);
             $DB->update_record('block_feedback_tracker_sub', (object) [
@@ -219,11 +976,61 @@ class submission_ledger {
                 'hasrule'      => $rule['hasrule'],
                 'timemodified' => $now,
             ]);
+            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
+                (int) $row->courseid, (int) $row->groupid,
+            ];
         }
 
-        if (!empty($rows)) {
-            $any = reset($rows);
-            dirty_queue::enqueue((int) $any->courseid, $groupid, dirty_queue::REASON_PAUSE);
+        /* Enqueue every reporting tuple actually touched. The old code
+         * enqueued one tuple built from the OVERRIDE group, which on a course
+         * whose reporting groups differ pointed at a rollup nothing had
+         * changed while leaving the real ones stale. */
+        foreach ($tuples as [$courseid, $reportgroupid]) {
+            dirty_queue::enqueue($courseid, $reportgroupid, dirty_queue::REASON_PAUSE);
+        }
+    }
+
+    /**
+     * Re-resolve the rule columns for one user's ledger rows on one assign.
+     *
+     * Used when a user-level override or an extension changes: both alter the
+     * dates that submission is judged against, and neither is visible in any
+     * other signal the plugin receives.
+     *
+     * @param int $assignid
+     * @param int $userid
+     * @return void
+     */
+    public static function re_resolve_rules_for_assign_user(int $assignid, int $userid): void {
+        global $DB;
+
+        $assign = $DB->get_record('assign', ['id' => $assignid]);
+        if (!$assign) {
+            return;
+        }
+        $rows = $DB->get_records('block_feedback_tracker_sub', [
+            'iteminstance' => $assignid,
+            'userid' => $userid,
+        ], '', 'id, courseid, groupid');
+
+        $now = time();
+        $tuples = [];
+        foreach ($rows as $row) {
+            $rule = rule_resolver::resolve_rule($assign, $userid, (int) $row->groupid);
+            $DB->update_record('block_feedback_tracker_sub', (object) [
+                'id'           => $row->id,
+                'timeopens'    => $rule['timeopens'],
+                'timecloses'   => $rule['timecloses'],
+                'timecutoff'   => $rule['timecutoff'],
+                'hasrule'      => $rule['hasrule'],
+                'timemodified' => $now,
+            ]);
+            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
+                (int) $row->courseid, (int) $row->groupid,
+            ];
+        }
+        foreach ($tuples as [$courseid, $groupid]) {
+            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_PAUSE);
         }
     }
 
@@ -360,5 +1167,6 @@ class submission_ledger {
      */
     public static function reset_memos(): void {
         self::$skipsubmittermemo = [];
+        self::$hasallocationtable = null;
     }
 }

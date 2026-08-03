@@ -124,6 +124,20 @@ $capabilities = [
         'riskbitmask' => RISK_DATALOSS,
     ],
 
+    /* Removing the block from many courses at once, and optionally discarding
+     * their measured history. Separate from :resetdata (which wipes the whole
+     * site) and from :managecalendar (configuration, not destruction) so that
+     * being able to edit term dates never implies being able to clear a
+     * semester's worth of courses. */
+    'block/feedback_tracker:bulkmanageblocks' => [
+        'captype' => 'write',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [
+            'manager' => CAP_ALLOW,
+        ],
+        'riskbitmask' => RISK_DATALOSS,
+    ],
+
     'block/feedback_tracker:viewaudit' => [
         'captype' => 'read',
         'contextlevel' => CONTEXT_SYSTEM,

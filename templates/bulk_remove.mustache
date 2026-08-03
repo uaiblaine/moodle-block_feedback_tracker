@@ -1,0 +1,170 @@
+{{!
+    @template    block_feedback_tracker/bulk_remove
+
+    Bulk block-removal tool: a filter form, then the matching courses with a
+    progressive-reveal list and a typed confirmation.
+
+    Context variables required:
+    * formhtml      string  Rendered filter moodleform (trusted server HTML).
+    * filtered      bool    Whether a filter has been applied yet.
+    * hasrows       bool    Whether the filter matched anything.
+    * rows          array   Candidate courses.
+    * shown         int     Rows visible before any reveal.
+    * loaded        int     Rows present in the DOM.
+    * total         int     Rows matching the filter overall.
+    * truncated     bool    Whether total exceeds loaded.
+    * pagesize      int     Rows revealed per click.
+    * actionurl     string  Form target.
+    * sesskey       string  Session key.
+    * filtervalues  object  Filter values echoed back for the removal POST.
+    * str           object  Localised labels.
+
+    Example context (json):
+    {
+        "formhtml": "<form></form>",
+        "filtered": true,
+        "hasrows": true,
+        "rows": [
+            {
+                "courseid": 12,
+                "fullname": "Biology 101",
+                "shortname": "BIO101",
+                "categoryname": "Science",
+                "hidden": true,
+                "enddate": "31/12/25",
+                "ledgerrows": "1,204",
+                "collapsed": false
+            }
+        ],
+        "shown": 1,
+        "loaded": 1,
+        "total": 1,
+        "truncated": false,
+        "pagesize": 25,
+        "maxresults": 100,
+        "actionurl": "https://example.org/blocks/feedback_tracker/pages/bulk_remove.php",
+        "sesskey": "abc123",
+        "filtervalues": {
+            "endedbefore": 0,
+            "startedbefore": 0,
+            "noenddate": 1,
+            "categoryid": 0,
+            "hiddenonly": 0
+        },
+        "str": {
+            "intro": "Remove the block from courses that are over.",
+            "empty": "No courses match.",
+            "colcourse": "Course",
+            "colcategory": "Category",
+            "colenddate": "Ends",
+            "colrows": "Measured rows",
+            "hiddenlabel": "Hidden",
+            "loadmore": "Load 25 more",
+            "showingprefix": "Showing",
+            "showingmiddle": "of",
+            "truncated": "Showing 1 of 1",
+            "discardnow": "Discard the data immediately",
+            "discardnowhelp": "Skips the grace period.",
+            "confirmlabel": "Type the number of selected courses",
+            "confirmhelp": "This confirms you have read the list.",
+            "submit": "Remove the block"
+        }
+    }
+}}
+<div class="bft-bulk">
+    <p class="bft-bulk-intro">{{str.intro}}</p>
+
+    {{{formhtml}}}
+
+    {{#filtered}}
+        {{^hasrows}}
+            <div class="alert alert-info" role="status">{{str.empty}}</div>
+        {{/hasrows}}
+        {{#hasrows}}
+            <form method="post" action="{{actionurl}}" data-bft-bulk-root
+                  data-bft-bulk-pagesize="{{pagesize}}">
+                <input type="hidden" name="sesskey" value="{{sesskey}}">
+                <input type="hidden" name="confirmremoval" value="1">
+                <input type="hidden" name="f_endedbefore" value="{{filtervalues.endedbefore}}">
+                <input type="hidden" name="f_startedbefore" value="{{filtervalues.startedbefore}}">
+                <input type="hidden" name="f_noenddate" value="{{filtervalues.noenddate}}">
+                <input type="hidden" name="f_categoryid" value="{{filtervalues.categoryid}}">
+                <input type="hidden" name="f_hiddenonly" value="{{filtervalues.hiddenonly}}">
+
+                <p class="bft-bulk-count" role="status">
+                    {{str.showingprefix}}
+                    <span data-bft-bulk-shown>{{shown}}</span>
+                    {{str.showingmiddle}} {{total}}
+                </p>
+                {{#truncated}}
+                    <div class="alert alert-warning" role="status">{{str.truncated}}</div>
+                {{/truncated}}
+
+                <div class="bft-bulk-tablewrap">
+                    <table class="generaltable bft-bulk-table">
+                        <thead>
+                            <tr>
+                                <th scope="col"><span class="sr-only">{{str.colcourse}}</span></th>
+                                <th scope="col">{{str.colcourse}}</th>
+                                <th scope="col">{{str.colcategory}}</th>
+                                <th scope="col">{{str.colenddate}}</th>
+                                <th scope="col">{{str.colrows}}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{#rows}}
+                                <tr data-bft-bulk-row
+                                    class="{{#collapsed}}bft-bulk-row-collapsed{{/collapsed}}">
+                                    <td>
+                                        <input type="checkbox" name="courseids[]"
+                                               value="{{courseid}}" data-bft-bulk-check
+                                               id="bftbulk{{courseid}}">
+                                    </td>
+                                    <td>
+                                        <label for="bftbulk{{courseid}}">{{fullname}}</label>
+                                        <span class="bft-bulk-shortname">{{shortname}}</span>
+                                        {{#hidden}}
+                                            <span class="badge bft-bulk-hidden">{{str.hiddenlabel}}</span>
+                                        {{/hidden}}
+                                    </td>
+                                    <td>{{categoryname}}</td>
+                                    <td class="bft-mono">{{enddate}}</td>
+                                    <td class="bft-mono">{{ledgerrows}}</td>
+                                </tr>
+                            {{/rows}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>
+                    <button type="button" class="btn btn-secondary" data-bft-bulk-more>
+                        {{str.loadmore}}
+                    </button>
+                </p>
+
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="discardnow"
+                           value="1" id="bftbulkdiscard">
+                    <label class="form-check-label" for="bftbulkdiscard">{{str.discardnow}}</label>
+                    <p class="form-text">{{str.discardnowhelp}}</p>
+                </div>
+
+                <div class="bft-bulk-confirm">
+                    <label for="bftbulkconfirm">{{str.confirmlabel}}</label>
+                    <input type="number" class="form-control" id="bftbulkconfirm"
+                           name="confirmcount" min="0" value="" data-bft-bulk-confirm>
+                    <p class="form-text">
+                        {{str.confirmhelp}}
+                        (<span data-bft-bulk-selected>0</span>)
+                    </p>
+                </div>
+
+                <p>
+                    <button type="submit" class="btn btn-danger" data-bft-bulk-submit disabled>
+                        {{str.submit}}
+                    </button>
+                </p>
+            </form>
+        {{/hasrows}}
+    {{/filtered}}
+</div>

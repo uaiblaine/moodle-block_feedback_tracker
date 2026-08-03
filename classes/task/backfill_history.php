@@ -226,10 +226,10 @@ class backfill_history extends \core\task\scheduled_task {
             return [0, $cursor, false];
         }
         $rows = $DB->get_records_sql(
-            "SELECT s.id AS subid, s.userid, s.attemptnumber, cm.id AS cmid
+            "SELECT s.id AS subid, s.userid, s.groupid, s.attemptnumber, cm.id AS cmid
                FROM {assign_submission} s
                JOIN {assign} a ON a.id = s.assignment
-               JOIN {course_modules} cm ON cm.instance = a.id
+               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
               WHERE s.id > :cursor AND cm.course = :cid
            ORDER BY s.id ASC",
@@ -249,6 +249,7 @@ class backfill_history extends \core\task\scheduled_task {
             $buffer[] = [
                 'cmid'          => (int) $r->cmid,
                 'userid'        => (int) $r->userid,
+                'groupid'       => (int) $r->groupid,
                 'attemptnumber' => (int) $r->attemptnumber,
                 'courseid'      => $courseid,
             ];

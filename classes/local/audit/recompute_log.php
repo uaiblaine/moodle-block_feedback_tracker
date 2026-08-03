@@ -51,6 +51,20 @@ class recompute_log {
     public const REASON_BACKFILL_DAYS = 'backfill_days';
 
     /**
+     * A course's history was discarded because the block was removed and the
+     * grace period expired. Moodle triggers no event when a block is deleted,
+     * so this row is the only record that the deletion ever happened.
+     */
+    public const REASON_BLOCK_REMOVED = 'block_removed';
+
+    /**
+     * The block was removed from a batch of courses by the bulk tool. Core
+     * records nothing for a block deletion, so this is the only trace a mass
+     * removal leaves anywhere.
+     */
+    public const REASON_BULK_REMOVAL = 'bulk_removal';
+
+    /**
      * Insert one audit row.
      *
      * @param string $reason One of self::REASON_*.

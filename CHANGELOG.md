@@ -5,6 +5,317 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - Unreleased
+
+### Added
+- **A tool to remove the block from many courses at once**, for the
+  end-of-period sweep: filter by end date, start date, "no end date set",
+  category (including subcategories) and hidden-only, then pick from the
+  matches. The three date questions are separate and combinable rather than one
+  clever control, because `course.enddate` is optional in Moodle and frequently
+  zero — "ended before" alone misses most of an old archive, while silently
+  falling back to `startdate` would sweep in courses still running.
+
+  It deliberately does **not** go through `is_processable()`, which excludes
+  hidden courses: a hidden course is what an archived one looks like, so the
+  tool would have been blind to exactly the courses it exists to clear.
+
+  The removal runs as a background task rather than in the submitting request,
+  so a several-hundred-course sweep cannot time out halfway with a partial
+  result nobody can see. A course that fails is skipped and counted rather than
+  aborting the batch.
+
+  Friction is a requirement here, not a cost. The list reveals 25 rows at a
+  time up to 100 and states "showing N of M", so a truncated list can never
+  read as a complete one; past 100 it asks for a narrower filter instead of
+  paging, because with paging "select all" acquires two meanings and the
+  difference between them is a few hundred courses cleared by accident.
+  Confirmation is the **number of selected courses**, typed: a number has to be
+  read to be typed, unlike a fixed word, and it goes stale the moment the
+  selection changes. Selections are re-validated server-side against the
+  candidate query, so a hand-edited form cannot reach a course the filter never
+  offered.
+
+  Gated by a new `block/feedback_tracker:bulkmanageblocks` capability (manager
+  archetype, `RISK_DATALOSS`) — separate from `:managecalendar`, so being able
+  to edit term dates never implies being able to clear a semester of courses.
+  Because Moodle records nothing at all when a block is deleted, the batch
+  writes an audit row naming who ran it and what it touched.
+
+## [1.0.40] - Unreleased
+
+### Added
+- **Removing the block from a course now discards that course's history, after
+  a grace period.** Previously the data simply stayed, invisible and
+  unreachable, for ever. Moodle's own convention is to delete a block's data
+  immediately in `instance_delete()`, and that is right for a block that owns
+  its data — `block_html` deleting its own files. This block is a *gate*: the
+  history belongs to the course, the plugin's tables are not in course backups,
+  and removing a block from a course page is a small act with an irreversible
+  consequence. So the discard is deferred and re-checked.
+
+  **The run-time re-check is what makes the delay worth having.** Restoring a
+  backup into an existing course with "delete the current contents" calls
+  `remove_course_contents()`, which runs `blocks_delete_all_for_context()` on
+  the course context and takes this block with it before the restore puts it
+  back; importing from another course does the same. Without the re-check a
+  routine restore would destroy a year of measurement a week later, with
+  nothing in any log connecting the two — Moodle triggers **no event at all**
+  when a block is deleted, on any supported version.
+
+  The check asks about block presence directly rather than through
+  `is_processable()`, which also requires the course to be visible: hiding a
+  course is what archiving one looks like, and it must never read as "the block
+  is gone".
+
+  Off by default (`removal_cleanup_active`). The grace period defaults to a
+  week and optionally follows the site's own recycle-bin retention — the
+  longest enabled window wins, so this plugin is never quicker to discard a
+  course's history than the site is to discard the course. A recycle bin set to
+  never expire is ignored rather than treated as an infinite grace, which would
+  silently disable the cleanup altogether. Floor of one hour.
+
+  Because Moodle records nothing when a block is removed, the discard writes an
+  audit row naming the course and the number of rows dropped.
+
+## [1.0.39] - Unreleased
+
+### Added
+- **A retention policy, so the ledger has a ceiling.** The table had none: a
+  closed measurement is never rewritten, a resubmission after grading opens
+  another one, and a team submission is carried by every member — so it grew
+  for the life of the site with no pruning of any kind. The new
+  `prune_ledger` scheduled task discards closed measurements older than
+  `retention_days` (default 365, floor 30), plus the daily trend and site-stat
+  rows that outlived every surface reading them.
+
+  Two rules make it safe to run unattended:
+
+  - **Only closed measurements are deleted.** A submission still awaiting
+    feedback is outstanding work, and its age is precisely the signal this
+    plugin exists to surface, so no age threshold can reach it. Pending rows
+    leave only when their submission, course or enrolment does.
+  - **The reconciler agrees on the boundary.** Its first sweep recreates a
+    ledger row for any submission lacking one, so without a shared cutoff it
+    would resurrect everything the pruner deleted on the next tick, for ever.
+    Both read `retention::cutoff()`, and a mutation test proves the guard is
+    load-bearing.
+
+  **Off by default** (`retention_active`), matching `backfill_active`: an
+  upgrade must never start deleting a site's history because a new version
+  shipped a policy. Turning it on bounds the report's all-time Graded tab —
+  an audit surface — to the window, which the setting says in its own
+  description.
+
+  A window below 30 days is ignored and falls back to the default: it would
+  delete work still inside the 30-day statistical window the score and the
+  medians are built from, so the rollup would disagree with its own inputs.
+
+## [1.0.38] - Unreleased
+
+### Fixed
+- **The pending count now matches Moodle's own at the boundary.** A grade saved
+  in the same clock second as the submission's last change read as *graded*
+  here and as *needs grading* in core's counter, whose clause is
+  `s.timemodified >= g.timemodified`. Core needs that direction because it
+  auto-creates placeholder grade rows carrying the submission's own timestamp;
+  the plugin rejects those by grade value instead, but the boundary is now
+  identical anyway — a disagreement at the tie would have shown two different
+  pending counts for one activity and had the reconciler chasing the gap for
+  ever.
+- **Group overrides re-resolved the wrong students.** The rule refresh selected
+  ledger rows by the ledger's own `groupid`, which is the *reporting*
+  attribution — the group a student was last added to, used to bucket the
+  dashboard — and has no reason to match the group an override targets. It now
+  selects by real membership of the overridden group, and enqueues every
+  reporting tuple actually touched rather than one built from the override
+  group.
+- **`marker_updated` no longer breaks on Moodle 5.2 or later.** 5.2 dropped
+  `assign_user_flags.allocatedmarker` in favour of the new
+  `assign_allocated_marker` table, and it does fire the event, so reading the
+  old column took the observer down with it. 5.02 is a supported branch, so
+  this was a live defect, not a forward-compatibility note.
+
+### Added
+- **The response interval is split by who owns each part.** A submission that
+  waited ten days to be allocated and was then marked in two hours used to
+  report a ten-day turnaround against the marker. The ledger now records
+  `queuehours` (hand-in to the first allocation — the coordination queue, which
+  belongs to whoever runs the allocation) beside `allochours` / `allocdays` /
+  `allocbucket` (the current marker's allocation to the grading — the only part
+  that is theirs). The student-experience clock that feeds the responsiveness
+  score is deliberately unchanged: the student really did wait the whole time,
+  and that remains the institution's SLA.
+- The marker turnaround is measured from the **current** marker's allocation,
+  not the first, so someone who inherits a long-queued submission on day 8 and
+  grades it on day 9 is measured at one day rather than nine. mod_assign fires
+  no de-allocation event in any supported version, so the reassignment is only
+  detectable from the next allocation.
+- **A non-measurable interval reports null, never zero.** An allocation stamp
+  that lands at or after the grading — which the reconciler produces whenever
+  it discovers an allocation after the fact — would otherwise band as
+  `excellent`, reading as a flawless turnaround. Those rows are marked
+  `allocsource = 'late'` and excluded from the medians.
+- Rollup columns `unallocated` (pending work nobody is responsible for yet),
+  `median_queue_h`, `median_alloc_h` and `alloc_coverage_pct`, plus the split
+  on `get_responsiveness` and on every listed submission row
+  (`get_pending_submissions` / `get_graded_submissions`). The report shows the
+  per-row split with an explanatory tooltip.
+- **User-level overrides and extensions reach the ledger.**
+  `user_override_created` / `_updated` / `_deleted` and `extension_granted` are
+  now observed: all four move the dates one student is judged against, and none
+  is visible in any other signal — the reconciler's rule-drift sweep compares
+  against the activity's own dates and `assign_user_flags`, so an
+  `assign_overrides` row was invisible to it.
+- **An eighth reconciliation sweep discovers silent allocations.** Before
+  Moodle 5.2 only the batch "Set allocated marker" operation fires an event;
+  quick grading and the grading form write the allocation with no signal at
+  all. Those are now found by a periodic diff and stamped
+  `allocsource = 'reconciled'` — the moment of *discovery*, not of allocation,
+  which is why it stays separable from `observed`: a median built from a mix
+  without saying so would understate every turnaround.
+- Behat coverage for the three outcomes only a browser can prove: the reported
+  resubmission defect (the grading survives in the history *and* a new pending
+  item appears), the awaiting-release chip, and a group submission appearing
+  against every member. The scenarios pin core's grading form via
+  `local_unifiedgrader/enable_assign`, so a sibling plugin that replaces the
+  assign grading UI cannot move the field labels underneath them.
+- `alloc_coverage_pct` is published **beside** `median_alloc_h`, never alone:
+  before Moodle 5.2 only one of mod_assign's three allocation paths fires an
+  event, so the sample is partial by construction and the median must not be
+  read as if it covered everyone.
+
+## [1.0.37] - Unreleased
+
+### Fixed
+- **A student who re-saves an already-graded submission no longer un-grades
+  it.** The ledger compared the live `assign_submission.timemodified` against
+  the grade time on a single mutable row, so any later save — even one that
+  changed nothing — pushed the hand-in time past the grading time, reset
+  `timegraded` to null and restarted the clock. The recorded response time was
+  destroyed and the submission reappeared as awaiting feedback, while Moodle
+  itself kept reporting it as graded. The ledger now keys on a **measurement
+  cycle**: work resubmitted after it already carried a mark opens a new cycle
+  instead of rewriting the closed one, so the completed turnaround survives in
+  the history and the re-look becomes a correctly-pending item whose clock
+  starts at the re-save. Removing the timestamp comparison outright was
+  considered and rejected — it makes a reopened cycle inherit the old mark and
+  be born graded with a fabricated zero-hour turnaround.
+- **Group assignments are tracked per member instead of not at all.**
+  mod_assign stores a team's work in one `assign_submission` row with
+  `userid = 0`; the observer mirrored it verbatim, producing a ledger row the
+  rollup counted (it does not join `user`) but every list hid (they all do) —
+  a pending item nobody could clear — while the actual group members got no row
+  at all. The container row is now refused at the write path (and the existing
+  ones removed on upgrade), and team submissions are fanned out to one ledger
+  row per member: timing and status from the shared group row, the mark from
+  each member's own grade row, tagged with the originating `teamgroupid`.
+  A member who never personally saved has no submission row of their own when
+  `requireallteammemberssubmit` is on, which is precisely why the per-user
+  lookup dropped them; the fan-out reads the group row instead. Members of the
+  default group (in none, or more than one, group of the activity's grouping)
+  follow the same rule core applies, and are skipped entirely when
+  `preventsubmissionnotingroup` bars them from submitting. Both the observers
+  and the historical backfill route through it.
+- **Superseded attempts stop counting as pending.** The ledger now mirrors
+  `assign_submission.latest`, which is the gate core applies to every one of
+  its own needs-grading reads, and every pending predicate is filtered on it
+  plus `iscurrent` — the rollup's pending set, the stale-row recomputer, the
+  report's pending and draft tabs, and the grade-now priority list. Granting
+  another attempt fires no event at all, so an ungraded earlier attempt
+  previously stayed pending indefinitely with a clock that grew without bound.
+  The graded populations deliberately keep **every** cycle: a teacher who
+  responded twice generated two genuine response events, so `numgraded30d`
+  counts responses rather than distinct students.
+- **The dashboard's "current" medians no longer count one attempt twice.**
+  `cur_median_eff_h` / `cur_median_raw_h` / `cur_median_eff_days` /
+  `cur_median_perc_days` merged the 30-day graded set with the pending set, so
+  an attempt whose earlier cycle was graded inside the window while its current
+  cycle awaits feedback appeared in both. They are now built from a dedicated
+  current-state population, one live observation per attempt.
+- **Elapsed-day fallbacks can no longer go negative.** A row written before the
+  cycle model could hold `timegraded` earlier than `timesubmitted`, and the
+  un-backfilled-day fallback turned that into a negative count that sorted
+  straight to the top of the priority list. Clamped at zero, expressed as
+  `CASE` rather than `GREATEST` (which core uses nowhere and which SQL Server
+  lacks before 2022).
+- **Activities with grade type "None" are no longer permanently pending.** They
+  can never carry a numeric mark, so the grade-value test never passed. They
+  now follow core's needs-grading counter, which clears them on a grade row
+  later than the hand-in.
+- **Submission events from the online-text and file subplugins no longer read
+  the wrong row.** Those events override `objecttable`, so their `objectid` is
+  the subplugin row id and the real `assign_submission.id` lives in
+  `other['submissionid']`. The observer looked the former up in the latter's
+  table: it either found nothing, or found an unrelated row and wrote a ledger
+  entry against the wrong student.
+
+### Added
+- **Scheduled ledger reconciliation** (`reconcile_ledger`, every two hours,
+  `reconcile_active` on by default). Six classes of mod_assign mutation emit
+  no usable event and can only be repaired by diffing against the source
+  tables: `add_attempt()` inserts a new attempt and flips the previous row's
+  `latest` flag in total silence; blind marking makes `gradebook_item_update()`
+  return false before doing anything, suppressing the grading event for the
+  entire activity until identities are revealed; grading a non-latest attempt
+  returns early, before the trigger; a gradebook-side override or lock silences
+  it too; `reset_userdata()` bulk-deletes submissions with
+  `delete_records_select()`, leaving orphans; and due dates, cut-offs,
+  overrides and extensions change with no per-row signal. Seven keyset-paged
+  sweeps, each behind its own cursor and bounded per tick, dispatch repairs as
+  adhoc tasks — except the two cleanup sweeps (orphaned rows, departed
+  participants), which act directly because the repair task re-gates on course
+  processability and would skip exactly the courses whose rows most need
+  removing. The divergence sweep mirrors the writer's predicate exactly and is
+  cycle-scoped, so it converges instead of re-dispatching the same repair every
+  tick; both properties are pinned by tests.
+- **Event coverage for the mod_assign actions the observer used to miss.**
+  `workflow_state_updated` (the marking-workflow release — the only signal
+  that a grade became visible to the student, and one core keeps no timestamp
+  for), `identities_revealed` (blind marking suppresses `submission_graded`
+  outright, so until identities are revealed every grading on the activity is
+  invisible and every submission reads as awaiting feedback), `marker_updated`,
+  `submission_removed`, `submission_duplicated`, and the
+  `assignsubmission_onlinetext` / `assignsubmission_file` `submission_updated`
+  twins — without which a student editing an existing submission is invisible
+  whenever `submissiondrafts` is on.
+- **Allocation timestamps.** `timeallocated` (first allocation, sticky, closes
+  the coordination-queue measurement), `timeallocmarker` (the current marker's
+  own start, so someone inheriting a long-queued submission is not charged for
+  a queue they did not cause), `allocmarkerid` and `allocsource`. mod_assign
+  stores no allocation timestamp on any supported version, so the moment is
+  only ever knowable when observed — and on 4.5 and 5.1 only the batch "Set
+  allocated marker" operation fires an event at all, which is what
+  `allocsource` records.
+- **"Awaiting release" chip on marked-but-unreleased submissions.** Under
+  marking workflow a saved grade is invisible to the student until the state
+  reaches *Released*, and releasing needs a capability the marker frequently
+  does not hold. The report now flags those rows with an explanatory tooltip so
+  the marker can see that an outstanding step exists and that it may not be
+  theirs. Reaches the payload as the new `awaitingrelease` field on
+  `get_pending_submissions` / `get_graded_submissions` rows.
+- New setting **`release_stops_clock`** (default off). When on, the response
+  clock for a marking-workflow activity stops at release rather than at
+  marking, which is when the feedback actually reaches the student. Default off
+  so the upgrade moves no displayed number; turning it on changes historical
+  figures on courses that use marking workflow and should be followed by
+  `cli/recompute_all.php` and `cli/backfill_trends.php`.
+- Ledger columns `cycle`, `timemarked`, `timereleased`, `timeclosed`,
+  `islatest`, `iscurrent`, `gradestate` and `teamgroupid`. `timereleased` and
+  `timeclosed` are maintained regardless of the setting above, so enabling it
+  later needs no re-derivation of what the student actually saw — mod_assign
+  persists no release timestamp of its own (`assign_user_flags` has no time
+  columns on any supported version), so the moment is only ever knowable when
+  observed.
+- `docs/moodle-52-multimarking.md`: what Moodle 5.2 changed about marker
+  allocation and multi-marking, and why it was a live defect rather than
+  future work.
+- `docs/assign-scenario-map.md` and `docs/assign-marking-allocation.md`: the
+  full audit of mod_assign's submission and grading lifecycle against this
+  plugin, covering the scenarios not yet addressed here (team fan-out, blind
+  marking, gradebook-side changes, course reset, the marking-allocation clock)
+  and the design for each.
+
 ## [1.0.36] - Unreleased
 
 ### Fixed

@@ -87,6 +87,12 @@ $i18n['drafts_heading'] = get_string('drilldown_drafts_heading', 'block_feedback
 $i18n['drafts_note'] = get_string('drilldown_drafts_note', 'block_feedback_tracker');
 $i18n['drilldown_col_lastsaved'] = get_string('drilldown_col_lastsaved', 'block_feedback_tracker');
 $i18n['status_draft'] = get_string('status_draft', 'block_feedback_tracker');
+/* Marked-but-unreleased chip. Releasing a marking-workflow grade needs a
+ * capability the marker frequently does not hold, so the row states the
+ * outstanding step instead of reading as finished. */
+$i18n['status_awaiting_release'] = get_string('status_awaiting_release', 'block_feedback_tracker');
+$i18n['status_awaiting_release_help'] = get_string('status_awaiting_release_help', 'block_feedback_tracker');
+$i18n['alloc_split_tip'] = get_string('alloc_split_tip', 'block_feedback_tracker');
 
 // Collapse state for the hero + academic-days container (per-user pref).
 $reportcollapsed = (bool) get_user_preferences(

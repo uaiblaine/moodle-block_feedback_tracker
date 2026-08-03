@@ -41,6 +41,11 @@ namespace block_feedback_tracker\local\sla;
 class submission_browser {
     /** Pending mode: submitted work awaiting feedback (timegraded IS NULL). */
     public const MODE_PENDING = 'pending';
+    /* Graded mode is deliberately ALL-TIME while every other graded consumer is
+     * windowed to 30 days. This tab is an audit surface: a teacher opens it to
+     * see everything they have returned. The 30-day windows elsewhere feed the
+     * score and the medians, which have to be comparable across groups. Two
+     * different purposes, so the divergence is intentional — do not align them. */
     /** Graded mode: submitted work already returned (timegraded IS NOT NULL). */
     public const MODE_GRADED = 'graded';
     /** Draft mode: saved-but-not-submitted work (never counts toward the SLA). */
@@ -123,7 +128,9 @@ class submission_browser {
         $total = (int) $DB->count_records_sql("SELECT COUNT(1) $from WHERE $rowswhere", $rowsparams);
 
         $select = "SELECT sub.id, sub.cmid, sub.userid, sub.groupid, sub.timesubmitted,
-                          sub.timegraded, sub.waitinghours, sub.effectivehours, sub.effectivedays,
+                          sub.timegraded, sub.timemarked, sub.timeclosed,
+                          sub.queuehours, sub.allochours,
+                          sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
                           u.firstname, u.lastname, a.name AS activityname, g.name AS groupname";
         $orderby = self::order_by($mode, $sort, $order);
@@ -191,6 +198,20 @@ class submission_browser {
                     ? self::pending_band_days($storeddays ?? (float) $days['business'], $daygoal, $daycrit)
                     : self::pending_band($eff, $goal, $crit),
                 'submissionstatus' => (string) $r->submissionstatus,
+                /* A mark that the marking workflow has not released is
+                 * invisible to the student, and releasing frequently needs a
+                 * permission the marker does not hold — so it is surfaced
+                 * explicitly instead of being folded into "graded". */
+                'awaitingrelease'  => (int) (
+                    $r->timemarked !== null && $r->timeclosed === null
+                ),
+                /* The response interval split by owner: how long the work
+                 * waited to be allocated, and how long the marker then took.
+                 * Per-row facts, so unlike the aggregate medians they carry no
+                 * sampling caveat — a row either has both stamps or reports
+                 * null. */
+                'queuehours'       => $r->queuehours !== null ? (float) $r->queuehours : null,
+                'allochours'       => $r->allochours !== null ? (float) $r->allochours : null,
             ];
         }
 
@@ -225,12 +246,20 @@ class submission_browser {
      * @return string SQL expression usable anywhere sub.effectivedays was.
      */
     private static function days_expr(string $mode, int $now): string {
+        /* Clamped at zero. A legacy row written before the cycle model could
+         * hold timegraded < timesubmitted (the old code overwrote the hand-in
+         * time on every re-save), and a negative day count sorts to the top of
+         * a priority list — the loudest possible place for a bad number.
+         * Expressed as CASE rather than GREATEST: core uses GREATEST nowhere,
+         * and it is absent from SQL Server before 2022. */
         if ($mode === self::MODE_GRADED) {
-            return 'COALESCE(sub.effectivedays, (sub.timegraded - sub.timesubmitted) / 86400.0)';
+            $raw = 'COALESCE(sub.effectivedays, (sub.timegraded - sub.timesubmitted) / 86400.0)';
+        } else {
+            // The reference time is server-generated, so inlining it keeps the
+            // expression free of parameters the four call sites would each rebind.
+            $raw = sprintf('COALESCE(sub.effectivedays, (%d - sub.timesubmitted) / 86400.0)', $now);
         }
-        // The reference time is server-generated, so inlining it keeps the
-        // expression free of parameters the four call sites would each rebind.
-        return sprintf('COALESCE(sub.effectivedays, (%d - sub.timesubmitted) / 86400.0)', $now);
+        return sprintf('(CASE WHEN %s < 0 THEN 0 ELSE %s END)', $raw, $raw);
     }
 
     /**
@@ -257,15 +286,26 @@ class submission_browser {
         $where = 'sub.courseid = :courseid';
         $params = ['courseid' => $courseid];
 
+        /* Open work is gated on the live state of the attempt: `islatest`
+         * mirrors assign_submission.latest (core gates every one of its own
+         * needs-grading reads on it, so a superseded attempt is nobody's
+         * outstanding task) and `iscurrent` keeps one attempt to a single live
+         * observation when a resubmission opened a later cycle.
+         *
+         * The graded side deliberately keeps EVERY cycle: a teacher who
+         * responded twice generated two genuine response events, and dropping
+         * the earlier one would re-create exactly the data loss the cycle
+         * model exists to prevent. */
         if ($mode === self::MODE_DRAFT) {
             $where .= ' AND sub.submissionstatus = :substatus';
+            $where .= ' AND sub.islatest = 1 AND sub.iscurrent = 1';
             $params['substatus'] = submission_status::DRAFT;
         } else {
             $where .= ' AND sub.submissionstatus = :substatus';
             $params['substatus'] = submission_status::SUBMITTED;
             $where .= $mode === self::MODE_GRADED
                 ? ' AND sub.timegraded IS NOT NULL'
-                : ' AND sub.timegraded IS NULL';
+                : ' AND sub.timegraded IS NULL AND sub.islatest = 1 AND sub.iscurrent = 1';
         }
 
         if ($visibleids !== null) {
