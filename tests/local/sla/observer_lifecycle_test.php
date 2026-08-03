@@ -186,6 +186,121 @@ final class observer_lifecycle_test extends \advanced_testcase {
     }
 
     /**
+     * A team activity dispatches once per group, not once per member.
+     *
+     * mod_assign's DEFAULT group is groupid 0, so rows for it are stored with
+     * teamgroupid = 0 — indistinguishable from an individual row. Routing on
+     * the stored value would send each member back through the whole-group
+     * fan-out, which is quadratic in group size; routing on the live
+     * teamsubmission flag is what keeps it linear.
+     *
+     * @return void
+     */
+    public function test_team_activity_dispatches_once_per_group(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$course, , $cm, $assign] = $this->build_environment(['teamsubmission' => 1]);
+
+        /* build_environment() already enrolled one student, and the default
+         * group is every participant not in exactly one group of the activity's
+         * grouping — so these three make four members of group 0. */
+        for ($i = 0; $i < 3; $i++) {
+            $this->getDataGenerator()->create_and_enrol($course, 'student');
+        }
+        // The team container row: one per group, userid 0, default group 0.
+        $when = time() - 3 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $when,
+            'timemodified' => $when,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => 0,
+            'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_team_attempt((int) $cm->id, 0, 0);
+        $this->assertSame(
+            4,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'The fixture needs one ledger row per member to be meaningful.'
+        );
+
+        $this->fire_module_updated($cm, $course, 'assign');
+
+        $descriptors = $this->queued_descriptors();
+        $this->assertCount(
+            1,
+            $descriptors,
+            'Three member rows in one group must collapse to a single group descriptor.'
+        );
+        $this->assertSame(0, (int) $descriptors[0]['userid']);
+        $this->assertSame(0, (int) $descriptors[0]['groupid']);
+    }
+
+    /**
+     * With team submission off, rows that still carry a team shape are
+     * re-derived per member.
+     *
+     * Reachability, stated honestly: core freezes the `teamsubmission` field
+     * once the activity has any submission or grade
+     * (`mod/assign/mod_form.php`), and ledger rows only exist once it does, so
+     * the settings form cannot get here — a restore or a direct write can.
+     * The test sets the field directly for that reason. What it pins is the
+     * routing rule itself: read the live flag, not the stored `teamgroupid`. A
+     * team descriptor built from the stale value would be a guaranteed no-op,
+     * because `upsert_for_team_attempt()` returns immediately once the
+     * activity is no longer a team one.
+     *
+     * @return void
+     */
+    public function test_rows_with_a_stale_team_shape_are_re_derived_per_member(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$course, , $cm, $assign] = $this->build_environment(['teamsubmission' => 1]);
+
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $members = [];
+        for ($i = 0; $i < 2; $i++) {
+            $user = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->getDataGenerator()->create_group_member([
+                'groupid' => $group->id,
+                'userid' => $user->id,
+            ]);
+            $members[] = $user;
+        }
+        $when = time() - 3 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $when,
+            'timemodified' => $when,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => $group->id,
+            'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_team_attempt((int) $cm->id, (int) $group->id, 0);
+        $this->assertSame(2, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
+
+        // The teacher unticks "Students submit in groups" and saves.
+        $DB->set_field('assign', 'teamsubmission', 0, ['id' => $assign->id]);
+        $this->fire_module_updated($cm, $course, 'assign');
+
+        $descriptors = $this->queued_descriptors();
+        $this->assertCount(2, $descriptors, 'Each member must be re-derived on their own.');
+        foreach ($descriptors as $d) {
+            $this->assertNotSame(
+                0,
+                (int) $d['userid'],
+                'A team descriptor here would be a no-op: the activity is no longer a team one.'
+            );
+        }
+    }
+
+    /**
      * A settings save on any other module type dispatches nothing.
      *
      * Note what this does NOT pin: remove the module-name filter and the test
@@ -316,9 +431,10 @@ final class observer_lifecycle_test extends \advanced_testcase {
     /**
      * Build a processable course with an enrolled student and an assign.
      *
+     * @param array $assignopts Extra {assign} settings.
      * @return array The course, the student, the cm and the assign record.
      */
-    private function build_environment(): array {
+    private function build_environment(array $assignopts = []): array {
         global $DB;
         $course = $this->getDataGenerator()->create_course();
         $this->getDataGenerator()->create_block('feedback_tracker', [
@@ -327,7 +443,10 @@ final class observer_lifecycle_test extends \advanced_testcase {
         course_access::reset_memo();
 
         $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
-        $instance = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
+        $instance = $this->getDataGenerator()->create_module(
+            'assign',
+            array_merge(['course' => $course->id], $assignopts)
+        );
         $cm = get_coursemodule_from_instance('assign', $instance->id);
         $assign = $DB->get_record('assign', ['id' => $instance->id], '*', MUST_EXIST);
         return [$course, $student, $cm, $assign];

@@ -169,6 +169,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * inline rather than reusing `get_enrolled_sql()` because that helper is
      * course-scoped while this sweep is deliberately cross-course.
      *
+     * The site course is exempt, because core exempts it: `get_enrolled_join()`
+     * skips the whole enrolment join when the course context is SITEID —
+     * "all users are enrolled on the frontpage" — and nobody holds a
+     * {user_enrolments} row there. Without the exemption an activity on the
+     * front page would stop being repaired entirely, which is a quieter and
+     * worse failure than the oscillation this predicate exists to end.
+     *
      * @param array $processable Course ids in scope.
      * @param int $batch Row ceiling for this sweep.
      * @param string $key Cursor key.
@@ -196,7 +203,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 AND cm.course $csql
                 AND l.id IS NULL
                 AND s.timemodified >= :retention
-                AND EXISTS (
+                AND (cm.course = :siteid OR EXISTS (
                     SELECT 1
                       FROM {user_enrolments} ue
                       JOIN {enrol} en ON en.id = ue.enrolid AND en.courseid = cm.course
@@ -205,7 +212,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                        AND en.status = 0
                        AND (ue.timestart = 0 OR ue.timestart <= :nowstart)
                        AND (ue.timeend = 0 OR ue.timeend > :nowend)
-                )
+                ))
            ORDER BY s.id ASC",
             $cparams + [
                 'modname' => 'assign',
@@ -213,6 +220,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 'retention' => $this->retention_floor(),
                 'nowstart' => $now,
                 'nowend' => $now,
+                'siteid' => SITEID,
             ],
             0,
             $batch

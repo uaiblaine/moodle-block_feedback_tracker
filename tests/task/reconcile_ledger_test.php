@@ -311,6 +311,53 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * An activity on the front page is still repaired.
+     *
+     * Nobody holds a {user_enrolments} row on the site course, and core knows
+     * it: `get_enrolled_join()` skips the enrolment join outright when the
+     * course context is SITEID. A missing-row sweep that demanded an enrolment
+     * unconditionally would therefore stop repairing front-page activities
+     * altogether — silently, which is worse than the oscillation the predicate
+     * exists to end.
+     *
+     * @return void
+     */
+    public function test_front_page_activity_is_still_repaired(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        $this->getDataGenerator()->create_block('feedback_tracker', [
+            'parentcontextid' => \context_course::instance(SITEID)->id,
+        ]);
+        course_access::reset_memo();
+
+        $student = $this->getDataGenerator()->create_user();
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => SITEID]);
+        $cm = get_coursemodule_from_instance('assign', $assign->id);
+        $this->assertFalse(
+            $DB->record_exists_sql(
+                'SELECT 1
+                   FROM {user_enrolments} ue
+                   JOIN {enrol} en ON en.id = ue.enrolid
+                  WHERE ue.userid = :userid AND en.courseid = :courseid',
+                ['userid' => $student->id, 'courseid' => SITEID]
+            ),
+            'The fixture is only meaningful while the front page has no enrolment rows.'
+        );
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        $this->run_reconciler();
+
+        $this->assertSame(
+            1,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'A front-page submission must still get a ledger row.'
+        );
+    }
+
+    /**
      * Convergence. A second pass over a ledger the first pass already made
      * correct must dispatch nothing — otherwise the task would re-repair the
      * same rows on every cron tick for ever.

@@ -72,11 +72,19 @@ class observer {
      * one thing it must never do — the remainder has to be picked up
      * deliberately rather than assumed done.
      *
+     * The ceiling is judged on `$fetched`, the number of rows the query
+     * actually returned, not on the descriptor count. Callers collapse many
+     * rows into one descriptor — every cycle of an attempt, every member of a
+     * team — so a descriptor count can sit far below the ceiling while the
+     * `LIMIT` has already truncated the source. Measuring the wrong one turns
+     * this notice into the silence it exists to prevent.
+     *
      * @param array $rows Row descriptors for backfill_one_submission.
+     * @param int $fetched Rows the source query returned, before collapsing.
      * @param string $context Short description of the trigger, for the notice.
      * @return void
      */
-    private static function dispatch_backfill(array $rows, string $context): void {
+    private static function dispatch_backfill(array $rows, int $fetched, string $context): void {
         $buffer = [];
         foreach ($rows as $row) {
             $buffer[] = $row;
@@ -88,7 +96,7 @@ class observer {
         if (!empty($buffer)) {
             self::queue_backfill($buffer);
         }
-        if (count($rows) >= self::BULK_MAX_ROWS) {
+        if ($fetched >= self::BULK_MAX_ROWS) {
             debugging(sprintf(
                 'block_feedback_tracker: %s hit the %d-row ceiling; '
                 . 'the remaining submissions need a manual backfill.',
@@ -343,6 +351,7 @@ class observer {
         }
         self::dispatch_backfill(
             array_values($descriptors),
+            count($rows),
             sprintf('identities_revealed on cmid %d', $cmid)
         );
     }
@@ -400,6 +409,33 @@ class observer {
             return;
         }
 
+        /* Route on the LIVE teamsubmission flag, never on the stored
+         * teamgroupid, because the stored value cannot tell the two shapes
+         * apart: mod_assign's DEFAULT group IS groupid 0, so a team row for it
+         * is stored with teamgroupid = 0, identical to an individual row.
+         * Routing those per member sends each member back through the
+         * whole-group fan-out — quadratic in group size, on the one path that
+         * exists to be cheap.
+         *
+         * It also covers team submission being switched off, where the rows
+         * still carry their old teamgroupid and a team descriptor built from it
+         * would be a guaranteed no-op (upsert_for_team_attempt() returns
+         * immediately once the activity is no longer a team one). That case is
+         * defensive rather than live: core freezes the teamsubmission field
+         * whenever the activity has any submission or grade
+         * (mod/assign/mod_form.php), and ledger rows only exist once it does,
+         * so the settings form cannot produce it — a restore or a direct write
+         * still can. */
+        $teamsubmission = (int) $DB->get_field_sql(
+            "SELECT a.teamsubmission
+               FROM {assign} a
+               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE cm.id = :cmid",
+            ['modname' => 'assign', 'cmid' => $cmid],
+            IGNORE_MISSING
+        );
+
         /* Selecting the row id first is not cosmetic: get_records_sql() keys
          * the result by the first column and silently keeps only the last row
          * of any duplicate key, so a DISTINCT userid projection would drop
@@ -417,12 +453,10 @@ class observer {
 
         $descriptors = [];
         foreach ($rows as $r) {
-            $teamgroupid = (int) $r->teamgroupid;
-            if ($teamgroupid > 0) {
-                /* Dispatch team work once per (group, attempt), not once per
-                 * member: each descriptor already fans out to every member of
-                 * the group, so per-member dispatch would do that fan-out once
-                 * per member — quadratic in group size. */
+            if ($teamsubmission === 1) {
+                /* Once per (group, attempt), not once per member: each
+                 * descriptor already fans out to the whole group. */
+                $teamgroupid = (int) $r->teamgroupid;
                 $descriptors['t' . $teamgroupid . ':' . (int) $r->attemptnumber] = [
                     'cmid' => $cmid,
                     'userid' => 0,
@@ -442,6 +476,7 @@ class observer {
 
         self::dispatch_backfill(
             array_values($descriptors),
+            count($rows),
             sprintf('course_module_updated on cmid %d', $cmid)
         );
     }
