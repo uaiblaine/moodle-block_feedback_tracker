@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - Unreleased
+
+### Added
+- **A tool to remove the block from many courses at once**, for the
+  end-of-period sweep: filter by end date, start date, "no end date set",
+  category (including subcategories) and hidden-only, then pick from the
+  matches. The three date questions are separate and combinable rather than one
+  clever control, because `course.enddate` is optional in Moodle and frequently
+  zero — "ended before" alone misses most of an old archive, while silently
+  falling back to `startdate` would sweep in courses still running.
+
+  It deliberately does **not** go through `is_processable()`, which excludes
+  hidden courses: a hidden course is what an archived one looks like, so the
+  tool would have been blind to exactly the courses it exists to clear.
+
+  The removal runs as a background task rather than in the submitting request,
+  so a several-hundred-course sweep cannot time out halfway with a partial
+  result nobody can see. A course that fails is skipped and counted rather than
+  aborting the batch.
+
+  Friction is a requirement here, not a cost. The list reveals 25 rows at a
+  time up to 100 and states "showing N of M", so a truncated list can never
+  read as a complete one; past 100 it asks for a narrower filter instead of
+  paging, because with paging "select all" acquires two meanings and the
+  difference between them is a few hundred courses cleared by accident.
+  Confirmation is the **number of selected courses**, typed: a number has to be
+  read to be typed, unlike a fixed word, and it goes stale the moment the
+  selection changes. Selections are re-validated server-side against the
+  candidate query, so a hand-edited form cannot reach a course the filter never
+  offered.
+
+  Gated by a new `block/feedback_tracker:bulkmanageblocks` capability (manager
+  archetype, `RISK_DATALOSS`) — separate from `:managecalendar`, so being able
+  to edit term dates never implies being able to clear a semester of courses.
+  Because Moodle records nothing at all when a block is deleted, the batch
+  writes an audit row naming who ran it and what it touched.
+
+## [1.0.40] - Unreleased
+
+### Added
+- **Removing the block from a course now discards that course's history, after
+  a grace period.** Previously the data simply stayed, invisible and
+  unreachable, for ever. Moodle's own convention is to delete a block's data
+  immediately in `instance_delete()`, and that is right for a block that owns
+  its data — `block_html` deleting its own files. This block is a *gate*: the
+  history belongs to the course, the plugin's tables are not in course backups,
+  and removing a block from a course page is a small act with an irreversible
+  consequence. So the discard is deferred and re-checked.
+
+  **The run-time re-check is what makes the delay worth having.** Restoring a
+  backup into an existing course with "delete the current contents" calls
+  `remove_course_contents()`, which runs `blocks_delete_all_for_context()` on
+  the course context and takes this block with it before the restore puts it
+  back; importing from another course does the same. Without the re-check a
+  routine restore would destroy a year of measurement a week later, with
+  nothing in any log connecting the two — Moodle triggers **no event at all**
+  when a block is deleted, on any supported version.
+
+  The check asks about block presence directly rather than through
+  `is_processable()`, which also requires the course to be visible: hiding a
+  course is what archiving one looks like, and it must never read as "the block
+  is gone".
+
+  Off by default (`removal_cleanup_active`). The grace period defaults to a
+  week and optionally follows the site's own recycle-bin retention — the
+  longest enabled window wins, so this plugin is never quicker to discard a
+  course's history than the site is to discard the course. A recycle bin set to
+  never expire is ignored rather than treated as an infinite grace, which would
+  silently disable the cleanup altogether. Floor of one hour.
+
+  Because Moodle records nothing when a block is removed, the discard writes an
+  audit row naming the course and the number of rows dropped.
+
+## [1.0.39] - Unreleased
+
+### Added
+- **A retention policy, so the ledger has a ceiling.** The table had none: a
+  closed measurement is never rewritten, a resubmission after grading opens
+  another one, and a team submission is carried by every member — so it grew
+  for the life of the site with no pruning of any kind. The new
+  `prune_ledger` scheduled task discards closed measurements older than
+  `retention_days` (default 365, floor 30), plus the daily trend and site-stat
+  rows that outlived every surface reading them.
+
+  Two rules make it safe to run unattended:
+
+  - **Only closed measurements are deleted.** A submission still awaiting
+    feedback is outstanding work, and its age is precisely the signal this
+    plugin exists to surface, so no age threshold can reach it. Pending rows
+    leave only when their submission, course or enrolment does.
+  - **The reconciler agrees on the boundary.** Its first sweep recreates a
+    ledger row for any submission lacking one, so without a shared cutoff it
+    would resurrect everything the pruner deleted on the next tick, for ever.
+    Both read `retention::cutoff()`, and a mutation test proves the guard is
+    load-bearing.
+
+  **Off by default** (`retention_active`), matching `backfill_active`: an
+  upgrade must never start deleting a site's history because a new version
+  shipped a policy. Turning it on bounds the report's all-time Graded tab —
+  an audit surface — to the window, which the setting says in its own
+  description.
+
+  A window below 30 days is ignored and falls back to the default: it would
+  delete work still inside the 30-day statistical window the score and the
+  medians are built from, so the rollup would disagree with its own inputs.
+
 ## [1.0.38] - Unreleased
 
 ### Fixed

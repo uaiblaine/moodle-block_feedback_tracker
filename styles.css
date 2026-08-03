@@ -3946,3 +3946,45 @@ a.bft-activity-action:focus {
     text-decoration: none;
     opacity: 0.9;
 }
+
+/* Bulk block-removal tool. The collapsed rows are present in the DOM from the
+ * first render so a tick survives every reveal — refetching would silently
+ * discard a selection an administrator had already made. */
+/* Scoped under .bft-bulk so these beat Bootstrap's own single-class rules on
+ * the same elements — .btn sets display: inline-block at equal specificity, so
+ * an unscoped .bft-hidden loses on source order and the control stays visible
+ * while the JS believes it hid it. !important is not available: the fleet
+ * gate runs stylelint with declaration-no-important. */
+.bft-bulk .bft-bulk-row-collapsed {
+    display: none;
+}
+
+.bft-bulk .bft-hidden {
+    display: none;
+}
+
+.bft-bulk-count {
+    font-family: var(--bft-mono-family, monospace);
+    font-weight: 700;
+}
+
+.bft-bulk-shortname {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--bft-text-muted, #64748b);
+}
+
+.bft-bulk-hidden {
+    background: #e2e8f0;
+    color: #475569;
+    margin-left: 0.35rem;
+}
+
+.bft-bulk-tablewrap {
+    overflow-x: auto;
+}
+
+.bft-bulk-confirm {
+    max-width: 22rem;
+    margin: 1rem 0;
+}

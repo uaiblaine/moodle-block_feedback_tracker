@@ -101,6 +101,17 @@ $tasks = [
         'dayofweek' => '*',
         'month'     => '*',
     ],
+    /* Bounds the ledger's growth. Off by default: an upgrade must never start
+     * deleting a site's history because a new version shipped a policy. */
+    [
+        'classname' => 'block_feedback_tracker\task\prune_ledger',
+        'blocking'  => 0,
+        'minute'    => '45',
+        'hour'      => '4',
+        'day'       => '*',
+        'dayofweek' => '*',
+        'month'     => '*',
+    ],
     [
         'classname' => 'block_feedback_tracker\task\prune_audit_log',
         'blocking'  => 0,

@@ -47,6 +47,12 @@ if (has_capability('block/feedback_tracker:viewaudit', $context)) {
         'label' => get_string('manage_link_audit', 'block_feedback_tracker'),
     ];
 }
+if (has_capability('block/feedback_tracker:bulkmanageblocks', $context)) {
+    $links[] = [
+        'url'   => (new moodle_url('/blocks/feedback_tracker/pages/bulk_remove.php'))->out(false),
+        'label' => get_string('manage_link_bulkremove', 'block_feedback_tracker'),
+    ];
+}
 if (has_capability('block/feedback_tracker:resetdata', $context)) {
     $links[] = [
         'url'   => (new moodle_url('/blocks/feedback_tracker/pages/reset.php'))->out(false),

@@ -280,6 +280,8 @@ if ($ADMIN->fulltree) {
         'trend_window_days'         => '30',
         'purge_inactive_after_days' => '730',
         'reconcile_batch_size'      => '500',
+        'retention_days'            => '365',
+        'retention_batch_size'      => '5000',
     ];
     foreach ($perf as $key => $default) {
         $settings->add(new admin_setting_configtext(
@@ -312,6 +314,9 @@ if ($ADMIN->fulltree) {
         'exclude_grader_submissions'  => 1,
         'release_stops_clock'         => 0,
         'reconcile_active'            => 1,
+        'retention_active'            => 0,
+        'removal_cleanup_active'      => 0,
+        'removal_grace_follow_recyclebin' => 1,
     ];
     foreach ($viewbools as $key => $default) {
         $settings->add(new admin_setting_configcheckbox(
@@ -321,6 +326,17 @@ if ($ADMIN->fulltree) {
             $default
         ));
     }
+
+    /* Grace period before a removed block's course data is discarded. A
+     * duration control rather than a plain integer so the unit is explicit —
+     * and so it reads in the same currency as tool_recyclebin's own expiry
+     * settings, which this can follow. */
+    $settings->add(new admin_setting_configduration(
+        $plugin . '/removal_grace_seconds',
+        get_string('settings_removal_grace_seconds', $plugin),
+        get_string('settings_removal_grace_seconds_desc', $plugin),
+        \block_feedback_tracker\local\sla\removal_grace::DEFAULT_SECONDS
+    ));
 
     // Display unit for the wait-time metrics. 'hours' (default) keeps the
     // existing effective/wall-clock hour figures; 'business_days' switches to
@@ -371,6 +387,10 @@ if ($ADMIN->fulltree) {
             [
                 'url'   => (new moodle_url('/blocks/feedback_tracker/pages/audit_log.php'))->out(false),
                 'label' => get_string('manage_link_audit', $plugin),
+            ],
+            [
+                'url'   => (new moodle_url('/blocks/feedback_tracker/pages/bulk_remove.php'))->out(false),
+                'label' => get_string('manage_link_bulkremove', $plugin),
             ],
             [
                 'url'   => (new moodle_url('/blocks/feedback_tracker/pages/reset.php'))->out(false),
