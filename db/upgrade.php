@@ -596,5 +596,21 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026080300, 'feedback_tracker');
     }
 
+    /* An index leading with userid. The two user-scoped deletions added with
+     * the enrolment and account-deletion observers filter on userid alone (or
+     * on courseid + userid), and no existing index leads with it — the closest,
+     * idx_item_user, leads with iteminstance — so both were full table scans on
+     * exactly the bulk paths that matter: an end-of-term unenrolment sweep and
+     * a bulk account deletion. */
+    if ($oldversion < 2026080306) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $index = new xmldb_index('idx_user', XMLDB_INDEX_NOTUNIQUE, ['userid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_block_savepoint(true, 2026080306, 'feedback_tracker');
+    }
+
     return true;
 }

@@ -37,11 +37,11 @@ namespace block_feedback_tracker\local\sla;
  * this).
  */
 class observer {
-    /** Ceiling on rows re-derived from one identities-revealed event. */
-    private const REVEAL_MAX_ROWS = 20000;
+    /** Ceiling on rows re-derived from any one bulk-triggering event. */
+    private const BULK_MAX_ROWS = 20000;
 
-    /** Rows per adhoc backfill task dispatched by identities_revealed. */
-    private const REVEAL_CHUNK = 50;
+    /** Rows per adhoc backfill task dispatched by a bulk re-derivation. */
+    private const BULK_CHUNK = 50;
 
     /**
      * Queue one adhoc backfill batch, logging rather than propagating a
@@ -60,6 +60,48 @@ class observer {
                 'block_feedback_tracker: could not queue backfill for %d row(s): %s',
                 count($rows),
                 $e->getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Chunk a set of backfill descriptors into adhoc tasks, and say so when
+     * the set was truncated.
+     *
+     * A bounded sweep that stays quiet reads as full coverage, which is the
+     * one thing it must never do — the remainder has to be picked up
+     * deliberately rather than assumed done.
+     *
+     * The ceiling is judged on `$fetched`, the number of rows the query
+     * actually returned, not on the descriptor count. Callers collapse many
+     * rows into one descriptor — every cycle of an attempt, every member of a
+     * team — so a descriptor count can sit far below the ceiling while the
+     * `LIMIT` has already truncated the source. Measuring the wrong one turns
+     * this notice into the silence it exists to prevent.
+     *
+     * @param array $rows Row descriptors for backfill_one_submission.
+     * @param int $fetched Rows the source query returned, before collapsing.
+     * @param string $context Short description of the trigger, for the notice.
+     * @return void
+     */
+    private static function dispatch_backfill(array $rows, int $fetched, string $context): void {
+        $buffer = [];
+        foreach ($rows as $row) {
+            $buffer[] = $row;
+            if (count($buffer) >= self::BULK_CHUNK) {
+                self::queue_backfill($buffer);
+                $buffer = [];
+            }
+        }
+        if (!empty($buffer)) {
+            self::queue_backfill($buffer);
+        }
+        if ($fetched >= self::BULK_MAX_ROWS) {
+            debugging(sprintf(
+                'block_feedback_tracker: %s hit the %d-row ceiling; '
+                . 'the remaining submissions need a manual backfill.',
+                $context,
+                self::BULK_MAX_ROWS
             ));
         }
     }
@@ -290,40 +332,153 @@ class observer {
          * would otherwise run the whole academic-time engine inside the
          * teacher's request. */
         $rows = $DB->get_records_sql(
-            "SELECT DISTINCT s.userid, s.attemptnumber
+            "SELECT s.id, s.userid, s.attemptnumber
                FROM {assign_submission} s
               WHERE s.assignment = :assignid AND s.userid > 0
            ORDER BY s.userid ASC",
             ['assignid' => $assignid],
             0,
-            self::REVEAL_MAX_ROWS
+            self::BULK_MAX_ROWS
         );
-        $buffer = [];
+        $descriptors = [];
         foreach ($rows as $r) {
-            $buffer[] = [
+            $descriptors[(int) $r->userid . ':' . (int) $r->attemptnumber] = [
                 'cmid' => $cmid,
                 'userid' => (int) $r->userid,
                 'attemptnumber' => (int) $r->attemptnumber,
                 'courseid' => $courseid,
             ];
-            if (count($buffer) >= self::REVEAL_CHUNK) {
-                self::queue_backfill($buffer);
-                $buffer = [];
+        }
+        self::dispatch_backfill(
+            array_values($descriptors),
+            count($rows),
+            sprintf('identities_revealed on cmid %d', $cmid)
+        );
+    }
+
+    /**
+     * An activity's settings were saved.
+     *
+     * Only `assign` matters, and only three of its settings do:
+     * `markingworkflow`, `markingallocation` and `teamsubmission` change what
+     * the rows already written *mean*. With marking workflow on, the response
+     * lands when the mark is released rather than when it is entered, so
+     * `timeclosed` is chosen from a different stamp; with team submission on,
+     * the work belongs to a group rather than a person. None of this is a
+     * value drifting out of sync, so no reconciler sweep can see it: the
+     * divergence sweep keys on the mark, the rule sweep keys on dates, and
+     * both would find the stored rows perfectly consistent with a definition
+     * that no longer applies. Re-derivation from live state is the only repair.
+     *
+     * Rather than compare settings against a snapshot the ledger does not
+     * keep, every affected row is simply re-derived — the upsert reads the
+     * live {assign} row, so the re-derivation *is* the resync. The work is
+     * dispatched as adhoc chunks: a settings save must not run the
+     * academic-time engine for a whole cohort inside the teacher's request.
+     *
+     * @param \core\event\base $event
+     * @return void
+     */
+    public static function course_module_updated(\core\event\base $event): void {
+        $cmid = (int) ($event->objectid ?? 0);
+        $courseid = (int) ($event->courseid ?? 0);
+        if ($cmid <= 0 || $courseid <= 0) {
+            return;
+        }
+
+        $other = $event->other;
+        if (is_object($other)) {
+            $other = (array) $other;
+        }
+        /* The module name is the cheap rejection, and it carries most of the
+         * traffic: this event also fires once per contained module when a
+         * section is hidden or shown, and once per selected module from the
+         * bulk-edit web service. */
+        if (($other['modulename'] ?? null) !== 'assign') {
+            return;
+        }
+        if (!course_access::is_processable($courseid)) {
+            return;
+        }
+
+        global $DB;
+        /* Nothing measured yet — the overwhelmingly common case for a settings
+         * save — means nothing to re-derive. One indexed existence check keeps
+         * a routine save off every path below. */
+        if (!$DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cmid])) {
+            return;
+        }
+
+        /* Route on the LIVE teamsubmission flag, never on the stored
+         * teamgroupid, because the stored value cannot tell the two shapes
+         * apart: mod_assign's DEFAULT group IS groupid 0, so a team row for it
+         * is stored with teamgroupid = 0, identical to an individual row.
+         * Routing those per member sends each member back through the
+         * whole-group fan-out — quadratic in group size, on the one path that
+         * exists to be cheap.
+         *
+         * It also covers team submission being switched off, where the rows
+         * still carry their old teamgroupid and a team descriptor built from it
+         * would be a guaranteed no-op (upsert_for_team_attempt() returns
+         * immediately once the activity is no longer a team one). That case is
+         * defensive rather than live: core freezes the teamsubmission field
+         * whenever the activity has any submission or grade
+         * (mod/assign/mod_form.php), and ledger rows only exist once it does,
+         * so the settings form cannot produce it — a restore or a direct write
+         * still can. */
+        $teamsubmission = (int) $DB->get_field_sql(
+            "SELECT a.teamsubmission
+               FROM {assign} a
+               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE cm.id = :cmid",
+            ['modname' => 'assign', 'cmid' => $cmid],
+            IGNORE_MISSING
+        );
+
+        /* Selecting the row id first is not cosmetic: get_records_sql() keys
+         * the result by the first column and silently keeps only the last row
+         * of any duplicate key, so a DISTINCT userid projection would drop
+         * every attempt but one for any student with a resubmission. The
+         * de-duplication is done here instead, on the real key. */
+        $rows = $DB->get_records_sql(
+            "SELECT l.id, l.userid, l.attemptnumber, l.teamgroupid
+               FROM {block_feedback_tracker_sub} l
+              WHERE l.cmid = :cmid
+           ORDER BY l.id ASC",
+            ['cmid' => $cmid],
+            0,
+            self::BULK_MAX_ROWS
+        );
+
+        $descriptors = [];
+        foreach ($rows as $r) {
+            if ($teamsubmission === 1) {
+                /* Once per (group, attempt), not once per member: each
+                 * descriptor already fans out to the whole group. */
+                $teamgroupid = (int) $r->teamgroupid;
+                $descriptors['t' . $teamgroupid . ':' . (int) $r->attemptnumber] = [
+                    'cmid' => $cmid,
+                    'userid' => 0,
+                    'groupid' => $teamgroupid,
+                    'attemptnumber' => (int) $r->attemptnumber,
+                    'courseid' => $courseid,
+                ];
+                continue;
             }
+            $descriptors['u' . (int) $r->userid . ':' . (int) $r->attemptnumber] = [
+                'cmid' => $cmid,
+                'userid' => (int) $r->userid,
+                'attemptnumber' => (int) $r->attemptnumber,
+                'courseid' => $courseid,
+            ];
         }
-        if (!empty($buffer)) {
-            self::queue_backfill($buffer);
-        }
-        if (count($rows) >= self::REVEAL_MAX_ROWS) {
-            /* Never let a bounded sweep read as full coverage: say so, so the
-             * remainder is picked up deliberately rather than assumed done. */
-            debugging(sprintf(
-                'block_feedback_tracker: identities_revealed on cmid %d hit the %d-row ceiling; '
-                . 'the remaining submissions need a manual backfill.',
-                $cmid,
-                self::REVEAL_MAX_ROWS
-            ));
-        }
+
+        self::dispatch_backfill(
+            array_values($descriptors),
+            count($rows),
+            sprintf('course_module_updated on cmid %d', $cmid)
+        );
     }
 
     /**
@@ -455,6 +610,106 @@ class observer {
             return;
         }
         submission_ledger::delete_for_course($courseid);
+    }
+
+    /**
+     * A user's enrolment in a course was removed.
+     *
+     * Their ledger rows describe a response owed to somebody who is no longer
+     * a participant, so they inflate the course's pending count, the grader
+     * priority list and the medians until something removes them. The
+     * reconciler's departed-participant sweep already does, but it walks
+     * exactly one course per tick on a two-hourly task, so on a site with N
+     * tracked courses the rows survive up to ~2N hours — a whole semester's
+     * worth on a large site. This is the same deletion, immediately.
+     *
+     * Like the other cleanup handlers, it skips the processability gate: data
+     * previously tracked has to be collectable even after the block is gone.
+     *
+     * A user may hold several enrolments in one course. Core has already
+     * worked out whether this was the last one and ships the answer in the
+     * payload (`$ue->lastenrol`, set in `unenrol_user()` immediately before the
+     * event); re-deriving it with `get_enrolled_sql()` would materialise the
+     * whole enrolled set to answer a one-row question, once per event, and a
+     * bulk unenrolment fires one event per student.
+     *
+     * @param \core\event\base $event
+     * @return void
+     */
+    public static function enrolment_changed(\core\event\base $event): void {
+        $courseid = (int) ($event->courseid ?? 0);
+        $userid = (int) ($event->relateduserid ?? 0);
+        if ($courseid <= 0 || $userid <= 0) {
+            return;
+        }
+
+        $other = $event->other;
+        if (is_object($other)) {
+            $other = (array) $other;
+        }
+        $ue = $other['userenrolment'] ?? [];
+        if (is_object($ue)) {
+            $ue = (array) $ue;
+        }
+
+        if (array_key_exists('lastenrol', $ue)) {
+            if (empty($ue['lastenrol'])) {
+                // Another enrolment still stands; the user remains a participant.
+                return;
+            }
+        } else if (self::still_enrolled($courseid, $userid)) {
+            /* No payload to trust — a non-core producer of this event. One
+             * indexed existence check, not an enrolled-set materialisation. */
+            return;
+        }
+
+        submission_ledger::delete_for_course_user($courseid, $userid);
+    }
+
+    /**
+     * Whether any enrolment at all survives for this user in this course.
+     *
+     * Deliberately weaker than `get_enrolled_sql()`'s active test: this only
+     * decides whether to skip a deletion, and a suspended-but-present
+     * enrolment is left for the reconciler's own sweep to judge rather than
+     * acted on from an event that says nothing about status.
+     *
+     * @param int $courseid
+     * @param int $userid
+     * @return bool
+     */
+    private static function still_enrolled(int $courseid, int $userid): bool {
+        global $DB;
+        return $DB->record_exists_sql(
+            "SELECT 1
+               FROM {user_enrolments} ue
+               JOIN {enrol} en ON en.id = ue.enrolid
+              WHERE ue.userid = :userid AND en.courseid = :courseid",
+            ['userid' => $userid, 'courseid' => $courseid]
+        );
+    }
+
+    /**
+     * A user account was deleted.
+     *
+     * Their rows would otherwise stay in every course they ever submitted in,
+     * keeping a deleted account inside the data the privacy provider declares
+     * and exports, and inside the userlist of every one of those courses.
+     * Ungated, like the other cleanup handlers.
+     *
+     * The user id comes from `objectid`: core only guarantees `relateduserid`
+     * with a `debugging()` fallback to `objectid`, so reading `objectid`
+     * directly is the one that always holds.
+     *
+     * @param \core\event\base $event
+     * @return void
+     */
+    public static function user_deleted(\core\event\base $event): void {
+        $userid = (int) ($event->objectid ?? 0);
+        if ($userid <= 0) {
+            return;
+        }
+        submission_ledger::delete_for_user($userid);
     }
 
     /**

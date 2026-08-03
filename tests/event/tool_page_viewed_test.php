@@ -67,8 +67,9 @@ final class tool_page_viewed_test extends \advanced_testcase {
     }
 
     /**
-     * An unknown / landing page slug falls back to the tools landing page,
-     * and the localised event name resolves.
+     * An unknown slug — including the legacy 'manage' one left in historic log
+     * rows — falls back to the plugin's admin settings page, and the localised
+     * event name resolves.
      *
      * @return void
      */
@@ -82,7 +83,10 @@ final class tool_page_viewed_test extends \advanced_testcase {
             'other' => ['page' => 'manage'],
         ]);
 
-        $this->assertStringContainsString('manage.php', $event->get_url()->out(false));
+        $this->assertStringContainsString(
+            'section=blocksettingfeedback_tracker',
+            $event->get_url()->out(false)
+        );
         $this->assertNotEmpty(tool_page_viewed::get_name());
     }
 }

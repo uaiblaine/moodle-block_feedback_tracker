@@ -49,8 +49,11 @@ class behat_block_feedback_tracker extends behat_base {
         switch ($page) {
             case 'Teacher dashboard':
                 return new moodle_url('/blocks/feedback_tracker/pages/teacher_dashboard.php');
-            case 'Manage':
-                return new moodle_url('/blocks/feedback_tracker/manage.php');
+            case 'Settings':
+                return new moodle_url(
+                    '/admin/settings.php',
+                    ['section' => 'blocksettingfeedback_tracker']
+                );
             case 'Audit log':
                 return new moodle_url('/blocks/feedback_tracker/pages/audit_log.php');
             case 'Reset':

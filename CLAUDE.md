@@ -52,8 +52,8 @@ is required after the mounted plugin set changes.
 ```
 block_feedback_tracker.php   Block class (get_content / instance config)
 lib.php                      Procedural hooks + bootstrapping guard
-settings.php                 Admin settings tree
-manage.php                   Management landing page (viewdashboard-gated)
+settings.php                 Admin settings tree — its "Tools" heading is the
+                             only index of the pages/ admin UIs
 classes/
   event/                     Custom plugin events (cal_*_updated)
   external/                  Web-service functions (one class each)
@@ -459,7 +459,8 @@ User access to the pages is logged with two read events (`crud = 'r'`):
 `event\report_viewed` (`LEVEL_PARTICIPATING`, the teacher-facing data
 surfaces — `other['report']` = `dashboard`/`pending`/`drilldown`) and
 `event\tool_page_viewed` (`LEVEL_OTHER`, the admin tool pages —
-`other['page']` = `manage`/`calendar`/`audit`/`reset`). They exist as two
+`other['page']` = `calendar`/`audit`/`reset`; `manage` is a legacy slug kept
+only so historic log rows still resolve to a URL). They exist as two
 classes only because `edulevel` is fixed in `init()` and can't vary per
 instance. Conventions when adding/extending view logging:
 
@@ -497,12 +498,13 @@ writes ledger / rollup data. Don't reimplement the check.
 The gate is applied at every **write-path entry**:
 - Event observers in `classes/local/sla/observer.php`
   (submission_changed / submission_graded / override_changed /
-  group_membership_changed / group_deleted).
+  group_membership_changed / group_deleted / course_module_updated).
 - `classes/task/backfill_history.php` per-row filter.
 
-Cleanup paths (`course_deleted`, `course_module_deleted`) skip the gate
-so previously-tracked data still gets garbage-collected when its course
-goes away. `rollup_service::recompute_group()` deliberately does NOT
+Cleanup paths (`course_deleted`, `course_module_deleted`,
+`enrolment_changed`, `user_deleted`) skip the gate so previously-tracked
+data still gets garbage-collected when its course, its participant or its
+account goes away. `rollup_service::recompute_group()` deliberately does NOT
 gate — it's downstream of the observer + queue and gating there would
 force a wide test-fixture rewrite without closing any leak.
 

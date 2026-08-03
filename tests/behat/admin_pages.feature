@@ -25,10 +25,16 @@ Feature: The plugin's admin and drill-down pages render for authorised users
       | block/feedback_tracker:viewdashboard      | Allow      | editingteacher | System       |           |
       | block/feedback_tracker:viewresponsiveness | Allow      | editingteacher | System       |           |
 
-  Scenario: A manager reaches the management landing page
-    Given I log in as "manager1"
-    When I am on the "block_feedback_tracker > Manage" page
-    Then I should see "Feedback Flow"
+  # The plugin's admin settings page carries the only index of the tool pages,
+  # so it has to keep listing all four of them. It is site-config gated, which
+  # is why this one scenario uses the admin rather than the manager.
+  Scenario: The settings page indexes every tool page
+    Given I log in as "admin"
+    When I am on the "block_feedback_tracker > Settings" page
+    Then I should see "Academic calendar editor"
+    And I should see "Recompute audit log"
+    And I should see "Remove the block in bulk"
+    And I should see "Reset all data"
 
   Scenario: A manager reaches the recompute audit log
     Given I log in as "manager1"

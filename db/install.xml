@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260802" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
+<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260804" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -55,6 +55,7 @@
         <INDEX NAME="idx_status_graded" UNIQUE="false" FIELDS="submissionstatus, timegraded"/>
         <INDEX NAME="idx_status_cur_graded" UNIQUE="false" FIELDS="submissionstatus, islatest, iscurrent, timegraded"/>
         <INDEX NAME="idx_item_user" UNIQUE="false" FIELDS="iteminstance, userid"/>
+        <INDEX NAME="idx_user" UNIQUE="false" FIELDS="userid"/>
         <INDEX NAME="idx_pending_bucket" UNIQUE="false" FIELDS="courseid, groupid, slabucket, timesubmitted"/>
         <INDEX NAME="idx_calver" UNIQUE="false" FIELDS="effectivecalver"/>
       </INDEXES>

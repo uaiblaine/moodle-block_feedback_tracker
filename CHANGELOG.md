@@ -8,6 +8,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - Unreleased
 
 ### Added
+- **Three lifecycle events are now observed**, closing gaps where a ledger row
+  stops describing reality without any of its own values changing — the shape
+  no reconciler sweep can detect, because it compares values.
+
+  *Unenrolment* and *account deletion* now drop the affected rows in the
+  request that caused them. The reconciler already did this, but it walks one
+  course per tick on a two-hourly task, so on a site with many tracked courses
+  a departed student stayed in pending counts and the grader priority list for
+  days. Whether an unenrolment was the user's last in that course is read from
+  core's own answer in the event payload rather than re-derived: deriving it
+  with `get_enrolled_sql()` materialises the whole enrolled set to settle a
+  one-row question, once per event, and a bulk unenrolment fires one event per
+  student. Deletion across all courses is backed by a new index on `userid` —
+  no existing index led with it, so both deletions would otherwise have been
+  full table scans on exactly the bulk paths that matter.
+
+  *An assign's settings save* re-derives the activity's measured rows.
+  `markingworkflow`, `markingallocation` and `teamsubmission` change what
+  already-stored rows **mean** — with marking workflow on, the response lands
+  when the mark is released rather than when it is entered — and nothing could
+  see that: the divergence sweep keys on the mark, the rule sweep keys on
+  dates, and both find the stored rows perfectly consistent with a definition
+  that no longer applies. Rather than diff against a snapshot the ledger does
+  not keep, every affected row is re-derived from live state, dispatched as
+  background chunks so a cohort-sized recompute never runs inside the
+  teacher's request. Team work is dispatched once per group rather than once
+  per member, because each dispatch already fans out to the whole group.
+
+  Deliberately **not** registered: `\core\event\user_graded` and
+  `\core\event\grade_deleted`. They fire before `submission_graded` on every
+  ordinary grading, so registering them would rebuild the same row twice per
+  grade save; and they cannot fix the case that motivates them, since every
+  ledger stamp derives from `{assign_grades}` and `{assign_user_flags}`, which
+  a gradebook-side edit never touches. Reading the gradebook as a grading
+  source is a change to the measurement model, not an observer, and is left as
+  its own decision.
+
+### Fixed
+- **The reconciler no longer resurrects the rows it just deleted.** Two of its
+  sweeps were fighting each other on every tick, indefinitely: the
+  departed-participant sweep deletes ledger rows for anyone who is no longer an
+  active participant, and the missing-row sweep — which runs *first* on each
+  tick and reads `{assign_submission}` directly — had no enrolment or
+  account-status predicate at all, so it rebuilt exactly those rows on the tick
+  that followed. An unenrolled student therefore reappeared in pending counts
+  and in the grader priority list for ever, and each round trip cost a backfill
+  dispatch plus a rollup recompute.
+
+  The missing-row sweep now restricts to active participants with the same
+  definition the departed-participant sweep uses (`get_enrolled_sql($context,
+  '', 0, true)`): a deleted account, a suspended enrolment, a suspended
+  enrolment method, or an enrolment outside its start/end window all
+  disqualify. The predicate is written out inline rather than reusing
+  `get_enrolled_sql()`, which is course-scoped, because this sweep runs across
+  every processable course in one query.
+
+  One tick could never have shown this — within a single run the rebuild
+  happens before the deletion — which is why the existing test passed while the
+  behaviour was wrong. The regression test asserts on the *second* tick.
+
+### Removed
+- **The tools landing page (`manage.php`) is gone**, and the "Tools" heading on
+  the plugin's admin settings page is now the single index of the calendar
+  editor, audit log, bulk-removal and reset pages.
+
+  The landing page had no way in. Nothing registered it as an
+  `admin_externalpage` and nothing added it to the admin tree, so it was
+  reachable only by typing its URL — while the settings page listed the same
+  four tools and was linked from the block settings tree like every other
+  plugin. Two lists with one reader had already drifted: the settings page also
+  offers the score simulator, and the landing page filtered its links by
+  capability where the settings page does not need to, being site-config gated
+  in its entirety.
+
+  The reset page's cancel and continue links now return to the settings page.
+  `tool_page_viewed` keeps accepting the `manage` slug: log rows written before
+  this change still carry it, and they resolve to the settings page rather than
+  to a dead URL.
+
+### Added
 - **A tool to remove the block from many courses at once**, for the
   end-of-period sweep: filter by end date, start date, "no end date set",
   category (including subcategories) and hidden-only, then pick from the

@@ -28,9 +28,15 @@ namespace block_feedback_tracker\event;
 
 /**
  * Fired once, server-side, when an administrator opens one of the plugin's
- * tool pages: the tools landing page, the academic calendar editor, the audit
- * log viewer, or the data-reset page. The viewed page is in `other['page']`
- * ('manage' | 'calendar' | 'audit' | 'reset').
+ * tool pages: the academic calendar editor, the audit log viewer, or the
+ * data-reset page. The viewed page is in `other['page']`
+ * ('calendar' | 'audit' | 'reset').
+ *
+ * The slug 'manage' is legacy: it names a tools landing page that no longer
+ * exists, and it survives only in log rows written before the page was
+ * removed. Those rows still have to resolve to something, so the default
+ * branch of get_url() sends them to the plugin's admin settings page, which
+ * carries the tool links now.
  *
  * Read-only access event with no observer of its own — the standard logstore
  * subscribes to every event, so triggering it is all that is needed for the
@@ -83,7 +89,10 @@ class tool_page_viewed extends \core\event\base {
             case 'reset':
                 return new \moodle_url('/blocks/feedback_tracker/pages/reset.php');
             default:
-                return new \moodle_url('/blocks/feedback_tracker/manage.php');
+                return new \moodle_url(
+                    '/admin/settings.php',
+                    ['section' => 'blocksettingfeedback_tracker']
+                );
         }
     }
 }
