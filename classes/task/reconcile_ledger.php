@@ -30,6 +30,7 @@ use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
 use block_feedback_tracker\local\sla\group_resolver;
+use block_feedback_tracker\local\sla\retention;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
 
@@ -134,6 +135,23 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
+     * The oldest submission the row-creating sweeps may still resurrect.
+     *
+     * Without this the pruner and the reconciler fight: the pruner deletes a
+     * closed row past its retention window, the reconciler sees a submission
+     * with no ledger row and recreates it, and the pair burn a batch of work
+     * against each other on every tick, for ever. Both read the same cutoff.
+     *
+     * Returns 0 when retention is off, which admits everything — the historical
+     * behaviour.
+     *
+     * @return int Epoch seconds, or 0 for no floor.
+     */
+    private function retention_floor(): int {
+        return retention::cutoff() ?? 0;
+    }
+
+    /**
      * Submissions with no ledger row at all.
      *
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
@@ -163,8 +181,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 AND s.id > :cursor
                 AND cm.course $csql
                 AND l.id IS NULL
+                AND s.timemodified >= :retention
            ORDER BY s.id ASC",
-            $cparams + ['modname' => 'assign', 'cursor' => $this->cursor($key)],
+            $cparams + [
+                'modname' => 'assign',
+                'cursor' => $this->cursor($key),
+                'retention' => $this->retention_floor(),
+            ],
             0,
             $batch
         );
@@ -200,8 +223,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 AND s.id > :cursor
                 AND cm.course $csql
                 AND l.id IS NULL
+                AND s.timemodified >= :retention
            ORDER BY s.id ASC",
-            $cparams + ['modname' => 'assign', 'cursor' => $this->cursor($key)],
+            $cparams + [
+                'modname' => 'assign',
+                'cursor' => $this->cursor($key),
+                'retention' => $this->retention_floor(),
+            ],
             0,
             $batch
         );

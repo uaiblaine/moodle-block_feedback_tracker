@@ -165,4 +165,92 @@ class block_feedback_tracker extends block_base {
             'admin' => false,
         ];
     }
+
+    /**
+     * Set while the whole plugin is being uninstalled.
+     *
+     * Static on purpose. `before_delete()` is called once, on a separate
+     * instance-less object, while `instance_delete()` runs on a different
+     * object per instance — an instance property would silently never be seen.
+     *
+     * @var bool
+     */
+    private static $uninstalling = false;
+
+    /**
+     * Called once by core before every instance of this block type is deleted
+     * during plugin uninstall.
+     *
+     * It is the only signal that separates "the plugin is going away" from
+     * "somebody removed the block from a course page". Queuing a week of
+     * cleanup tasks during an uninstall would be pointless — the tables are
+     * about to be dropped — and on a large site it would mean thousands of
+     * adhoc rows nobody will ever run.
+     *
+     * @return void
+     */
+    public function before_delete() {
+        self::$uninstalling = true;
+    }
+
+    /**
+     * Arm the delayed discard of this course's measured history.
+     *
+     * Moodle deletes a block's data here, synchronously — that is the
+     * convention, and it fits a block whose data belongs to the instance. This
+     * one is a gate: the data belongs to the course, the plugin's tables are
+     * not in course backups, and removing a block from a course page is a
+     * small act with an irreversible consequence. So the discard is deferred,
+     * and the task re-checks at run time whether the block came back.
+     *
+     * No decision about sibling instances is taken here. This method runs
+     * BEFORE the block_instances row is deleted, and the bulk path defers every
+     * row deletion until after its loop, so a count taken now is wrong in both
+     * directions. The task asks the question when it runs, which is the only
+     * moment the answer is stable.
+     *
+     * @return bool
+     */
+    public function instance_delete() {
+        if (self::$uninstalling) {
+            return true;
+        }
+        if (!\block_feedback_tracker\local\sla\removal_grace::is_active()) {
+            return true;
+        }
+        $courseid = $this->resolve_course_id();
+        if ($courseid <= 0) {
+            return true;
+        }
+
+        $task = new \block_feedback_tracker\task\discard_course_data();
+        $task->set_custom_data(['courseid' => $courseid]);
+        $task->set_next_run_time(
+            time() + \block_feedback_tracker\local\sla\removal_grace::seconds()
+        );
+        // The dedupe compares component + class + custom data, so a course
+        // whose block is removed twice inside one window keeps one task.
+        \core\task\manager::queue_adhoc_task($task, true);
+        return true;
+    }
+
+    /**
+     * The course this instance sat on, or 0 when it did not sit on one.
+     *
+     * Read from the instance's parent context rather than from $this->page,
+     * which is not set on every deletion path (bulk deletes and course
+     * teardown never build a page).
+     *
+     * @return int
+     */
+    private function resolve_course_id(): int {
+        if (empty($this->instance->parentcontextid)) {
+            return 0;
+        }
+        $context = \context::instance_by_id((int) $this->instance->parentcontextid, IGNORE_MISSING);
+        if (!$context || $context->contextlevel != CONTEXT_COURSE) {
+            return 0;
+        }
+        return (int) $context->instanceid;
+    }
 }

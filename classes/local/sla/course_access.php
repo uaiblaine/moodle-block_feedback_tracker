@@ -103,10 +103,15 @@ class course_access {
      * intent. Admins who want all courses tracked add the block to each
      * one (or script that via a small one-off task).
      *
+     * Public because the delayed-removal task needs the block question ALONE.
+     * is_processable() also requires the course to be visible, so using it as a
+     * deletion guard would make hiding a course — which is what archiving one
+     * looks like — destroy its measured history.
+     *
      * @param int $courseid
      * @return bool
      */
-    private static function block_present_for_course(int $courseid): bool {
+    public static function block_present_for_course(int $courseid): bool {
         global $DB;
         try {
             $coursectx = \context_course::instance($courseid, IGNORE_MISSING);
