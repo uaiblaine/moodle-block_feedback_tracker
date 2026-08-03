@@ -31,7 +31,7 @@ namespace block_feedback_tracker\local\sla;
  * that mark reached the student?".
  *
  * The mark-exists test mirrors mod_assign's own `assign::get_grading_status()`
- * (mod/assign/locallib.php, identical on 4.5 / 5.1 / 5.3): a grade is real when
+ * (mod/assign/locallib.php, identical on every supported branch): a grade is real when
  * it is not null and not negative. It deliberately does NOT test `grader`.
  * That column is NOTNULL DEFAULT 0 and restore maps it through
  * `get_mappingid()`, which yields 0 for an unmapped grader, so a restored

@@ -392,11 +392,8 @@ final class grading_cycle_test extends \advanced_testcase {
 
         $this->insert_submission((int) $assign->id, (int) $student->id, $t1);
         $this->insert_grade((int) $assign->id, (int) $student->id, $t2, 75.0);
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => 'inmarking', 'allocatedmarker' => 0,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->set_workflow_state((int) $assign->id, (int) $student->id, 'inmarking');
 
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
@@ -427,11 +424,8 @@ final class grading_cycle_test extends \advanced_testcase {
 
         $this->insert_submission((int) $assign->id, (int) $student->id, $t1);
         $this->insert_grade((int) $assign->id, (int) $student->id, $t2, 75.0);
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => 'readyforrelease', 'allocatedmarker' => 0,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->set_workflow_state((int) $assign->id, (int) $student->id, 'readyforrelease');
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
@@ -598,11 +592,8 @@ final class grading_cycle_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $marker = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => '', 'allocatedmarker' => $marker->id,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
         submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $talloc);
 
         $this->insert_grade((int) $assign->id, (int) $student->id, $tgrade, 85.0);
@@ -652,11 +643,8 @@ final class grading_cycle_test extends \advanced_testcase {
         $this->insert_grade((int) $assign->id, (int) $student->id, $tgrade, 85.0);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => '', 'allocatedmarker' => 9999,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, 9999);
         submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $tlate);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
@@ -692,18 +680,12 @@ final class grading_cycle_test extends \advanced_testcase {
 
         $a = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
         $b = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => '', 'allocatedmarker' => $a->id,
-        ]);
+        $gen = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $gen->allocate_marker((int) $assign->id, (int) $student->id, (int) $a->id);
         submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $tfirst);
 
         // Reassigned ten days later; core fires no de-allocation event at all.
-        $DB->set_field('assign_user_flags', 'allocatedmarker', $b->id, [
-            'assignment' => $assign->id,
-            'userid' => $student->id,
-        ]);
+        $gen->allocate_marker((int) $assign->id, (int) $student->id, (int) $b->id);
         submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $tsecond);
 
         $this->insert_grade((int) $assign->id, (int) $student->id, $tgrade, 85.0);

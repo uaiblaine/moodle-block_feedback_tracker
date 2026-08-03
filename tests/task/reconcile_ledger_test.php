@@ -312,11 +312,8 @@ final class reconcile_ledger_test extends \advanced_testcase {
 
         // Allocated through a path that emits nothing at all.
         $marker = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => '', 'allocatedmarker' => $marker->id,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
 
         $this->run_reconciler();
 

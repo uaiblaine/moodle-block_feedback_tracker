@@ -42,7 +42,7 @@ use block_feedback_tracker\local\calendar\day_counter;
  */
 class submission_ledger {
     /**
-     * Whether this core version keeps allocations in their own table (5.3+)
+     * Whether this core version keeps allocations in their own table (5.2+)
      * rather than in an {assign_user_flags} column. Memoised per request.
      *
      * @var bool|null
@@ -521,13 +521,13 @@ class submission_ledger {
      * The marker currently allocated to a student, across core versions.
      *
      * Moodle 4.5 and 5.1 store a single marker in
-     * `{assign_user_flags}.allocatedmarker`. Moodle 5.3 dropped that column
+     * `{assign_user_flags}.allocatedmarker`. Moodle 5.2 dropped that column
      * and moved allocation into `{assign_allocated_marker}`, which holds one
      * row per marker — so reading the old column there raises a DML error, and
-     * `marker_updated` does fire on 5.3, which would take the observer with it.
+     * `marker_updated` does fire on 5.2, which would take the observer with it.
      *
      * With several markers the lowest id is chosen deterministically rather
-     * than trusting the event payload: 5.3 fires one event per marker in
+     * than trusting the event payload: 5.2+ fires one event per marker in
      * insertion order, so "the last event wins" and a re-read would disagree
      * on every multi-marker student and rewrite the row on every poll.
      *
@@ -853,7 +853,7 @@ class submission_ledger {
      * `timeallocmarker` tracks the current marker, so someone who inherits a
      * long-queued submission is measured from their own start rather than from
      * a queue they did not cause. The marker id is re-read from core rather
-     * than taken from the event payload, because Moodle 5.3 fires one event
+     * than taken from the event payload, because Moodle 5.2 and later fire one event
      * per marker and the last one to arrive is not necessarily the one the
      * table settles on.
      *

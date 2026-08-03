@@ -161,11 +161,8 @@ final class observer_coverage_test extends \advanced_testcase {
             'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
             'grader' => 2, 'grade' => 70.0, 'timecreated' => $t2, 'timemodified' => $t2,
         ]);
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => 'inmarking', 'allocatedmarker' => 0,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->set_workflow_state((int) $assign->id, (int) $student->id, 'inmarking');
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
@@ -218,11 +215,8 @@ final class observer_coverage_test extends \advanced_testcase {
             $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
             'editingteacher'
         );
-        $DB->insert_record('assign_user_flags', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id,
-            'locked' => 0, 'mailed' => 0, 'extensionduedate' => 0,
-            'workflowstate' => '', 'allocatedmarker' => $marker->id,
-        ]);
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
         $user = $DB->get_record('user', ['id' => $student->id], '*', MUST_EXIST);
         $assignobj = $this->assign_object($cm, $context);
         \mod_assign\event\marker_updated::create_from_marker($assignobj, $user, $marker)->trigger();

@@ -116,6 +116,95 @@ class block_feedback_tracker_generator extends testing_block_generator {
     }
 
     /**
+     * Allocate a marker to a student, whichever model this core version uses.
+     *
+     * Moodle 5.2 replaced `{assign_user_flags}.allocatedmarker` with the
+     * `{assign_allocated_marker}` table and dropped the column, so a fixture
+     * that writes the column directly errors on 5.2 and 5.3 while one that
+     * writes the table errors on 4.5 and 5.1. Both are supported branches, so
+     * tests go through here.
+     *
+     * @param int $assignid The {assign} instance id.
+     * @param int $userid The student.
+     * @param int $markerid The marker, or 0 to de-allocate.
+     * @return void
+     */
+    public function allocate_marker(int $assignid, int $userid, int $markerid): void {
+        global $DB;
+
+        if ($DB->get_manager()->table_exists('assign_allocated_marker')) {
+            $DB->delete_records('assign_allocated_marker', [
+                'assignment' => $assignid,
+                'student' => $userid,
+            ]);
+            if ($markerid > 0) {
+                $DB->insert_record('assign_allocated_marker', (object) [
+                    'assignment' => $assignid,
+                    'student' => $userid,
+                    'marker' => $markerid,
+                ]);
+            }
+            return;
+        }
+
+        $flags = $DB->get_record('assign_user_flags', [
+            'assignment' => $assignid,
+            'userid' => $userid,
+        ]);
+        if ($flags) {
+            $flags->allocatedmarker = $markerid;
+            $DB->update_record('assign_user_flags', $flags);
+            return;
+        }
+        $DB->insert_record('assign_user_flags', (object) [
+            'assignment' => $assignid,
+            'userid' => $userid,
+            'locked' => 0,
+            'mailed' => 0,
+            'extensionduedate' => 0,
+            'workflowstate' => '',
+            'allocatedmarker' => $markerid,
+        ]);
+    }
+
+    /**
+     * Set a student's marking-workflow state, creating the flags row if needed.
+     *
+     * Kept separate from {@see self::allocate_marker()} because the two live
+     * in the same row before Moodle 5.2 and in different tables after it.
+     *
+     * @param int $assignid The {assign} instance id.
+     * @param int $userid The student.
+     * @param string $state One of the ASSIGN_MARKING_WORKFLOW_STATE_* values.
+     * @return void
+     */
+    public function set_workflow_state(int $assignid, int $userid, string $state): void {
+        global $DB;
+
+        $flags = $DB->get_record('assign_user_flags', [
+            'assignment' => $assignid,
+            'userid' => $userid,
+        ]);
+        if ($flags) {
+            $flags->workflowstate = $state;
+            $DB->update_record('assign_user_flags', $flags);
+            return;
+        }
+        $record = (object) [
+            'assignment' => $assignid,
+            'userid' => $userid,
+            'locked' => 0,
+            'mailed' => 0,
+            'extensionduedate' => 0,
+            'workflowstate' => $state,
+        ];
+        if ($DB->get_manager()->field_exists('assign_user_flags', 'allocatedmarker')) {
+            $record->allocatedmarker = 0;
+        }
+        $DB->insert_record('assign_user_flags', $record);
+    }
+
+    /**
      * Insert a {block_feedback_tracker_sub} row with sensible defaults; only
      * the keys in $overrides are set explicitly.
      *

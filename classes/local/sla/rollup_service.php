@@ -245,7 +245,7 @@ class rollup_service {
 
         /* Coordination queue vs marker turnaround. Coverage is the share of
          * the graded window that carries a usable marker measurement: before
-         * Moodle 5.3 only one of mod_assign's three allocation paths fires an
+         * Moodle 5.2 only one of mod_assign's three allocation paths fires an
          * event, so the sample is partial by construction and the median is
          * meaningless without it. */
         $medianqueue = !empty($queuevals) ? stats::median($queuevals) : null;

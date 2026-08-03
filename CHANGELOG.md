@@ -24,11 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selects by real membership of the overridden group, and enqueues every
   reporting tuple actually touched rather than one built from the override
   group.
-- **`marker_updated` no longer breaks on Moodle 5.3.** 5.3 drops
+- **`marker_updated` no longer breaks on Moodle 5.2 or later.** 5.2 dropped
   `assign_user_flags.allocatedmarker` in favour of the new
   `assign_allocated_marker` table, and it does fire the event, so reading the
-  old column would have taken the observer down with it. `$plugin->supported`
-  only warns; it does not prevent installation.
+  old column took the observer down with it. 5.02 is a supported branch, so
+  this was a live defect, not a forward-compatibility note.
 
 ### Added
 - **The response interval is split by who owns each part.** A submission that
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the activity's own dates and `assign_user_flags`, so an
   `assign_overrides` row was invisible to it.
 - **An eighth reconciliation sweep discovers silent allocations.** Before
-  Moodle 5.3 only the batch "Set allocated marker" operation fires an event;
+  Moodle 5.2 only the batch "Set allocated marker" operation fires an event;
   quick grading and the grading form write the allocation with no signal at
   all. Those are now found by a periodic diff and stamped
   `allocsource = 'reconciled'` — the moment of *discovery*, not of allocation,
@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `local_unifiedgrader/enable_assign`, so a sibling plugin that replaces the
   assign grading UI cannot move the field labels underneath them.
 - `alloc_coverage_pct` is published **beside** `median_alloc_h`, never alone:
-  before Moodle 5.3 only one of mod_assign's three allocation paths fires an
+  before Moodle 5.2 only one of mod_assign's three allocation paths fires an
   event, so the sample is partial by construction and the median must not be
   read as if it covered everyone.
 
@@ -201,6 +201,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persists no release timestamp of its own (`assign_user_flags` has no time
   columns on any supported version), so the moment is only ever knowable when
   observed.
+- `docs/moodle-52-multimarking.md`: what Moodle 5.2 changed about marker
+  allocation and multi-marking, and why it was a live defect rather than
+  future work.
 - `docs/assign-scenario-map.md` and `docs/assign-marking-allocation.md`: the
   full audit of mod_assign's submission and grading lifecycle against this
   plugin, covering the scenarios not yet addressed here (team fan-out, blind

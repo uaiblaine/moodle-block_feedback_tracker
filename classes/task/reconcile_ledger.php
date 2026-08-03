@@ -461,7 +461,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * On Moodle 4.5 and 5.1 only the batch "Set allocated marker" operation
      * fires `marker_updated`; quick grading and the grading form write
-     * `assign_user_flags.allocatedmarker` in silence. On 5.3 every path fires,
+     * `assign_user_flags.allocatedmarker` in silence. On 5.2 and later every path fires,
      * but a de-allocation still does not. Without this sweep the marker
      * turnaround is measurable only for batch-allocated work, which on most
      * sites is a small and non-random slice.
@@ -483,7 +483,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $params = $cparams + ['cursor' => $this->cursor($key)];
 
-        /* Moodle 5.3 moved allocation out of assign_user_flags into its own
+        /* Moodle 5.2 moved allocation out of assign_user_flags into its own
          * table, so the join differs by core version. Both shapes select the
          * same thing: a ledger row whose activity has a marker allocated that
          * the ledger has never stamped. */
