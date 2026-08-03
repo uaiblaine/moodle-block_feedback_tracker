@@ -135,32 +135,30 @@ class rollup_service {
         $pendingrows = $DB->get_records_select(
             'block_feedback_tracker_sub',
             'courseid = :courseid AND groupid = :groupid AND timegraded IS NULL'
-                . ' AND submissionstatus = :substatus',
+                . ' AND submissionstatus = :substatus'
+                . ' AND islatest = 1 AND iscurrent = 1',
             [
                 'courseid' => $courseid,
                 'groupid' => $groupid,
                 'substatus' => submission_status::SUBMITTED,
             ],
             '',
-            'id, effectivehours, waitinghours, timesubmitted'
+            'id, effectivehours, waitinghours, timesubmitted, timeallocated'
         );
         $pending = count($pendingrows);
         $critical = 0;
         $overgoal = 0;
         $criticaldays = 0;
         $overgoaldays = 0;
-        $pendingeffvals = [];
-        $pendingrawvals = [];
-        $pendingeffdays = [];
-        $pendingpercdays = [];
+        // Pending work nobody has been made responsible for yet.
+        $unallocated = 0;
         foreach ($pendingrows as $r) {
+            if ($r->timeallocated === null) {
+                $unallocated++;
+            }
             $eff = (float) ($r->effectivehours ?? 0.0);
-            $pendingeffvals[] = $eff;
-            $pendingrawvals[] = (float) ($r->waitinghours ?? 0.0);
             // Date-based elapsed days (pending elapses up to now).
             $days = day_counter::between((int) $r->timesubmitted, $now);
-            $pendingeffdays[] = $days['business'];
-            $pendingpercdays[] = $days['calendar'];
             // Day-ruler partition (inclusive bounds, mirroring
             // bucket::for_effective_days): critical > crit | overgoal
             // goal..crit | within-goal the remainder.
@@ -194,7 +192,7 @@ class rollup_service {
                 'substatus' => submission_status::SUBMITTED,
             ],
             '',
-            'id, effectivehours, waitinghours, timesubmitted, timegraded'
+            'id, effectivehours, waitinghours, timesubmitted, timegraded, queuehours, allochours'
         );
         $effvals = [];
         $rawvals = [];
@@ -202,6 +200,8 @@ class rollup_service {
         $percdays = [];
         $compliantcount = 0;
         $compliantdayscount = 0;
+        $queuevals = [];
+        $allocvals = [];
         foreach ($gradedrows as $r) {
             $eff = (float) ($r->effectivehours ?? 0.0);
             $raw = (float) ($r->waitinghours ?? 0.0);
@@ -219,6 +219,17 @@ class rollup_service {
             if ($days['business'] <= $slagoaldays) {
                 $compliantdayscount++;
             }
+            /* The split measures, collected only where they are real. A row
+             * with no allocation stamp contributes to neither: the coverage
+             * percentage below is what says how much of the window that is,
+             * and it is published beside the medians precisely so they are
+             * never read as if the sample were complete. */
+            if ($r->queuehours !== null) {
+                $queuevals[] = (float) $r->queuehours;
+            }
+            if ($r->allochours !== null) {
+                $allocvals[] = (float) $r->allochours;
+            }
         }
         $numgraded30d = count($gradedrows);
 
@@ -232,20 +243,32 @@ class rollup_service {
         // Display-only business-days compliance (not fed to the score).
         $compliancepctdays = $numgraded30d ? round(100.0 * $compliantdayscount / $numgraded30d, 2) : null;
 
+        /* Coordination queue vs marker turnaround. Coverage is the share of
+         * the graded window that carries a usable marker measurement: before
+         * Moodle 5.3 only one of mod_assign's three allocation paths fires an
+         * event, so the sample is partial by construction and the median is
+         * meaningless without it. */
+        $medianqueue = !empty($queuevals) ? stats::median($queuevals) : null;
+        $medianalloc = !empty($allocvals) ? stats::median($allocvals) : null;
+        $alloccoverage = $numgraded30d ? round(100.0 * count($allocvals) / $numgraded30d, 2) : null;
+
         // 2b. Headline "current" medians — graded-in-window plus currently
         // pending work — so the dashboard's effective / perceived times
         // reflect the live backlog instead of reading ~0 when little has been
         // graded. These feed the display only; the score keeps using the
         // graded-only $medianeff above.
-        $cureffvals = array_merge($effvals, $pendingeffvals);
-        $currawvals = array_merge($rawvals, $pendingrawvals);
-        $curmedianeff = !empty($cureffvals) ? stats::median($cureffvals) : null;
-        $curmedianraw = !empty($currawvals) ? stats::median($currawvals) : null;
+        /* Built from a dedicated iscurrent = 1 population rather than by
+         * merging the two sets above. The graded set deliberately keeps every
+         * cycle (each is a real response event), but a "state right now"
+         * headline must not count one attempt twice — which is exactly what a
+         * merge does when a closed cycle 0 sits in the graded window while its
+         * own live cycle 1 is pending. */
+        $current = self::current_state_values($courseid, $groupid, $cutoffrecent, $now);
+        $curmedianeff = !empty($current['eff']) ? stats::median($current['eff']) : null;
+        $curmedianraw = !empty($current['raw']) ? stats::median($current['raw']) : null;
         // Date-based day medians (graded ∪ pending) — the headline in days mode.
-        $cureffdays = array_merge($effdays, $pendingeffdays);
-        $curpercdays = array_merge($percdays, $pendingpercdays);
-        $curmedianeffdays = !empty($cureffdays) ? stats::median($cureffdays) : null;
-        $curmedianpercdays = !empty($curpercdays) ? stats::median($curpercdays) : null;
+        $curmedianeffdays = !empty($current['effdays']) ? stats::median($current['effdays']) : null;
+        $curmedianpercdays = !empty($current['percdays']) ? stats::median($current['percdays']) : null;
 
         // 3. Trend — rolling 7-day cycle: this week's median effective hours vs
         // the prior week's (submitted, graded work only). A deliberately
@@ -318,6 +341,10 @@ class rollup_service {
             'nextpause_note'       => $nextnote,
             'lastpause_endts'      => $lastendts,
             'lastpause_reason'     => $lastreason,
+            'unallocated'          => $unallocated,
+            'median_queue_h'       => $medianqueue,
+            'median_alloc_h'       => $medianalloc,
+            'alloc_coverage_pct'   => $alloccoverage,
             'timerecomputed'       => $now,
             'timemodified'         => $now,
         ];
@@ -327,6 +354,52 @@ class rollup_service {
         } else {
             $DB->insert_record('block_feedback_tracker_group', $record);
         }
+    }
+
+    /**
+     * Value arrays for the "state right now" headline medians.
+     *
+     * One live observation per attempt: `iscurrent = 1` excludes cycles a
+     * resubmission has already closed, so an attempt whose earlier cycle was
+     * graded inside the window and whose current cycle is pending contributes
+     * once — as pending, which is what it actually is. Graded rows elapse to
+     * their grading instant, pending rows to now.
+     *
+     * @param int $courseid
+     * @param int $groupid
+     * @param int $cutoff Graded-window start (inclusive, epoch seconds).
+     * @param int $now
+     * @return array{eff:array, raw:array, effdays:array, percdays:array}
+     */
+    private static function current_state_values(int $courseid, int $groupid, int $cutoff, int $now): array {
+        global $DB;
+
+        $rows = $DB->get_records_select(
+            'block_feedback_tracker_sub',
+            'courseid = :courseid AND groupid = :groupid'
+                . ' AND submissionstatus = :substatus'
+                . ' AND islatest = 1 AND iscurrent = 1'
+                . ' AND (timegraded IS NULL OR timegraded >= :cutoff)',
+            [
+                'courseid' => $courseid,
+                'groupid' => $groupid,
+                'substatus' => submission_status::SUBMITTED,
+                'cutoff' => $cutoff,
+            ],
+            '',
+            'id, effectivehours, waitinghours, timesubmitted, timegraded'
+        );
+
+        $out = ['eff' => [], 'raw' => [], 'effdays' => [], 'percdays' => []];
+        foreach ($rows as $r) {
+            $out['eff'][] = (float) ($r->effectivehours ?? 0.0);
+            $out['raw'][] = (float) ($r->waitinghours ?? 0.0);
+            $upper = $r->timegraded !== null ? (int) $r->timegraded : $now;
+            $days = day_counter::between((int) $r->timesubmitted, $upper);
+            $out['effdays'][] = $days['business'];
+            $out['percdays'][] = $days['calendar'];
+        }
+        return $out;
     }
 
     /**

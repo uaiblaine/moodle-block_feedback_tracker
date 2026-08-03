@@ -2512,6 +2512,74 @@ a.bft-activity-action:focus {
     border: 1px solid #cbd5e1;
 }
 
+/* Awaiting-release chip: a marked submission the marking workflow has not
+ * released yet. Amber rather than a band colour — it is an outstanding action,
+ * not a result. */
+.bft-row-release-wrap {
+    position: relative;
+    display: inline-flex;
+    margin-left: 0.3rem;
+}
+
+.bft-badge-release {
+    border: 1px solid #f59e0b;
+    background: #fef3c7;
+    color: #92400e;
+    cursor: pointer;
+}
+
+.bft-badge-release:focus-visible {
+    outline: 2px solid var(--bft-focus, #2563eb);
+    outline-offset: 2px;
+}
+
+/* Queue-to-turnaround chip: the response interval split by owner. Muted, so
+ * it reads as annotation beside the result badge rather than competing with
+ * it. */
+.bft-row-split {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.22rem;
+    margin-left: 0.35rem;
+    font-size: 0.62rem;
+    font-family: var(--bft-mono-family, monospace);
+    color: var(--bft-text-muted, #64748b);
+    white-space: nowrap;
+}
+
+.bft-row-split-queue {
+    opacity: 0.72;
+}
+
+.bft-row-split-arrow {
+    opacity: 0.55;
+}
+
+.bft-row-split-alloc {
+    font-weight: 700;
+}
+
+.bft-row-release-pop {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    width: max-content;
+    max-width: 260px;
+    padding: 0.45rem 0.6rem;
+    border-radius: 8px;
+    background: var(--bft-surface);
+    border: 1px solid var(--bft-border-soft);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+    color: var(--bft-text);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: normal;
+    text-align: left;
+}
+
 /* Mobile responsive — collapse hero grid to 2 columns then 1. */
 @media (max-width: 900px) {
     .bft-hero-row {

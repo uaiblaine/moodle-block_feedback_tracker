@@ -122,7 +122,11 @@ class get_grader_priority_list extends external_api {
                 'submissions' => [],
             ];
         }
+        /* islatest / iscurrent keep superseded attempts and closed cycles off
+         * the grade-now list: neither is anybody's outstanding task, and both
+         * would otherwise sit at the top with an ever-growing clock. */
         $where = 'sub.timegraded IS NULL AND sub.submissionstatus = :substatus'
+            . ' AND sub.islatest = 1 AND sub.iscurrent = 1'
             . ' AND ' . $viswhere;
         $sqlparams['substatus'] = \block_feedback_tracker\local\sla\submission_status::SUBMITTED;
         $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();

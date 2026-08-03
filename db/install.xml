@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260523" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
+<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260802" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
   <TABLES>
-    <TABLE NAME="block_feedback_tracker_sub" COMMENT="Per-submission SLA ledger; one row per (cmid, userid, attemptnumber). Source of truth for all downstream rollups.">
+    <TABLE NAME="block_feedback_tracker_sub" COMMENT="Per-submission SLA ledger; one row per (cmid, userid, attemptnumber, cycle). Source of truth for all downstream rollups. A cycle is one measurement of teacher response: work resubmitted after it was already marked opens a new cycle instead of rewriting the closed one, so a completed response time is never destroyed.">
       <FIELDS>
         <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true"/>
         <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="false"/>
@@ -13,9 +13,25 @@
         <FIELD NAME="iteminstance" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" COMMENT="assign.id" SEQUENCE="false"/>
         <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="false"/>
         <FIELD NAME="attemptnumber" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="cycle" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" COMMENT="Measurement index within one attempt. 0 is the original hand-in; N greater than 0 is work resubmitted after cycle N-1 already carried a mark (core's Graded - resubmitted state). Closed cycles are never rewritten by later student activity, so a completed response time survives a resubmission." SEQUENCE="false"/>
         <FIELD NAME="submissionstatus" TYPE="char" LENGTH="20" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="timesubmitted" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" SEQUENCE="false"/>
         <FIELD NAME="timegraded" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
+        <FIELD NAME="timemarked" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="assign_grades.timemodified, stored only when the mark postdates this cycle's hand-in. Equals timegraded when marking workflow is off; earlier than timereleased when the mark waited for release. Reference against which the next resubmission is detected." SEQUENCE="false"/>
+        <FIELD NAME="timereleased" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Instant the marking-workflow state reached released, i.e. when the feedback actually reached the student. mod_assign persists no such timestamp (assign_user_flags has no time columns on any supported version), so it is captured from the workflow_state_updated event. Null when marking workflow is off." SEQUENCE="false"/>
+        <FIELD NAME="timeclosed" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="The instant the teacher's response landed: timereleased when the activity uses marking workflow, timegraded otherwise. Deliberately NOT a coalesce of the two - on a workflow activity a mark that was never released has not reached anybody. Stored rather than derived so the predicate stays indexable." SEQUENCE="false"/>
+        <FIELD NAME="islatest" TYPE="int" LENGTH="1" NOTNULL="true" UNSIGNED="true" DEFAULT="1" COMMENT="Mirror of assign_submission.latest. Core gates every needs-grading read on s.latest = 1; without it a superseded attempt stays pending for ever." SEQUENCE="false"/>
+        <FIELD NAME="iscurrent" TYPE="int" LENGTH="1" NOTNULL="true" UNSIGNED="true" DEFAULT="1" COMMENT="1 on the highest cycle of an attempt, 0 on superseded cycles, so one attempt contributes exactly one live observation to pending counts and current-state medians." SEQUENCE="false"/>
+        <FIELD NAME="gradestate" TYPE="char" LENGTH="20" NOTNULL="false" COMMENT="assign get_grading_status() verbatim: graded, notgraded, or a marking-workflow state (notmarked, inmarking, readyforreview, inreview, readyforrelease, released)." SEQUENCE="false"/>
+        <FIELD NAME="teamgroupid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" COMMENT="assign_submission.groupid the row was derived from; 0 for individual assignments. Non-zero rows were fanned out from a team submission." SEQUENCE="false"/>
+        <FIELD NAME="timeallocated" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Instant a marker was FIRST allocated to this submission, closing the coordination queue. Sticky: re-allocation never moves it. mod_assign persists no allocation timestamp on any supported version, so the moment is only ever knowable when observed - it cannot be recovered later." SEQUENCE="false"/>
+        <FIELD NAME="timeallocmarker" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Instant the CURRENT marker was allocated; moves on reassignment. Separate from timeallocated so a marker who inherited a long-queued submission is measured from their own start, not the first allocation." SEQUENCE="false"/>
+        <FIELD NAME="allocmarkerid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" COMMENT="User id of the currently allocated marker, re-read from core rather than taken from the event payload; 0 when unallocated." SEQUENCE="false"/>
+        <FIELD NAME="allocsource" TYPE="char" LENGTH="12" NOTNULL="false" COMMENT="How the allocation stamp was obtained: observed (from a marker_updated event, exact) or late (the allocation landed at or after the grading, so the marker interval is unmeasurable). Null when never allocated - which on 4.5 and 5.1 includes every allocation made through quick grading or the grading form, since only the batch operation fires an event and no reconciliation sweep covers this yet." SEQUENCE="false"/>
+        <FIELD NAME="queuehours" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Effective hours from hand-in to the FIRST allocation: how long the work waited for someone to be made responsible for it. Belongs to whoever runs the allocation, not to the marker." SEQUENCE="false"/>
+        <FIELD NAME="allochours" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Effective hours from the CURRENT marker's allocation to the grading: the marker's own turnaround, with the coordination queue excluded. Null when the interval is unmeasurable (never allocated, or allocated at or after the grading)." SEQUENCE="false"/>
+        <FIELD NAME="allocdays" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Elapsed business days for the marker turnaround; the day-ruler twin of allochours." SEQUENCE="false"/>
+        <FIELD NAME="allocbucket" TYPE="char" LENGTH="10" NOTNULL="false" COMMENT="Band of the marker turnaround against the allocation goal; null whenever allochours is." SEQUENCE="false"/>
         <FIELD NAME="timeopens" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
         <FIELD NAME="timecloses" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
         <FIELD NAME="timecutoff" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
@@ -33,10 +49,12 @@
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
       </KEYS>
       <INDEXES>
-        <INDEX NAME="uq_cm_user_attempt" UNIQUE="true" FIELDS="cmid, userid, attemptnumber"/>
+        <INDEX NAME="uq_cm_user_att_cycle" UNIQUE="true" FIELDS="cmid, userid, attemptnumber, cycle"/>
         <INDEX NAME="idx_course_group_graded" UNIQUE="false" FIELDS="courseid, groupid, timegraded"/>
         <INDEX NAME="idx_course_group_submitted" UNIQUE="false" FIELDS="courseid, groupid, timesubmitted"/>
         <INDEX NAME="idx_status_graded" UNIQUE="false" FIELDS="submissionstatus, timegraded"/>
+        <INDEX NAME="idx_status_cur_graded" UNIQUE="false" FIELDS="submissionstatus, islatest, iscurrent, timegraded"/>
+        <INDEX NAME="idx_item_user" UNIQUE="false" FIELDS="iteminstance, userid"/>
         <INDEX NAME="idx_pending_bucket" UNIQUE="false" FIELDS="courseid, groupid, slabucket, timesubmitted"/>
         <INDEX NAME="idx_calver" UNIQUE="false" FIELDS="effectivecalver"/>
       </INDEXES>
@@ -77,6 +95,10 @@
         <FIELD NAME="nextpause_note" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false"/>
         <FIELD NAME="lastpause_endts" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
         <FIELD NAME="lastpause_reason" TYPE="char" LENGTH="40" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="unallocated" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Pending submissions with no marker allocated yet: work nobody has been made responsible for. Null when the activity set does not use marking allocation." SEQUENCE="false"/>
+        <FIELD NAME="median_queue_h" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Median effective hours from hand-in to first allocation over the graded window; the coordination lead time." SEQUENCE="false"/>
+        <FIELD NAME="median_alloc_h" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Median effective hours from allocation to grading over the graded window; the marker turnaround, with the coordination queue excluded." SEQUENCE="false"/>
+        <FIELD NAME="alloc_coverage_pct" TYPE="number" LENGTH="5" DECIMALS="2" NOTNULL="false" COMMENT="Share of the graded window carrying a usable marker-turnaround measurement. Published beside median_alloc_h because mod_assign fires an allocation event on only one of its three allocation paths before 5.3, so the sample is partial by construction and the median must never be read without it." SEQUENCE="false"/>
         <FIELD NAME="timerecomputed" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" SEQUENCE="false"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" SEQUENCE="false"/>
       </FIELDS>

@@ -279,6 +279,7 @@ if ($ADMIN->fulltree) {
         'backfill_sub_chunk'        => '50',
         'trend_window_days'         => '30',
         'purge_inactive_after_days' => '730',
+        'reconcile_batch_size'      => '500',
     ];
     foreach ($perf as $key => $default) {
         $settings->add(new admin_setting_configtext(
@@ -309,6 +310,8 @@ if ($ADMIN->fulltree) {
         'show_paused_today_indicator' => 1,
         'show_peer_context'           => 1,
         'exclude_grader_submissions'  => 1,
+        'release_stops_clock'         => 0,
+        'reconcile_active'            => 1,
     ];
     foreach ($viewbools as $key => $default) {
         $settings->add(new admin_setting_configcheckbox(

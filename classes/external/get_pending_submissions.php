@@ -217,6 +217,24 @@ class get_pending_submissions extends external_api {
             'slabucket'      => new external_value(PARAM_ALPHA, ''),
             'pendingband'    => new external_value(PARAM_ALPHA, 'aguardando | atencao | prioridade'),
             'submissionstatus' => new external_value(PARAM_ALPHA, ''),
+            'awaitingrelease' => new external_value(
+                PARAM_INT,
+                '1 when a mark exists but the marking workflow has not released it to the student'
+            ),
+            'queuehours' => new external_value(
+                PARAM_FLOAT,
+                'Effective hours from hand-in to first marker allocation; null when never allocated',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'allochours' => new external_value(
+                PARAM_FLOAT,
+                'Effective hours from the current marker\'s allocation to grading; null when unmeasurable',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
         ]);
     }
 }

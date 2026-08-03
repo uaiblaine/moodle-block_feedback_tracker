@@ -134,9 +134,21 @@ class block_feedback_tracker_generator extends testing_block_generator {
             'iteminstance'     => $cmid,
             'userid'           => 1,
             'attemptnumber'    => 0,
+            'cycle'            => 0,
             'submissionstatus' => 'submitted',
             'timesubmitted'    => $now - 7200,
             'timegraded'       => null,
+            'timemarked'       => null,
+            'timereleased'     => null,
+            'timeclosed'       => null,
+            'islatest'         => 1,
+            'iscurrent'        => 1,
+            'gradestate'       => null,
+            'teamgroupid'      => 0,
+            'timeallocated'    => null,
+            'timeallocmarker'  => null,
+            'allocmarkerid'    => 0,
+            'allocsource'      => null,
             'timeopens'        => null,
             'timecloses'       => null,
             'timecutoff'       => null,
@@ -150,6 +162,23 @@ class block_feedback_tracker_generator extends testing_block_generator {
             'timemodified'     => $now,
         ];
         $rec = (object) array_merge($defaults, $overrides);
+        /* A fixture that sets timegraded describes a graded row, so mirror the
+         * two companion stamps unless the caller pinned them itself. Production
+         * writes all three together (marking workflow off is the common case,
+         * where they are equal by definition), and a fixture that set only
+         * timegraded would otherwise describe a state the ledger never
+         * produces. */
+        if ($rec->timegraded !== null) {
+            if (!array_key_exists('timemarked', $overrides)) {
+                $rec->timemarked = $rec->timegraded;
+            }
+            if (!array_key_exists('timeclosed', $overrides)) {
+                $rec->timeclosed = $rec->timegraded;
+            }
+            if (!array_key_exists('gradestate', $overrides)) {
+                $rec->gradestate = 'graded';
+            }
+        }
         return (int) $DB->insert_record('block_feedback_tracker_sub', $rec);
     }
 

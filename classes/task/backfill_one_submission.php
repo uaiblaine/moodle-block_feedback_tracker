@@ -54,10 +54,13 @@ class backfill_one_submission extends \core\task\adhoc_task {
      *
      * Custom data shape:
      *   ['rows' => [
-     *       ['cmid' => int, 'userid' => int,
-     *        'attemptnumber' => int, 'courseid' => int],
+     *       ['cmid' => int, 'userid' => int, 'attemptnumber' => int,
+     *        'courseid' => int, 'groupid' => int],
      *       ...
      *   ]]
+     *
+     * `userid` 0 marks a team submission's container row, in which case
+     * `groupid` identifies the team and the row is fanned out per member.
      *
      * @return void
      */
@@ -68,6 +71,17 @@ class backfill_one_submission extends \core\task\adhoc_task {
             $row = (array) $row;
             $courseid = (int) ($row['courseid'] ?? 0);
             if (!course_access::is_processable($courseid)) {
+                continue;
+            }
+            if ((int) ($row['userid'] ?? 0) === 0) {
+                /* A team submission's container row: the work is shared by the
+                 * group, so it is fanned out to the members rather than
+                 * mirrored as a userless ledger entry. */
+                submission_ledger::upsert_for_team_attempt(
+                    (int) ($row['cmid'] ?? 0),
+                    (int) ($row['groupid'] ?? 0),
+                    (int) ($row['attemptnumber'] ?? 0)
+                );
                 continue;
             }
             submission_ledger::upsert_for_cm_user_attempt(

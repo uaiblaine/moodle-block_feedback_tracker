@@ -287,6 +287,61 @@ const PausedTag = ({submissionid, tip, label, openid, onToggle}) => html`
 `;
 
 /**
+ * Awaiting-release chip. A mark exists but the marking workflow has not
+ * released it, so the student still sees nothing. Releasing needs a permission
+ * the marker often does not hold, so the chip states the outstanding step
+ * rather than letting the row read as finished.
+ *
+ * @param {object} props
+ * @param {number} props.submissionid  Row id; drives the open-popover state.
+ * @param {string} props.tip           Localised explanation.
+ * @param {string} props.label         Localised chip label.
+ * @param {number|null} props.openid   Currently open submissionid, or null.
+ * @param {Function} props.onToggle    Sets the open submissionid (or null).
+ * @returns {object} vnode
+ */
+/**
+ * Marker-turnaround chip. Shown only when the submission carries both
+ * allocation stamps, i.e. when the split is a fact for this row rather than an
+ * estimate. Reads "queue → turnaround" so a long wait for someone to be made
+ * responsible is not mistaken for slow marking.
+ *
+ * @param {object} props
+ * @param {number|null} props.queuehours  Hand-in to first allocation.
+ * @param {number|null} props.allochours  Allocation to grading.
+ * @param {string} props.tip              Localised explanation.
+ * @returns {object|null} vnode
+ */
+const AllocSplitTag = ({queuehours, allochours, tip}) => {
+    if (queuehours === null || queuehours === undefined
+        || allochours === null || allochours === undefined) {
+        return null;
+    }
+    return html`
+        <span class="bft-row-split" title=${tip}>
+            <span class="bft-row-split-queue">${formatHours(queuehours)}</span>
+            <span class="bft-row-split-arrow" aria-hidden="true">→</span>
+            <span class="bft-row-split-alloc">${formatHours(allochours)}</span>
+        </span>
+    `;
+};
+
+const AwaitingReleaseTag = ({submissionid, tip, label, openid, onToggle}) => html`
+    <span class="bft-row-release-wrap">
+        <button type="button"
+                class="bft-badge bft-badge-release"
+                title=${tip}
+                aria-expanded=${openid === submissionid ? 'true' : 'false'}
+                onClick=${() => onToggle(openid === submissionid ? null : submissionid)}>
+            ${label}
+        </button>
+        ${openid === submissionid && html`
+            <span class="bft-row-release-pop" role="note">${tip}</span>
+        `}
+    </span>
+`;
+
+/**
  * Top-level view.
  *
  * @param {object} props
@@ -367,6 +422,10 @@ export default function PendingReportView({initial}) {
     // info icon keeps its hover title; click pins the explanation for
     // touch devices and discoverability.
     const [pausedinfo, setPausedinfo] = useState(null);
+
+    // Which row's awaiting-release explanation is pinned open (submissionid,
+    // or null). Kept separate from pausedinfo so a row can show both.
+    const [releaseinfo, setReleaseinfo] = useState(null);
 
     // Academic-days heatmap (async).
     const [acaDays, setAcaDays] = useState([]);
@@ -835,6 +894,18 @@ export default function PendingReportView({initial}) {
                                                     const pb = pendingBadge(row.pendingband, i18n);
                                                     return html`<${Badge} band=${pb.band} label=${pb.label} />`;
                                                 })()}
+                                            ${Number(row.awaitingrelease) === 1 && html`
+                                                <${AwaitingReleaseTag}
+                                                    submissionid=${row.submissionid}
+                                                    tip=${i18n.status_awaiting_release_help || ''}
+                                                    label=${i18n.status_awaiting_release || 'Awaiting release'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            <${AllocSplitTag}
+                                                queuehours=${row.queuehours}
+                                                allochours=${row.allochours}
+                                                tip=${i18n.alloc_split_tip || ''} />
                                         </td>
                                         <td class="bft-report-col-action">
                                             <a class="bft-report-action-grade" href=${graderUrl(row)}>

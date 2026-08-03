@@ -509,6 +509,17 @@ class responsiveness_payload {
                 ? (float) $row->cur_median_eff_days : null,
             'cur_median_perc_days' => isset($row->cur_median_perc_days) && $row->cur_median_perc_days !== null
                 ? (float) $row->cur_median_perc_days : null,
+            /* Coordination queue vs marker turnaround. Null-tolerant like the
+             * other materialised columns: the rollup is rebuilt out of band,
+             * so every one of these reads null until a recompute runs. */
+            'unallocated'          => isset($row->unallocated) && $row->unallocated !== null
+                ? (int) $row->unallocated : null,
+            'median_queue_h'       => isset($row->median_queue_h) && $row->median_queue_h !== null
+                ? (float) $row->median_queue_h : null,
+            'median_alloc_h'       => isset($row->median_alloc_h) && $row->median_alloc_h !== null
+                ? (float) $row->median_alloc_h : null,
+            'alloc_coverage_pct'   => isset($row->alloc_coverage_pct) && $row->alloc_coverage_pct !== null
+                ? (float) $row->alloc_coverage_pct : null,
             'responsiveness_score' => $row->responsiveness_score !== null ? (float) $row->responsiveness_score : null,
             'score_band'           => $row->score_band !== null ? (string) $row->score_band : null,
             'comp_compliance'      => isset($row->comp_compliance) && $row->comp_compliance !== null

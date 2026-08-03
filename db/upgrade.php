@@ -458,5 +458,143 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026060133, 'feedback_tracker');
     }
 
+    /* v1.0.37 — measurement cycles, latest-attempt gating and marking-workflow
+     * awareness. A student who re-saves an already-marked submission used to
+     * un-grade the ledger row, destroying the recorded response time; the row
+     * now opens a new cycle and the closed one keeps its measurement. Eight
+     * new columns support that plus core's latest-attempt gate and the
+     * release clock. Existing rows are seeded conservatively so no displayed
+     * number moves on upgrade. */
+    if ($oldversion < 2026080202) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+
+        $fields = [
+            new xmldb_field('cycle', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'attemptnumber'),
+            new xmldb_field('timemarked', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timegraded'),
+            new xmldb_field('timereleased', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timemarked'),
+            new xmldb_field('timeclosed', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timereleased'),
+            new xmldb_field('islatest', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '1', 'timeclosed'),
+            new xmldb_field('iscurrent', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '1', 'islatest'),
+            new xmldb_field('gradestate', XMLDB_TYPE_CHAR, '20', null, null, null, null, 'iscurrent'),
+            new xmldb_field('teamgroupid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'gradestate'),
+            new xmldb_field('timeallocated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'teamgroupid'),
+            new xmldb_field('timeallocmarker', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timeallocated'),
+            new xmldb_field('allocmarkerid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'timeallocmarker'),
+            new xmldb_field('allocsource', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocmarkerid'),
+        ];
+        foreach ($fields as $field) {
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        /* Seed timemarked and timeclosed from the existing timegraded. Every
+         * pre-1.0.37 row was written by the old predicate, which only ever set
+         * timegraded for a mark that postdated the hand-in — exactly the
+         * condition timemarked encodes — and no site had the release clock, so
+         * timeclosed equals timegraded for all of them. This keeps every
+         * displayed number identical across the upgrade and gives the
+         * resubmission detector a reference on day one. */
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET timemarked = timegraded, timeclosed = timegraded
+              WHERE timegraded IS NOT NULL AND timemarked IS NULL'
+        );
+
+        $dropindexes = [
+            new xmldb_index('uq_cm_user_attempt', XMLDB_INDEX_UNIQUE, ['cmid', 'userid', 'attemptnumber']),
+        ];
+        foreach ($dropindexes as $index) {
+            if ($dbman->index_exists($table, $index)) {
+                $dbman->drop_index($table, $index);
+            }
+        }
+
+        $addindexes = [
+            new xmldb_index('uq_cm_user_att_cycle', XMLDB_INDEX_UNIQUE, ['cmid', 'userid', 'attemptnumber', 'cycle']),
+            new xmldb_index(
+                'idx_status_cur_graded',
+                XMLDB_INDEX_NOTUNIQUE,
+                ['submissionstatus', 'islatest', 'iscurrent', 'timegraded']
+            ),
+            new xmldb_index('idx_item_user', XMLDB_INDEX_NOTUNIQUE, ['iteminstance', 'userid']),
+        ];
+        foreach ($addindexes as $index) {
+            if (!$dbman->index_exists($table, $index)) {
+                $dbman->add_index($table, $index);
+            }
+        }
+
+        /* Drop the phantom rows the old code wrote for team submissions.
+         * mod_assign stores a team's work in one {assign_submission} row with
+         * userid = 0, which the observer mirrored verbatim: the resulting
+         * ledger row was counted by the rollup (no user join) but invisible in
+         * every list (which does join {user}), so it was a pending item nobody
+         * could ever clear. */
+        $tuples = $DB->get_records_sql(
+            'SELECT DISTINCT courseid, groupid FROM {block_feedback_tracker_sub} WHERE userid = 0'
+        );
+        $DB->delete_records_select('block_feedback_tracker_sub', 'userid = 0');
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_SUBMISSION
+            );
+        }
+
+        upgrade_block_savepoint(true, 2026080202, 'feedback_tracker');
+    }
+
+    /* v1.0.38 — split the response measurement into the coordination queue
+     * (hand-in to allocation) and the marker turnaround (allocation to
+     * grading), so a marker who inherited a long-queued submission is not
+     * measured against a delay they did not cause. Purely additive: the
+     * student-experience clock that feeds the score is untouched. */
+    if ($oldversion < 2026080300) {
+        $subtable = new xmldb_table('block_feedback_tracker_sub');
+        $subfields = [
+            new xmldb_field('queuehours', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'allocsource'),
+            new xmldb_field('allochours', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'queuehours'),
+            new xmldb_field('allocdays', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'allochours'),
+            new xmldb_field('allocbucket', XMLDB_TYPE_CHAR, '10', null, null, null, null, 'allocdays'),
+        ];
+        foreach ($subfields as $field) {
+            if (!$dbman->field_exists($subtable, $field)) {
+                $dbman->add_field($subtable, $field);
+            }
+        }
+
+        $grouptable = new xmldb_table('block_feedback_tracker_group');
+        $groupfields = [
+            new xmldb_field('unallocated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'lastpause_reason'),
+            new xmldb_field('median_queue_h', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'unallocated'),
+            new xmldb_field('median_alloc_h', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'median_queue_h'),
+            new xmldb_field('alloc_coverage_pct', XMLDB_TYPE_NUMBER, '5, 2', null, null, null, null, 'median_alloc_h'),
+        ];
+        foreach ($groupfields as $field) {
+            if (!$dbman->field_exists($grouptable, $field)) {
+                $dbman->add_field($grouptable, $field);
+            }
+        }
+
+        /* The rollup is materialised, so every new column reads NULL until a
+         * recompute runs. Re-enqueue every tuple rather than leaving the
+         * dashboard showing blanks until something else happens to dirty it. */
+        $tuples = $DB->get_recordset_sql(
+            'SELECT DISTINCT courseid, groupid FROM {block_feedback_tracker_sub}'
+        );
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+            );
+        }
+        $tuples->close();
+
+        upgrade_block_savepoint(true, 2026080300, 'feedback_tracker');
+    }
+
     return true;
 }

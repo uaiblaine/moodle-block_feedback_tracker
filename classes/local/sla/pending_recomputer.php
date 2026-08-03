@@ -67,6 +67,8 @@ class pending_recomputer {
                FROM {block_feedback_tracker_sub}
               WHERE timegraded IS NULL
                 AND submissionstatus = :substatus
+                AND islatest = 1
+                AND iscurrent = 1
                 AND (effectivecalver < :calver OR effectiveasof IS NULL OR effectiveasof < :asof)
               ORDER BY COALESCE(effectiveasof, 0) ASC, id ASC",
             ['substatus' => submission_status::SUBMITTED, 'calver' => $calver, 'asof' => $stalecutoff],
