@@ -134,6 +134,16 @@ $observers = [
     ],
 
     // Course / cm lifecycle.
+    /* An assign's settings save. markingworkflow, markingallocation and
+     * teamsubmission change the MEANING of rows already written rather than
+     * any value in them, so no reconciler sweep can detect the drift — the
+     * divergence sweep keys on the mark and the rule sweep keys on dates, and
+     * both find the stored rows entirely consistent with a definition that no
+     * longer applies. */
+    [
+        'eventname' => '\core\event\course_module_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::course_module_updated',
+    ],
     [
         'eventname' => '\core\event\course_module_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::course_module_deleted',
@@ -141,6 +151,20 @@ $observers = [
     [
         'eventname' => '\core\event\course_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::course_deleted',
+    ],
+
+    /* Participant lifecycle. Both are cleanup: rows for someone who left, or
+     * whose account is gone, are a response owed to nobody. The reconciler's
+     * departed-participant sweep covers the same ground but visits one course
+     * per tick on a two-hourly task, so these exist to collapse a latency
+     * measured in days on a large site down to the request that caused it. */
+    [
+        'eventname' => '\core\event\user_enrolment_deleted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::enrolment_changed',
+    ],
+    [
+        'eventname' => '\core\event\user_deleted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_deleted',
     ],
 
     // Group membership / lifecycle.

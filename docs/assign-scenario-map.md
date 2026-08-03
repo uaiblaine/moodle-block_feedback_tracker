@@ -912,6 +912,23 @@ Not worth registering: `\assignfeedback_file\event\feedback_downloaded` (5.1+ on
 
 **Trap:** do **not** register `\mod_assign\event\submission_created` or `\mod_assign\event\submission_updated`. Both are `abstract class … extends base` (`mod/assign/classes/event/submission_created.php:47`, `submission_updated.php:47`) and are never instantiated by core.
 
+### Status of phase 6 as built (2026-08-03)
+
+**6.11 — shipped**, as `observer::enrolment_changed`, with two deviations from the row above. Only `user_enrolment_deleted` is registered; `user_enrolment_updated` is not, so suspension (H2) still reaches the ledger only through R5's one-course-per-tick sweep, and the two enrolment states therefore have very different latencies. And "delete that user's ledger rows" is conditional: a user may hold several enrolments in one course, so the deletion runs only when this was the last one. Core has already decided that and ships the answer as `lastenrol` in `other['userenrolment']` (set in `unenrol_user()` immediately before the event); re-deriving it with `get_enrolled_sql()` would materialise the whole enrolled set to settle a one-row question, once per event, and a bulk unenrolment fires one event per student.
+
+**6.12 — shipped**, as `observer::user_deleted`, reading `objectid` (core only guarantees `relateduserid` with a `debugging()` fallback). Backed by a new `idx_user` index: no existing index led with `userid`, so the deletion was a full table scan. It deliberately leaves `allocmarkerid` pointing at the deleted account — see the open item below.
+
+**6.10 — shipped in part**, as `observer::course_module_updated`. Duties (i) and (iii) are covered by re-deriving every measured row of the cm from live state: the upsert reads `$cm->course` and the live `{assign}` row, so a moved module rewrites its own `courseid` and a settings change re-resolves its own rule columns — there is no stored snapshot of `markingworkflow` to resync against, so the re-derivation *is* the resync. Duty (ii), taking a hidden cm out of scope, is **not** implemented and the row above's "simplest: delete its rows" is rejected: `delete_for_cm()` destroys every closed cycle, while `sweep_missing_rows` can only rebuild from live `{assign_submission}`, i.e. one cycle-0 row per attempt. Unhiding would silently discard completed response-time history. Doing this properly needs a scope flag, not a deletion.
+
+**6.9 — not shipped, and not implementable as written.** Two findings, both verified against 4.5 and 5.2:
+
+1. It cannot repair C11. Every ledger stamp derives from `{assign_grades}` and `{assign_user_flags}`; a gradebook-side deletion touches neither, so the prescribed re-upsert reproduces the stored row unchanged. The plugin would keep saying *graded* — as core's own assign UI does. Closing C11 needs a new grading source in the measurement model, which is a phase of its own, not an observer.
+2. `user_graded` fires on the ordinary grading path *before* `submission_graded` — `gradebook_item_update()` performs the gradebook write, and only if it returns true is `submission_graded` triggered (`mod/assign/locallib.php:3228-3229` on 5.2) — so registering it rebuilds the same ledger row twice on every grade save, running the academic-time engine twice. The replay is not free: `build_and_store()` rewrites `effectiveasof`, `timemodified` and every elapsed column, and enqueues.
+
+Two further constraints for whoever picks this up: `grade_deleted` only fires when site-wide completion is enabled — `grade_grade::delete()` tests `!empty($this->grade_item)` *before* calling `load_grade_item()`, and the property is populated only as a side effect of `notify_changed()`, which returns early when `completion_info::is_enabled_for_site()` is false. And `user_graded` fires only when the final grade *value* changed, so feedback-only edits are invisible to it.
+
+**Open item, out of scope here:** `allocmarkerid` is declared personal data and exported by the privacy provider, but nothing clears it when the marker's account is deleted, and `get_users_in_context()` selects only `userid`, so a marker is never listed among a context's users in the first place. That is a gap in the provider, not in the observers, and closing it inside `user_deleted` would both hide it in the wrong place and silently move the allocation-coverage figure of every course the account merely marked in.
+
 ---
 
 ### 3.4 FIX-4 — schema changes
