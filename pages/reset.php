@@ -39,8 +39,10 @@ $form = new \block_feedback_tracker\form\reset_form($PAGE->url);
 $done = false;
 $counts = [];
 
+/* Cancel and continue both land on the plugin's admin settings page: its
+ * "Tools" heading is the only navigable index of these pages. */
 if ($form->is_cancelled()) {
-    redirect(new moodle_url('/blocks/feedback_tracker/manage.php'));
+    redirect(new moodle_url('/admin/settings.php', ['section' => 'blocksettingfeedback_tracker']));
 } else if ($data = $form->get_data()) {
     $counts = block_feedback_tracker_reset_data(!empty($data->backfill));
     $done = true;
@@ -71,7 +73,10 @@ echo $OUTPUT->render_from_template('block_feedback_tracker/reset', [
         'count' => get_string('reset_count', 'block_feedback_tracker'),
     ],
     'counts'        => $countrows,
-    'continueurl'   => (new moodle_url('/blocks/feedback_tracker/manage.php'))->out(false),
+    'continueurl'   => (new moodle_url(
+        '/admin/settings.php',
+        ['section' => 'blocksettingfeedback_tracker']
+    ))->out(false),
     'continuelabel' => get_string('continue', 'core'),
 ]);
 echo $OUTPUT->footer();
