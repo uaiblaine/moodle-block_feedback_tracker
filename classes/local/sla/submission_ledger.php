@@ -304,7 +304,7 @@ class submission_ledger {
             ['cmid' => $cmid, 'userid' => $userid, 'attemptnumber' => $attemptnumber],
             'cycle DESC',
             'id, cycle, submissionstatus, timesubmitted, timegraded, timemarked, timereleased,
-             timeallocated, timeallocmarker',
+             timeclosed, closedsource, timeallocated, timeallocmarker',
             0,
             1
         );
@@ -314,6 +314,8 @@ class submission_ledger {
         $timesubmitted = $livesubmitted;
         $storedclosed = null;
         $storedreleased = null;
+        $storedstudentclosed = null;
+        $storedsource = null;
         $newcycle = false;
 
         if ($existing !== null) {
@@ -337,6 +339,8 @@ class submission_ledger {
             } else {
                 $storedclosed = $existing->timegraded !== null ? (int) $existing->timegraded : null;
                 $storedreleased = $existing->timereleased !== null ? (int) $existing->timereleased : null;
+                $storedstudentclosed = $existing->timeclosed !== null ? (int) $existing->timeclosed : null;
+                $storedsource = $existing->closedsource !== null ? (string) $existing->closedsource : null;
                 if (
                     $prevsubmitted > 0
                     && (string) $existing->submissionstatus === submission_status::SUBMITTED
@@ -400,10 +404,55 @@ class submission_ledger {
          * marking-workflow activity a mark that was never released has not
          * reached anybody. */
         $timeclosed = null;
+        $closedsource = null;
         if ($state['isclosed']) {
             $timeclosed = !empty($assign->markingworkflow)
                 ? ($timereleased ?? $state['timemarked'])
                 : $state['timemarked'];
+            $closedsource = $timeclosed !== null ? gradebook_response::SOURCE_ASSIGN : null;
+        }
+
+        /* The gradebook is the other surface the student reads, and mod_assign
+         * never learns what is typed into it. It may only ever CLOSE a cycle:
+         * a grade deleted there does not withdraw a response that had already
+         * reached the student, and the activity keeps sole authority over
+         * re-opening (clearing a mark there means "not answered yet", which is
+         * the cycle model's own rule).
+         *
+         * Earliest wins, so a response is dated when it landed rather than
+         * when the plugin noticed it — and, being monotone, the writer can
+         * never disagree with a reconciler sweep over the same facts.
+         *
+         * It closes the OPERATIONAL clock as well as the disclosure one. Every
+         * pending predicate in the plugin keys on timegraded — the rollup, the
+         * priority list, the browser, the re-ager — so leaving timegraded to
+         * the activity alone would have left a gradebook-graded submission
+         * sitting in the pending count for ever, which is the whole failure
+         * this model exists to end.
+         *
+         * What it must NOT touch is the marker's own turnaround. queuehours
+         * and allochours measure the allocated marker's interval, and a grade
+         * typed into the gradebook is frequently a coordinator's act; closing
+         * that interval on it would measure the wrong person on a figure that
+         * carries their name. So allocation_measures() is given the
+         * activity-derived instant, and only that one. */
+        $gradebook = gradebook_response::for_assign_user((int) $assign->id, $userid);
+        $assigngraded = $timegraded;
+        if ($storedstudentclosed !== null) {
+            if ($timeclosed === null || $storedstudentclosed < $timeclosed) {
+                $timeclosed = $storedstudentclosed;
+                $closedsource = $storedsource ?? $closedsource;
+            }
+        }
+        if ($gradebook['respondedat'] !== null) {
+            $respondedat = (int) $gradebook['respondedat'];
+            if ($timeclosed === null || $respondedat < $timeclosed) {
+                $timeclosed = $respondedat;
+                $closedsource = gradebook_response::SOURCE_GRADEBOOK;
+            }
+            if ($timegraded === null || $respondedat < $timegraded) {
+                $timegraded = $respondedat;
+            }
         }
 
         $now = time();
@@ -422,12 +471,14 @@ class submission_ledger {
          * hours must not read as a ten-day marker turnaround: that is the
          * coordinator's queue, not the marker's work. The student-experience
          * clock above is unchanged — it is still the institution's SLA. */
+        /* $assigngraded, not $timegraded: the marker interval closes on a mark
+         * entered inside the activity and on nothing else. */
         $alloc = self::allocation_measures(
             $existing,
             (int) $cm->course,
             $groupid,
             $timesubmitted,
-            $timegraded
+            $assigngraded
         );
 
         $record = (object) [
@@ -444,6 +495,8 @@ class submission_ledger {
             'timemarked'       => $state['timemarked'],
             'timereleased'     => $timereleased,
             'timeclosed'       => $timeclosed,
+            'closedsource'     => $closedsource,
+            'gradehidden'      => $gradebook['hidden'] ? 1 : 0,
             'islatest'         => $latest,
             'iscurrent'        => 1,
             'gradestate'       => $state['gradestate'],
@@ -811,12 +864,24 @@ class submission_ledger {
         global $DB;
 
         $params = ['when' => $when, 'cmid' => $cmid, 'userid' => $userid];
+        /* timeclosed and closedsource go through COALESCE rather than being
+         * assigned: a cycle the gradebook already closed carries a timeclosed
+         * with no timereleased, so a plain assignment here would move a
+         * recorded response LATER — the one thing the earliest-wins rule
+         * exists to forbid. The release itself is still recorded either way. */
         $DB->execute(
             'UPDATE {block_feedback_tracker_sub}
-                SET timereleased = :when, timeclosed = :when2, gradestate = :released
+                SET timereleased = :when,
+                    timeclosed = COALESCE(timeclosed, :when2),
+                    closedsource = COALESCE(closedsource, :src),
+                    gradestate = :released
               WHERE cmid = :cmid AND userid = :userid
                 AND timemarked IS NOT NULL AND timereleased IS NULL',
-            $params + ['when2' => $when, 'released' => grading_state::WORKFLOW_RELEASED]
+            $params + [
+                'when2' => $when,
+                'src' => gradebook_response::SOURCE_ASSIGN,
+                'released' => grading_state::WORKFLOW_RELEASED,
+            ]
         );
         /* Only rows the release policy left open are closed here; under the
          * default policy the mark already stopped their clock. */

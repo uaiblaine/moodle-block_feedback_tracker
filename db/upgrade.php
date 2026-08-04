@@ -612,5 +612,35 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026080306, 'feedback_tracker');
     }
 
+    /* The gradebook becomes a second source of the student's response clock.
+     * closedsource records which surface closed a cycle; gradehidden discloses
+     * a grade the gradebook is keeping from the student. Both are additive and
+     * both are backfilled lazily: existing closed rows were all closed from the
+     * activity, so they are stamped accordingly in one statement, and the
+     * gradebook is only consulted when a row is next re-derived. No stored
+     * response time moves — the new source can only ever supply an EARLIER
+     * instant for a cycle that had none. */
+    if ($oldversion < 2026080400) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $fields = [
+            new xmldb_field('closedsource', XMLDB_TYPE_CHAR, '10', null, null, null, null, 'timeclosed'),
+            new xmldb_field('gradehidden', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'closedsource'),
+        ];
+        foreach ($fields as $field) {
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        $DB->execute(
+            "UPDATE {block_feedback_tracker_sub}
+                SET closedsource = :src
+              WHERE timeclosed IS NOT NULL AND closedsource IS NULL",
+            ['src' => \block_feedback_tracker\local\sla\gradebook_response::SOURCE_ASSIGN]
+        );
+
+        upgrade_block_savepoint(true, 2026080400, 'feedback_tracker');
+    }
+
     return true;
 }
