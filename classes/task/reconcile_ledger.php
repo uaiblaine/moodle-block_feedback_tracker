@@ -113,6 +113,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'missing' => 'sweep_missing_rows',
             'team' => 'sweep_missing_team_rows',
             'gradestate' => 'sweep_grade_divergence',
+            'gradebook' => 'sweep_gradebook_closures',
             'latest' => 'sweep_latest_drift',
             'orphan' => 'sweep_orphans',
             'participant' => 'sweep_departed_participants',
@@ -416,6 +417,64 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
         $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
         return count($rows);
+    }
+
+    /**
+     * Open cycles the gradebook has already answered.
+     *
+     * `user_graded` covers the low-latency case, but it cannot cover this one:
+     * flipping a grade to overridden or locked fires no event at all, and a
+     * re-grade to the same value fires none either, because core gates the
+     * event on the final grade *value* having changed. Both leave a response
+     * sitting in {grade_grades} that no signal will ever announce.
+     *
+     * Visibility is part of the predicate, not an afterthought: a hidden grade
+     * has not reached the student, and core overloads `hidden` so that 1 means
+     * hidden while anything larger is a hidden-until instant that stops hiding
+     * once it passes.
+     *
+     * Acts by dispatching the ordinary re-derivation rather than writing the
+     * stamp here, so the writer stays the single place the earliest-wins rule
+     * lives.
+     *
+     * @param array $processable Course ids in scope.
+     * @param int $batch Row ceiling for this sweep.
+     * @param string $key Cursor key.
+     * @return int Rows dispatched for repair.
+     */
+    private function sweep_gradebook_closures(array $processable, int $batch, string $key): int {
+        global $DB;
+        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $now = time();
+        $rows = $DB->get_records_sql(
+            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid
+               FROM {block_feedback_tracker_sub} l
+               JOIN {grade_items} gi
+                 ON gi.iteminstance = l.iteminstance
+                AND gi.itemtype = :itemtype
+                AND gi.itemmodule = :itemmodule
+                AND gi.itemnumber = 0
+               JOIN {grade_grades} gg ON gg.itemid = gi.id AND gg.userid = l.userid
+              WHERE l.timeclosed IS NULL
+                AND l.iscurrent = 1
+                AND l.id > :cursor
+                AND l.courseid $csql
+                AND gg.finalgrade IS NOT NULL
+                AND gg.overridden > 0
+                AND (gg.hidden = 0 OR (gg.hidden > 1 AND gg.hidden <= :nowgrade))
+                AND (gi.hidden = 0 OR (gi.hidden > 1 AND gi.hidden <= :nowitem))
+           ORDER BY l.id ASC",
+            $cparams + [
+                'itemtype' => 'mod',
+                'itemmodule' => 'assign',
+                'cursor' => $this->cursor($key),
+                'nowgrade' => $now,
+                'nowitem' => $now,
+            ],
+            0,
+            $batch
+        );
+        return $this->dispatch_and_advance($rows, $key, $batch, 'id');
     }
 
     /**
