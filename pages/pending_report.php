@@ -92,6 +92,10 @@ $i18n['status_draft'] = get_string('status_draft', 'block_feedback_tracker');
  * outstanding step instead of reading as finished. */
 $i18n['status_awaiting_release'] = get_string('status_awaiting_release', 'block_feedback_tracker');
 $i18n['status_awaiting_release_help'] = get_string('status_awaiting_release_help', 'block_feedback_tracker');
+$i18n['status_closed_in_gradebook'] = get_string('status_closed_in_gradebook', 'block_feedback_tracker');
+$i18n['status_closed_in_gradebook_help'] = get_string('status_closed_in_gradebook_help', 'block_feedback_tracker');
+$i18n['status_grade_hidden'] = get_string('status_grade_hidden', 'block_feedback_tracker');
+$i18n['status_grade_hidden_help'] = get_string('status_grade_hidden_help', 'block_feedback_tracker');
 $i18n['alloc_split_tip'] = get_string('alloc_split_tip', 'block_feedback_tracker');
 
 // Collapse state for the hero + academic-days container (per-user pref).

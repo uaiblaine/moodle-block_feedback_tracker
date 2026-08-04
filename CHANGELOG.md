@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - Unreleased
 
+### Changed
+- **A grade entered straight into the gradebook now counts as a response.**
+  Until now the plugin only ever looked inside the activity, so a teacher who
+  graded in the grader report, the single view or an import was invisible to
+  it: the submission stayed in the pending count for ever, and nothing could
+  clear it. The student, meanwhile, was looking at their mark — mod_assign's
+  own student page reads the gradebook, not `{assign_grades}`.
+
+  The rule is **the earliest response wins, and it is never withdrawn**. A
+  cycle closes on whichever came first, the mark in the activity or the grade
+  in the gradebook, and a later deletion does not re-open it: the feedback did
+  reach the student at that time, and a figure that can be retro-edited by a
+  later administrative act is not a fact. The activity keeps sole authority
+  over re-opening — clearing a mark there still means "not answered yet",
+  unchanged.
+
+  Three boundaries are deliberate. **The instant comes from `overridden`, never
+  from `timemodified`**: core sets `overridden` when a human grades outside the
+  activity and suppresses it for a mass rescale, while a course regrade, a
+  calculated-item recompute and 5.2's penalty manager all move `timemodified`
+  without anybody grading — keying on the wrong column would have dated every
+  response to whenever an admin last touched the gradebook. **A hidden grade is
+  not a response**, which is the same reasoning the marking-workflow branch
+  already applies to an unreleased mark, applied to the gradebook's own gate.
+  And **the allocated marker's own turnaround is not closed by it**: a grade
+  typed into the gradebook is frequently a coordinator's act, and crediting it
+  would measure the wrong person on a figure that carries their name.
+
+  `\core\event\user_graded` is now observed, exiting early on a cycle that
+  already has a response — which is the branch the ordinary grading path takes,
+  since the gradebook write happens before `submission_graded` fires. Its twin
+  `grade_deleted` is **not** registered: under earliest-wins it has nothing to
+  do, and it fires unreliably besides. A reconciler sweep covers what no event
+  reaches — flipping a grade to overridden fires nothing at all, and neither
+  does a re-grade to the same value.
+
+- **Two per-row disclosures on the pending report.** A row answered from the
+  gradebook says so, because the activity's grading screen shows nothing that
+  explains it. And a row whose grade the gradebook is hiding says so too: that
+  one is disclosure rather than repair — a mark made inside the activity still
+  closes the response time even while hidden, which is long-standing behaviour,
+  and the row now states it instead of letting a closed clock imply the student
+  received something they cannot see.
+
 ### Added
 - **Three lifecycle events are now observed**, closing gaps where a ledger row
   stops describing reality without any of its own values changing — the shape

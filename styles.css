@@ -2533,6 +2533,35 @@ a.bft-activity-action:focus {
     outline-offset: 2px;
 }
 
+/* Answered outside the activity. Blue rather than amber: it is a statement of
+   provenance, not a warning — the response did reach the student. */
+.bft-badge-gradebook {
+    border: 1px solid #3b82f6;
+    background: #dbeafe;
+    color: #1e40af;
+    cursor: pointer;
+}
+
+.bft-badge-gradebook:focus-visible {
+    outline: 2px solid var(--bft-focus, #2563eb);
+    outline-offset: 2px;
+}
+
+/* A grade the student cannot see. Grey rather than red: nothing is wrong, the
+   feedback simply has not arrived yet, and the row says so instead of letting
+   the closed clock imply otherwise. */
+.bft-badge-hiddengrade {
+    border: 1px solid #94a3b8;
+    background: #f1f5f9;
+    color: #334155;
+    cursor: pointer;
+}
+
+.bft-badge-hiddengrade:focus-visible {
+    outline: 2px solid var(--bft-focus, #2563eb);
+    outline-offset: 2px;
+}
+
 /* Queue-to-turnaround chip: the response interval split by owner. Muted, so
  * it reads as annotation beside the result badge rather than competing with
  * it. */

@@ -129,6 +129,7 @@ class submission_browser {
 
         $select = "SELECT sub.id, sub.cmid, sub.userid, sub.groupid, sub.timesubmitted,
                           sub.timegraded, sub.timemarked, sub.timeclosed,
+                          sub.closedsource, sub.gradehidden,
                           sub.queuehours, sub.allochours,
                           sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
@@ -198,6 +199,14 @@ class submission_browser {
                     ? self::pending_band_days($storeddays ?? (float) $days['business'], $daygoal, $daycrit)
                     : self::pending_band($eff, $goal, $crit),
                 'submissionstatus' => (string) $r->submissionstatus,
+                /* Two disclosures, on the same footing as awaitingrelease
+                 * below and for the same reason. A cycle closed from the
+                 * gradebook was never marked inside the activity, so a teacher
+                 * looking at the grading screen finds nothing there to explain
+                 * it. And a grade the gradebook is hiding has reached nobody
+                 * yet, whatever the activity's own screen says. */
+                'closedsource'     => (string) ($r->closedsource ?? ''),
+                'gradehidden'      => (int) $r->gradehidden,
                 /* A mark that the marking workflow has not released is
                  * invisible to the student, and releasing frequently needs a
                  * permission the marker does not hold — so it is surfaced

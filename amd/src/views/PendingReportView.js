@@ -326,16 +326,35 @@ const AllocSplitTag = ({queuehours, allochours, tip}) => {
     `;
 };
 
-const AwaitingReleaseTag = ({submissionid, tip, label, openid, onToggle}) => html`
+/**
+ * A per-row disclosure: a short tag whose explanation opens on click.
+ *
+ * Used wherever a row's status is true but incomplete on its own — a mark the
+ * workflow has not released, a cycle answered outside the activity, a grade the
+ * gradebook is hiding. The key carries the variant as well as the row, because
+ * one row can raise more than one of these and a key of the row alone would let
+ * them fight over the single open slot.
+ *
+ * @param {object} props
+ * @param {string} props.tagkey   Unique per row AND variant.
+ * @param {string} props.variant  Modifier for the CSS class.
+ * @param {string} props.tip      The explanation.
+ * @param {string} props.label    The visible tag text.
+ * @param {string} props.openid   Which tag is currently open.
+ * @param {Function} props.onToggle
+ * @returns {object} vnode
+ */
+const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => html`
     <span class="bft-row-release-wrap">
         <button type="button"
-                class="bft-badge bft-badge-release"
+                class="bft-badge bft-badge-${variant}"
                 title=${tip}
-                aria-expanded=${openid === submissionid ? 'true' : 'false'}
-                onClick=${() => onToggle(openid === submissionid ? null : submissionid)}>
+                aria-label=${label + '. ' + tip}
+                aria-expanded=${openid === tagkey ? 'true' : 'false'}
+                onClick=${() => onToggle(openid === tagkey ? null : tagkey)}>
             ${label}
         </button>
-        ${openid === submissionid && html`
+        ${openid === tagkey && html`
             <span class="bft-row-release-pop" role="note">${tip}</span>
         `}
     </span>
@@ -895,10 +914,29 @@ export default function PendingReportView({initial}) {
                                                     return html`<${Badge} band=${pb.band} label=${pb.label} />`;
                                                 })()}
                                             ${Number(row.awaitingrelease) === 1 && html`
-                                                <${AwaitingReleaseTag}
-                                                    submissionid=${row.submissionid}
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':release'}
+                                                    variant="release"
                                                     tip=${i18n.status_awaiting_release_help || ''}
                                                     label=${i18n.status_awaiting_release || 'Awaiting release'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            ${row.closedsource === 'gradebook' && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':gradebook'}
+                                                    variant="gradebook"
+                                                    tip=${i18n.status_closed_in_gradebook_help || ''}
+                                                    label=${i18n.status_closed_in_gradebook || 'Graded in gradebook'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            ${Number(row.gradehidden) === 1 && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':hidden'}
+                                                    variant="hiddengrade"
+                                                    tip=${i18n.status_grade_hidden_help || ''}
+                                                    label=${i18n.status_grade_hidden || 'Hidden from student'}
                                                     openid=${releaseinfo}
                                                     onToggle=${setReleaseinfo} />
                                             `}
