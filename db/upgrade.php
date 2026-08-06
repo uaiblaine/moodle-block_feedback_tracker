@@ -642,5 +642,23 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026080400, 'feedback_tracker');
     }
 
+    /* Drop gradehidden. It was added one step ago as a stored disclosure, and
+     * that was the wrong shape: whether the gradebook hides a grade is a LIVE
+     * fact, not a measurement. Core fires no event when a grade's visibility
+     * changes, and a hide-until date expires with the passage of time alone, so
+     * a stored copy is correct only until the next thing happens and then
+     * drifts silently — while still being exported to the data subject as if it
+     * were current. The pending report now reads visibility at display time, so
+     * nothing reads the column and nothing should. */
+    if ($oldversion < 2026080401) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $field = new xmldb_field('gradehidden');
+        if ($dbman->field_exists($table, $field)) {
+            $dbman->drop_field($table, $field);
+        }
+
+        upgrade_block_savepoint(true, 2026080401, 'feedback_tracker');
+    }
+
     return true;
 }

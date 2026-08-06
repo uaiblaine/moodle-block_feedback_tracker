@@ -397,7 +397,6 @@ $string['privacy:metadata:sub:courseid'] = 'Course the submission belongs to.';
 $string['privacy:metadata:sub:cycle'] = 'Measurement index within one attempt; a new cycle opens when work is resubmitted after it was already marked.';
 $string['privacy:metadata:sub:effectivedays'] = 'Business/academic days between submission and grading (or now).';
 $string['privacy:metadata:sub:effectivehours'] = 'Business/academic hours between submission and grading (or now).';
-$string['privacy:metadata:sub:gradehidden'] = 'Whether a grade exists for this submission but the gradebook is hiding it from the student.';
 $string['privacy:metadata:sub:gradestate'] = 'Grading status reported by the assignment: graded, not graded, or a marking-workflow state.';
 $string['privacy:metadata:sub:groupid'] = 'Group attribution at the time of the last update.';
 $string['privacy:metadata:sub:queuehours'] = 'Business/academic hours from the submission to the first marker allocation.';
