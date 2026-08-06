@@ -438,14 +438,43 @@ class submission_ledger {
          * activity-derived instant, and only that one. */
         $gradebook = gradebook_response::for_assign_user((int) $assign->id, $userid);
         $assigngraded = $timegraded;
-        if ($storedstudentclosed !== null) {
-            if ($timeclosed === null || $storedstudentclosed < $timeclosed) {
+
+        /* Once the gradebook has answered a cycle, that answer is restored from
+         * the stored row rather than re-derived, and BOTH clocks are restored.
+         * {grade_grades} holds no history: hiding or clearing the grade makes
+         * the live read go quiet, so a re-derivation driven by anything else —
+         * a student save, a settings change, a rule sweep — would silently take
+         * the response back. Restoring only timeclosed, as an earlier draft
+         * did, left the row closed and pending at the same time.
+         *
+         * The restore is deliberately limited to gradebook-sourced closures.
+         * An activity-sourced one must still be withdrawable, because clearing
+         * a mark in the activity is the marker saying "not answered yet" —
+         * long-standing behaviour with its own test. */
+        if ($storedsource === gradebook_response::SOURCE_GRADEBOOK) {
+            if (
+                $storedstudentclosed !== null
+                && ($timeclosed === null || $storedstudentclosed < $timeclosed)
+            ) {
                 $timeclosed = $storedstudentclosed;
-                $closedsource = $storedsource ?? $closedsource;
+                $closedsource = gradebook_response::SOURCE_GRADEBOOK;
+            }
+            if ($storedclosed !== null && ($timegraded === null || $storedclosed < $timegraded)) {
+                $timegraded = $storedclosed;
             }
         }
-        if ($gradebook['respondedat'] !== null) {
-            $respondedat = (int) $gradebook['respondedat'];
+
+        /* The response has to postdate the work it answers. The activity side
+         * has always required this (grading_state::resolve's
+         * `$gradetime > $timesubmitted`); the gradebook needs it just as much,
+         * because {grade_grades} carries ONE grade per user per item with no
+         * attempt or cycle dimension. A resubmission opens a new cycle whose
+         * hand-in postdates an override made against the previous one, and
+         * without the gate that stale instant would close the new cycle before
+         * it began — a zero-hour interval, which bands as the best possible
+         * result. */
+        $respondedat = $gradebook['respondedat'] !== null ? (int) $gradebook['respondedat'] : null;
+        if ($respondedat !== null && $respondedat > $timesubmitted) {
             if ($timeclosed === null || $respondedat < $timeclosed) {
                 $timeclosed = $respondedat;
                 $closedsource = gradebook_response::SOURCE_GRADEBOOK;

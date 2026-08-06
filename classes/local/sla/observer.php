@@ -693,14 +693,49 @@ class observer {
         /* The early exit. A cycle that already carries a response cannot be
          * improved by this event — earliest wins — and this is the branch the
          * ordinary grading path takes, twice per save, on every site. */
-        $alreadyanswered = $DB->record_exists_select(
+        /* Skip when the activity owns this cycle — either it has already been
+         * answered, or {assign_grades} carries a mark that postdates the
+         * hand-in, which means mod_assign is mid-save and submission_graded is
+         * about to fire.
+         *
+         * The second half is what makes the exit useful. Core writes
+         * {assign_grades}, then pushes to the gradebook (firing this event),
+         * and only then triggers submission_graded — so on a FIRST grading the
+         * ledger row is still open when we arrive, and a check on timeclosed
+         * alone would let every ordinary grade save re-derive the same row
+         * twice and run the academic-time engine twice.
+         *
+         * Nothing is lost by deferring to the activity: under earliest-wins the
+         * mark it is saving right now is at or before this gradebook write, so
+         * it would win regardless. A gradebook response that is genuinely
+         * earlier belongs to a cycle the activity has not marked at all, which
+         * fails this test and proceeds. */
+        $row = $DB->get_record_select(
             'block_feedback_tracker_sub',
-            'cmid = :cmid AND userid = :userid AND attemptnumber = :attempt
-               AND iscurrent = 1 AND timeclosed IS NOT NULL',
-            ['cmid' => $cmid, 'userid' => $userid, 'attempt' => $attempt]
+            'cmid = :cmid AND userid = :userid AND attemptnumber = :attempt AND iscurrent = 1',
+            ['cmid' => $cmid, 'userid' => $userid, 'attempt' => $attempt],
+            'id, iteminstance, timesubmitted, timeclosed',
+            IGNORE_MULTIPLE
         );
-        if ($alreadyanswered) {
+        if ($row && $row->timeclosed !== null) {
             return;
+        }
+        if ($row) {
+            $activitymark = (int) $DB->get_field_sql(
+                "SELECT MAX(g.timemodified)
+                   FROM {assign_grades} g
+                  WHERE g.assignment = :assignid
+                    AND g.userid = :userid
+                    AND g.attemptnumber = :attempt",
+                [
+                    'assignid' => (int) $row->iteminstance,
+                    'userid' => $userid,
+                    'attempt' => $attempt,
+                ]
+            );
+            if ($activitymark > (int) $row->timesubmitted) {
+                return;
+            }
         }
 
         submission_ledger::upsert_for_cm_user_attempt($cmid, $userid, $attempt);

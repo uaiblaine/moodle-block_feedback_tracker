@@ -937,7 +937,7 @@ Boundaries that are load-bearing, each pinned by a test that reds under mutation
 3. The operational clock (`timegraded`, which every pending predicate keys on) accepts the gradebook; the allocated marker's turnaround (`allochours`) does not, and receives an activity-derived instant only.
 4. `stamp_release_for_user()` writes `timeclosed` through `COALESCE`, so a release cannot move a response the gradebook already recorded.
 
-Coverage: `\core\event\user_graded` (early-exit on an already-answered cycle) plus a reconciler sweep for what fires no event — the flip to overridden, and a re-grade to the same value. `grade_deleted` is not registered; under earliest-wins it has nothing to do.
+Coverage: `\core\event\user_graded` (early-exit when the activity owns the cycle — already answered, or `{assign_grades}` carrying a mark that postdates the hand-in, which means `submission_graded` is about to fire) plus a reconciler sweep for what fires no event — the flip to overridden, and a re-grade to the same value. `grade_deleted` is not registered; under earliest-wins it has nothing to do.
 
 **Left unrepaired, on purpose:** an activity mark whose gradebook grade is hidden still closes the response time. That is pre-existing behaviour, and it is now *disclosed* on the row rather than changed. Changing it is a separate decision, because it would move already-published numbers.
 

@@ -35,9 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed into the gradebook is frequently a coordinator's act, and crediting it
   would measure the wrong person on a figure that carries their name.
 
-  `\core\event\user_graded` is now observed, exiting early on a cycle that
-  already has a response — which is the branch the ordinary grading path takes,
-  since the gradebook write happens before `submission_graded` fires. Its twin
+  `\core\event\user_graded` is now observed, exiting early when the activity
+  owns the cycle — either it is already answered, or `{assign_grades}` carries a
+  mark that postdates the hand-in, which means `submission_graded` is about to
+  fire. Testing only for an answered cycle would have missed the ordinary path
+  entirely: core writes the grade, pushes to the gradebook, and only then
+  triggers its own event, so the row is still open when this one arrives. Its twin
   `grade_deleted` is **not** registered: under earliest-wins it has nothing to
   do, and it fires unreliably besides. A reconciler sweep covers what no event
   reaches — flipping a grade to overridden fires nothing at all, and neither
@@ -80,14 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   teacher's request. Team work is dispatched once per group rather than once
   per member, because each dispatch already fans out to the whole group.
 
-  Deliberately **not** registered: `\core\event\user_graded` and
-  `\core\event\grade_deleted`. They fire before `submission_graded` on every
-  ordinary grading, so registering them would rebuild the same row twice per
-  grade save; and they cannot fix the case that motivates them, since every
-  ledger stamp derives from `{assign_grades}` and `{assign_user_flags}`, which
-  a gradebook-side edit never touches. Reading the gradebook as a grading
-  source is a change to the measurement model, not an observer, and is left as
-  its own decision.
+  Not registered at the time: `\core\event\user_graded` and
+  `\core\event\grade_deleted`, because reading the gradebook as a grading
+  source is a change to the measurement model rather than an observer, and was
+  left as its own decision. **That decision was since taken** — see the
+  gradebook entry under Changed above, which registers `user_graded` (and
+  still refuses `grade_deleted`, for a different reason).
 
 ### Fixed
 - **The reconciler no longer resurrects the rows it just deleted.** Two of its

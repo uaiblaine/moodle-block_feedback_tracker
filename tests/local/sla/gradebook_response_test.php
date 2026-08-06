@@ -145,6 +145,82 @@ final class gradebook_response_test extends \advanced_testcase {
     }
 
     /**
+     * A gradebook instant that predates the hand-in never closes the cycle.
+     *
+     * {grade_grades} holds one grade per user per item, with no attempt or
+     * cycle dimension, so a resubmission opens a cycle whose hand-in postdates
+     * an override made against the previous one. Applying that stale instant
+     * would close the new cycle before it began — a zero-hour interval, which
+     * bands as the best possible result and enters the medians and the score.
+     * The activity side has always required the response to postdate the work;
+     * this is the same rule.
+     *
+     * @return void
+     */
+    public function test_a_gradebook_instant_before_the_hand_in_is_ignored(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $stale = time() - 9 * 86400;
+        $submitted = time() - 3 * 86400;
+        $this->submit($assign, $student, $submitted);
+        $this->gradebook_grade($assign, $student, 55.0, $stale);
+
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertNull($row->timeclosed, 'A response cannot predate the work it answers.');
+        $this->assertNull($row->timegraded, 'And it must not clear the pending clock either.');
+        $this->assertNotSame(
+            'excellent',
+            (string) $row->slabucket,
+            'A zero-hour interval would band as the best possible result.'
+        );
+    }
+
+    /**
+     * Once the gradebook has answered, hiding the grade does not take it back.
+     *
+     * {grade_grades} keeps no history, so the live read simply goes quiet when
+     * the grade is hidden or cleared. Any re-derivation driven by something
+     * else entirely — a student save, an activity settings change, a rule
+     * sweep — would then silently withdraw the response. Both clocks have to
+     * be restored from the stored row, not just the disclosure one: restoring
+     * `timeclosed` alone leaves the row closed and pending at the same time.
+     *
+     * @return void
+     */
+    public function test_hiding_the_grade_afterwards_does_not_withdraw_the_response(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $responded = time() - 2 * 86400;
+        $this->submit($assign, $student, time() - 5 * 86400);
+        $this->gradebook_grade($assign, $student, 70.0, $responded);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $this->assertSame(
+            $responded,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'timegraded', ['cmid' => $cm->id])
+        );
+
+        // The coordinator hides the column, then something unrelated re-derives.
+        $this->gradebook_grade($assign, $student, 70.0, $responded, 1);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame($responded, (int) $row->timeclosed, 'The response stands.');
+        $this->assertSame(
+            $responded,
+            (int) $row->timegraded,
+            'And the row must not slide back into the pending count.'
+        );
+    }
+
+    /**
      * The gradebook never closes the marker's own clock.
      *
      * queuehours and allochours measure the allocated marker's turnaround, and

@@ -457,10 +457,18 @@ class reconcile_ledger extends \core\task\scheduled_task {
                JOIN {grade_grades} gg ON gg.itemid = gi.id AND gg.userid = l.userid
               WHERE l.timeclosed IS NULL
                 AND l.iscurrent = 1
+                /* islatest as well as iscurrent: {grade_grades} holds one grade
+                 * per user per item with no attempt dimension, so without this
+                 * a single gradebook response would close every unmarked
+                 * attempt of that user and be counted once per attempt in the
+                 * graded window. The observer avoids it by resolving through
+                 * latest_attempt_number(); the sweep has to say so. */
+                AND l.islatest = 1
+                AND l.timesubmitted > 0
+                AND gg.overridden > l.timesubmitted
                 AND l.id > :cursor
                 AND l.courseid $csql
                 AND gg.finalgrade IS NOT NULL
-                AND gg.overridden > 0
                 AND (gg.hidden = 0 OR (gg.hidden > 1 AND gg.hidden <= :nowgrade))
                 AND (gi.hidden = 0 OR (gi.hidden > 1 AND gi.hidden <= :nowitem))
            ORDER BY l.id ASC",
