@@ -76,7 +76,13 @@ final class gradebook_response {
      * @return array Keys: respondedat (int|null), hidden (bool), hasgrade (bool).
      */
     public static function for_assign_user(int $assignid, int $userid, ?int $now = null): array {
-        global $DB;
+        global $CFG, $DB;
+
+        /* GRADE_TYPE_NONE lives in a file core loads with gradelib, which the
+         * PHPUnit bootstrap happens to pull in and an ordinary web-service
+         * request does not — so relying on it being defined passes every test
+         * and then fatals in the browser. */
+        require_once($CFG->libdir . '/grade/constants.php');
 
         $none = ['respondedat' => null, 'hidden' => false, 'hasgrade' => false];
         if ($assignid <= 0 || $userid <= 0) {

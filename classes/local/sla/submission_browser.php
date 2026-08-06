@@ -68,7 +68,11 @@ class submission_browser {
      * @return array Ledger row id => 1, for the hidden ones only.
      */
     private static function hidden_from_student(array $rows): array {
-        global $DB;
+        global $CFG, $DB;
+
+        // See gradebook_response::for_assign_user() — the same constant, the
+        // same reason: gradelib is not loaded on every request that gets here.
+        require_once($CFG->libdir . '/grade/constants.php');
         if (empty($rows)) {
             return [];
         }
