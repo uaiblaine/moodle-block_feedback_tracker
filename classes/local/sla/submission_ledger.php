@@ -322,6 +322,19 @@ class submission_ledger {
             $cycle = (int) $existing->cycle;
             $prevsubmitted = (int) $existing->timesubmitted;
             $prevmarked = $existing->timemarked !== null ? (int) $existing->timemarked : 0;
+            /* A gradebook closure never touched {assign_grades}, so it leaves
+             * timemarked null. Without this the test below could never pass for
+             * such a cycle, and a student who resubmitted after being graded in
+             * the gradebook would have that work silently absorbed into the
+             * closed cycle — never measured, never pending, and invisible to
+             * every sweep, because each of them keys on something this row
+             * still satisfies. */
+            if (
+                $prevmarked === 0
+                && (string) ($existing->closedsource ?? '') === gradebook_response::SOURCE_GRADEBOOK
+            ) {
+                $prevmarked = $existing->timeclosed !== null ? (int) $existing->timeclosed : 0;
+            }
 
             if ($prevmarked > 0 && $prevmarked >= $prevsubmitted && $livesubmitted > $prevmarked) {
                 /* The student moved the work after this cycle was marked. Core
@@ -409,7 +422,23 @@ class submission_ledger {
             $timeclosed = !empty($assign->markingworkflow)
                 ? ($timereleased ?? $state['timemarked'])
                 : $state['timemarked'];
-            $closedsource = $timeclosed !== null ? gradebook_response::SOURCE_ASSIGN : null;
+            /* Sticky, exactly as timegraded is a few lines above. Without this
+             * the two clocks drift apart on the same row: assign::update_grade()
+             * restamps assign_grades.timemodified on every save, including a
+             * feedback-only edit days later, so timemarked moves and timeclosed
+             * followed it while timegraded correctly stayed put. It stays
+             * INSIDE the isclosed branch so an un-grading in the activity still
+             * clears it — withdrawal there is deliberate. */
+            if (
+                $storedstudentclosed !== null
+                && $storedstudentclosed > $timesubmitted
+                && ($timeclosed === null || $storedstudentclosed < $timeclosed)
+            ) {
+                $timeclosed = $storedstudentclosed;
+            }
+            $closedsource = $timeclosed !== null
+                ? ($storedsource ?? gradebook_response::SOURCE_ASSIGN)
+                : null;
         }
 
         /* The gradebook is the other surface the student reads, and mod_assign
@@ -452,14 +481,26 @@ class submission_ledger {
          * a mark in the activity is the marker saying "not answered yet" —
          * long-standing behaviour with its own test. */
         if ($storedsource === gradebook_response::SOURCE_GRADEBOOK) {
+            /* The restore carries the same postdates-the-hand-in requirement as
+             * the live read below. A cycle's hand-in can move forward under a
+             * stored closure without a new cycle opening — a draft graded in
+             * the gradebook and only then submitted — and reinstating the older
+             * instant would close the cycle before the work existed, which is
+             * the zero-hour "excellent" the live gate exists to prevent,
+             * reached through the other door. */
             if (
                 $storedstudentclosed !== null
+                && $storedstudentclosed > $timesubmitted
                 && ($timeclosed === null || $storedstudentclosed < $timeclosed)
             ) {
                 $timeclosed = $storedstudentclosed;
                 $closedsource = gradebook_response::SOURCE_GRADEBOOK;
             }
-            if ($storedclosed !== null && ($timegraded === null || $storedclosed < $timegraded)) {
+            if (
+                $storedclosed !== null
+                && $storedclosed > $timesubmitted
+                && ($timegraded === null || $storedclosed < $timegraded)
+            ) {
                 $timegraded = $storedclosed;
             }
         }
@@ -525,7 +566,6 @@ class submission_ledger {
             'timereleased'     => $timereleased,
             'timeclosed'       => $timeclosed,
             'closedsource'     => $closedsource,
-            'gradehidden'      => $gradebook['hidden'] ? 1 : 0,
             'islatest'         => $latest,
             'iscurrent'        => 1,
             'gradestate'       => $state['gradestate'],

@@ -39,9 +39,11 @@ namespace block_feedback_tracker\local\sla;
  * Two rules make that read safe, and both are load-bearing.
  *
  * **The instant comes from `overridden`, never from `timemodified`.** Core sets
- * `overridden` when a human grades outside the activity, and deliberately
- * suppresses it for the one bulk operation that would otherwise look like mass
- * grading (a whole-item rescale). Meanwhile a course regrade, a calculated
+ * `overridden` when a human grades outside the activity, and suppresses it
+ * for the bulk rescale that would otherwise look like mass grading. That
+ * suppression is not universal — only one of core's three rescale entry points
+ * clears the flag — but a plain assign item takes the raw-grade branch, which
+ * never touches `overridden` at all. Meanwhile a course regrade, a calculated
  * item recompute and 5.2's penalty manager all move `timemodified` and never
  * touch `overridden`. Keying on `timemodified` would therefore have credited
  * every teacher on a site with a response the moment an admin changed a
@@ -87,8 +89,8 @@ final class gradebook_response {
          * matching on type and module alone would read an outcome's grade as
          * the assignment's. */
         $row = $DB->get_record_sql(
-            "SELECT gg.id, gg.finalgrade, gg.overridden, gg.hidden AS gradehidden,
-                    gi.hidden AS itemhidden
+            "SELECT gg.id, gg.finalgrade, gg.feedback, gg.overridden,
+                    gg.hidden AS gradehidden, gi.hidden AS itemhidden, gi.gradetype
                FROM {grade_items} gi
                JOIN {grade_grades} gg ON gg.itemid = gi.id
               WHERE gi.itemtype = :itemtype
@@ -104,44 +106,82 @@ final class gradebook_response {
             ],
             IGNORE_MULTIPLE
         );
-        if (!$row || $row->finalgrade === null) {
+        if (!$row) {
+            return $none;
+        }
+
+        /* Grade type "None" shows the student nothing, whatever the row holds.
+         * A stale override survives the switch — regrade_final_grades() skips
+         * overridden rows — so without this an activity later set to ungraded
+         * would keep reporting a visible response. */
+        if ((int) $row->gradetype === GRADE_TYPE_NONE) {
+            return $none;
+        }
+
+        /* Feedback alone is a response. The gradebook's feedback field goes
+         * through the same update_final_grade() path and gets the same
+         * `overridden` stamp, but leaves finalgrade untouched — so an emptiness
+         * test on the grade value alone would miss a teacher who returned
+         * written feedback and no mark, and leave that submission pending for
+         * ever. The student reads it in the user report either way. */
+        $hasgrade = $row->finalgrade !== null || trim((string) $row->feedback) !== '';
+        if (!$hasgrade) {
             return $none;
         }
 
         $now = $now ?? time();
-        $hidden = self::is_hidden((int) $row->gradehidden, (int) $row->itemhidden, $now);
+        $release = self::release_instant((int) $row->gradehidden, (int) $row->itemhidden, $now);
         $overridden = (int) $row->overridden;
 
+        /* The response landed when the student could SEE it. Core overloads
+         * `hidden` so that any value above 1 is a hide-until date, which is the
+         * ordinary held-results workflow: mark in March, publish in April. The
+         * entry instant would understate that interval by the whole hold, on a
+         * column documented as "when the response reached the student". Taking
+         * the later of the two is the only honest answer.
+         *
+         * The plain hidden flag (exactly 1) carries no date, so a grade
+         * un-hidden by hand is still dated at entry — core keeps no record of
+         * when that happened, and inventing one would be worse. */
+        $respondedat = null;
+        if ($overridden > 0 && $release !== false) {
+            $respondedat = max($overridden, $release);
+        }
+
         return [
-            /* Only an overridden stamp is a human grading outside the activity,
-             * and only a visible one has reached anybody. */
-            'respondedat' => ($overridden > 0 && !$hidden) ? $overridden : null,
-            'hidden' => $hidden,
+            'respondedat' => $respondedat,
+            'hidden' => $release === false,
             'hasgrade' => true,
         ];
     }
 
     /**
-     * Whether the gradebook keeps this grade from the student.
+     * When the gradebook lets the student see this grade, or false while it
+     * still does not.
      *
      * Core overloads one column with two meanings: 1 is "hidden", and any
-     * larger value is a hidden-until timestamp, which stops hiding once it
-     * passes. The item's own flag hides every grade in it regardless.
+     * larger value is a hide-until timestamp, which stops hiding once it
+     * passes. The item's own flag hides every grade in it regardless, so the
+     * effective release is the later of the two.
      *
      * @param int $gradehidden {grade_grades}.hidden
      * @param int $itemhidden {grade_items}.hidden
      * @param int $now
-     * @return bool
+     * @return int|false Release instant (0 when never hidden), or false while hidden.
      */
-    private static function is_hidden(int $gradehidden, int $itemhidden, int $now): bool {
+    private static function release_instant(int $gradehidden, int $itemhidden, int $now) {
+        $release = 0;
         foreach ([$gradehidden, $itemhidden] as $flag) {
             if ($flag === 1) {
-                return true;
+                return false;
             }
-            if ($flag > 1 && $flag > $now) {
-                return true;
+            if ($flag > 1) {
+                if ($flag > $now) {
+                    return false;
+                }
+                $release = max($release, $flag);
             }
         }
-        return false;
+        return $release;
     }
 }
