@@ -358,6 +358,69 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A grade that exists only in the gradebook is found, and then left alone.
+     *
+     * No event announces it: flipping a grade to overridden fires nothing, and
+     * a re-grade to the same value fires nothing either, because core gates the
+     * event on the final grade value having changed. So the sweep is the only
+     * thing that can close such a cycle.
+     *
+     * The second half is the part worth testing. The whole model is monotone —
+     * a response is only ever recorded earlier, never withdrawn — precisely so
+     * that a sweep and the writer can never disagree about the same facts. A
+     * second pass that kept queueing repairs would mean they do, which is the
+     * failure this file already carries one regression test for.
+     *
+     * @return void
+     */
+    public function test_a_gradebook_only_grade_is_found_and_then_converges(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $now = time();
+        $responded = $now - 2 * 86400;
+        $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $this->assertNull(
+            $DB->get_field('block_feedback_tracker_sub', 'timeclosed', ['cmid' => $cm->id]),
+            'Nothing inside the activity has answered.'
+        );
+
+        $itemid = $DB->get_field_sql(
+            "SELECT id FROM {grade_items}
+              WHERE itemtype = :t AND itemmodule = :m AND iteminstance = :a AND itemnumber = 0",
+            ['t' => 'mod', 'm' => 'assign', 'a' => $assign->id]
+        );
+        $this->assertNotEmpty($itemid);
+        $DB->insert_record('grade_grades', (object) [
+            'itemid' => $itemid,
+            'userid' => $student->id,
+            'rawgrade' => 64.0,
+            'finalgrade' => 64.0,
+            'overridden' => $responded,
+            'hidden' => 0,
+            'timecreated' => $responded,
+            'timemodified' => $responded,
+        ]);
+
+        $this->run_reconciler();
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame($responded, (int) $row->timeclosed, 'The sweep must find it.');
+        $this->assertSame('gradebook', $row->closedsource);
+
+        $before = $DB->count_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+        $this->assertSame(
+            $before,
+            $DB->count_records('task_adhoc'),
+            'And then stop: the writer and the sweep must agree about the same facts.'
+        );
+    }
+
+    /**
      * Convergence. A second pass over a ledger the first pass already made
      * correct must dispatch nothing — otherwise the task would re-repair the
      * same rows on every cron tick for ever.

@@ -613,6 +613,135 @@ class observer {
     }
 
     /**
+     * A grade changed in the gradebook.
+     *
+     * This is the only signal the plugin has that a teacher responded outside
+     * the activity. It fires for EVERY gradebook item on the site, so the
+     * order of the guards below is the design: the course gate first (memoised,
+     * so a whole-gradebook regrade in an untracked course costs one query for
+     * the entire request), then one indexed read to reject every item that is
+     * not an assign.
+     *
+     * It also fires on the ordinary grading path — `gradebook_item_update()`
+     * performs the gradebook write, and only then is `submission_graded`
+     * triggered — so without the closed-cycle early exit every grade save
+     * would re-derive the same row twice and run the academic-time engine
+     * twice. A cycle that already has a response is exactly the case this
+     * observer has nothing to add to, which is what makes that exit both cheap
+     * and correct.
+     *
+     * `\core\event\grade_deleted` is deliberately NOT registered: under the
+     * earliest-wins rule a deletion does not withdraw a response, so there is
+     * nothing for it to do. (It is also unreliable — it only fires when the
+     * grade object happens to have had its item loaded, which on a site with
+     * completion disabled it has not.)
+     *
+     * @param \core\event\base $event
+     * @return void
+     */
+    public static function gradebook_changed(\core\event\base $event): void {
+        $courseid = (int) ($event->courseid ?? 0);
+        $userid = (int) ($event->relateduserid ?? 0);
+        if ($courseid <= 0 || $userid <= 0) {
+            return;
+        }
+        if (!course_access::is_processable($courseid)) {
+            return;
+        }
+
+        $other = $event->other;
+        if (is_object($other)) {
+            $other = (array) $other;
+        }
+        $itemid = (int) ($other['itemid'] ?? 0);
+        if ($itemid <= 0) {
+            return;
+        }
+
+        global $DB;
+        /* The event's context is the COURSE context, so contextinstanceid is a
+         * courseid here and must never be read as a cmid. The cm is reached
+         * through the grade item instead — one indexed read that also rejects
+         * every non-assign item, including an outcome item attached to an
+         * assign (itemnumber >= 1000). */
+        $cmid = (int) $DB->get_field_sql(
+            "SELECT cm.id
+               FROM {grade_items} gi
+               JOIN {course_modules} cm ON cm.instance = gi.iteminstance AND cm.course = gi.courseid
+               JOIN {modules} m ON m.id = cm.module AND m.name = gi.itemmodule
+              WHERE gi.id = :itemid
+                AND gi.itemtype = :itemtype
+                AND gi.itemmodule = :itemmodule
+                AND gi.itemnumber = 0",
+            [
+                'itemid' => $itemid,
+                'itemtype' => 'mod',
+                'itemmodule' => 'assign',
+            ],
+            IGNORE_MISSING
+        );
+        if ($cmid <= 0) {
+            return;
+        }
+
+        $attempt = self::latest_attempt_number($cmid, $userid);
+        if ($attempt === null) {
+            // No submission: a gradebook grade with nothing to measure against.
+            return;
+        }
+
+        /* The early exit. A cycle that already carries a response cannot be
+         * improved by this event — earliest wins — and this is the branch the
+         * ordinary grading path takes, twice per save, on every site. */
+        /* Skip when the activity owns this cycle — either it has already been
+         * answered, or {assign_grades} carries a mark that postdates the
+         * hand-in, which means mod_assign is mid-save and submission_graded is
+         * about to fire.
+         *
+         * The second half is what makes the exit useful. Core writes
+         * {assign_grades}, then pushes to the gradebook (firing this event),
+         * and only then triggers submission_graded — so on a FIRST grading the
+         * ledger row is still open when we arrive, and a check on timeclosed
+         * alone would let every ordinary grade save re-derive the same row
+         * twice and run the academic-time engine twice.
+         *
+         * Nothing is lost by deferring to the activity: under earliest-wins the
+         * mark it is saving right now is at or before this gradebook write, so
+         * it would win regardless. A gradebook response that is genuinely
+         * earlier belongs to a cycle the activity has not marked at all, which
+         * fails this test and proceeds. */
+        $row = $DB->get_record_select(
+            'block_feedback_tracker_sub',
+            'cmid = :cmid AND userid = :userid AND attemptnumber = :attempt AND iscurrent = 1',
+            ['cmid' => $cmid, 'userid' => $userid, 'attempt' => $attempt],
+            'id, iteminstance, timesubmitted, timeclosed',
+            IGNORE_MULTIPLE
+        );
+        if ($row && $row->timeclosed !== null) {
+            return;
+        }
+        if ($row) {
+            $activitymark = (int) $DB->get_field_sql(
+                "SELECT MAX(g.timemodified)
+                   FROM {assign_grades} g
+                  WHERE g.assignment = :assignid
+                    AND g.userid = :userid
+                    AND g.attemptnumber = :attempt",
+                [
+                    'assignid' => (int) $row->iteminstance,
+                    'userid' => $userid,
+                    'attempt' => $attempt,
+                ]
+            );
+            if ($activitymark > (int) $row->timesubmitted) {
+                return;
+            }
+        }
+
+        submission_ledger::upsert_for_cm_user_attempt($cmid, $userid, $attempt);
+    }
+
+    /**
      * A user's enrolment in a course was removed.
      *
      * Their ledger rows describe a response owed to somebody who is no longer

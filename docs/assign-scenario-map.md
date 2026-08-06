@@ -920,7 +920,30 @@ Not worth registering: `\assignfeedback_file\event\feedback_downloaded` (5.1+ on
 
 **6.10 — shipped in part**, as `observer::course_module_updated`. Duties (i) and (iii) are covered by re-deriving every measured row of the cm from live state: the upsert reads `$cm->course` and the live `{assign}` row, so a moved module rewrites its own `courseid` and a settings change re-resolves its own rule columns — there is no stored snapshot of `markingworkflow` to resync against, so the re-derivation *is* the resync. Duty (ii), taking a hidden cm out of scope, is **not** implemented and the row above's "simplest: delete its rows" is rejected: `delete_for_cm()` destroys every closed cycle, while `sweep_missing_rows` can only rebuild from live `{assign_submission}`, i.e. one cycle-0 row per attempt. Unhiding would silently discard completed response-time history. Doing this properly needs a scope flag, not a deletion.
 
-**6.9 — not shipped, and not implementable as written.** Two findings, both verified against 4.5 and 5.2:
+### The gradebook decision (2026-08-04) — supersedes the 6.9 verdict below
+
+The measurement model was extended rather than the observer set patched. Four options were worked out against the code; the one adopted is **earliest response wins, from either surface, never withdrawn**.
+
+What that settles, and why the alternatives were refused:
+
+- **Doing nothing was not neutral.** The pre-existing model already broke the plugin's own "reached the student" principle in both directions: it wrote `timeclosed` for a mark whose gradebook item was hidden (the student sees no feedback block and gets no mail), and left `timeclosed` NULL for an unreleased workflow mark that a gradebook override had already put on the student's screen. Those are exactly the two failures the "deliberately NOT a coalesce" sentence exists to prevent.
+- **Withdrawal was refused.** Making a response reversible would let hiding a column today re-edit last month's median, with no automatic trend recompute. A published figure that a later administrative act can change is not a fact. So a gradebook deletion does not re-open — while the activity keeps sole authority over re-opening, because clearing a mark *there* is the marker saying "not answered yet", which is the cycle model's own rule.
+- **Excluding the unmeasurable was refused.** Excluded rows would leave the headline denominator, so the median improves and the score rises by dropping the hard cases — gameable in the one direction that matters, on a figure attached to a named person. That is the same refusal already encoded in `ALLOC_SOURCE_LATE`.
+
+Boundaries that are load-bearing, each pinned by a test that reds under mutation:
+
+1. The instant comes from `{grade_grades}.overridden`, never `timemodified`. Core sets `overridden` for a human grading outside the activity and suppresses it for a mass rescale, while regrades, calculated items and 5.2's penalty manager move `timemodified` with nobody grading.
+2. A hidden grade is not a response — grade hidden, item hidden, or hidden-until in the future.
+3. The operational clock (`timegraded`, which every pending predicate keys on) accepts the gradebook; the allocated marker's turnaround (`allochours`) does not, and receives an activity-derived instant only.
+4. `stamp_release_for_user()` writes `timeclosed` through `COALESCE`, so a release cannot move a response the gradebook already recorded.
+
+Coverage: `\core\event\user_graded` (early-exit when the activity owns the cycle — already answered, or `{assign_grades}` carrying a mark that postdates the hand-in, which means `submission_graded` is about to fire) plus a reconciler sweep for what fires no event — the flip to overridden, and a re-grade to the same value. `grade_deleted` is not registered; under earliest-wins it has nothing to do.
+
+**Left unrepaired, on purpose:** an activity mark whose gradebook grade is hidden still closes the response time. That is pre-existing behaviour, and it is now *disclosed* on the row rather than changed. Changing it is a separate decision, because it would move already-published numbers.
+
+---
+
+**6.9 — the original prescription was not implementable as written.** Two findings, both verified against 4.5 and 5.2:
 
 1. It cannot repair C11. Every ledger stamp derives from `{assign_grades}` and `{assign_user_flags}`; a gradebook-side deletion touches neither, so the prescribed re-upsert reproduces the stored row unchanged. The plugin would keep saying *graded* — as core's own assign UI does. Closing C11 needs a new grading source in the measurement model, which is a phase of its own, not an observer.
 2. `user_graded` fires on the ordinary grading path *before* `submission_graded` — `gradebook_item_update()` performs the gradebook write, and only if it returns true is `submission_graded` triggered (`mod/assign/locallib.php:3228-3229` on 5.2) — so registering it rebuilds the same ledger row twice on every grade save, running the academic-time engine twice. The replay is not free: `build_and_store()` rewrites `effectiveasof`, `timemodified` and every elapsed column, and enqueues.

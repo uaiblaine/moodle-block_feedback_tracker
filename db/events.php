@@ -75,6 +75,17 @@ $observers = [
         'eventname' => '\mod_assign\event\submission_graded',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_graded',
     ],
+    /* The gradebook, which mod_assign never learns about. A grade typed
+     * straight into the grader report reaches the student without any assign
+     * event firing at all, and once it is an override mod_assign stops firing
+     * submission_graded for that student for ever. Registered alone: its twin
+     * grade_deleted has nothing to do under the earliest-wins rule, and fires
+     * unreliably besides. The callback exits early on an already-closed cycle,
+     * which is the branch the ordinary grading path takes. */
+    [
+        'eventname' => '\core\event\user_graded',
+        'callback' => '\block_feedback_tracker\local\sla\observer::gradebook_changed',
+    ],
     /* Marking workflow. The release transition is the only signal that a grade
      * became visible to the student, and mod_assign persists no timestamp for
      * it, so an unobserved release is unrecoverable. */

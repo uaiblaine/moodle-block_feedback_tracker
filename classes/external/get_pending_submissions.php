@@ -221,6 +221,14 @@ class get_pending_submissions extends external_api {
                 PARAM_INT,
                 '1 when a mark exists but the marking workflow has not released it to the student'
             ),
+            'closedsource' => new external_value(
+                PARAM_ALPHA,
+                'Which surface answered this submission: assign, gradebook, or empty while it is open'
+            ),
+            'gradehidden' => new external_value(
+                PARAM_INT,
+                '1 when a grade exists but the gradebook is hiding it from the student'
+            ),
             'queuehours' => new external_value(
                 PARAM_FLOAT,
                 'Effective hours from hand-in to first marker allocation; null when never allocated',
