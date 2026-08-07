@@ -46,6 +46,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches — flipping a grade to overridden fires nothing at all, and neither
   does a re-grade to the same value.
 
+- **The hidden-grade disclosure is now actionable, documented and tested.** The
+  one case the gradebook work deliberately leaves unrepaired — a mark made
+  inside the assignment stops the clock even while the gradebook hides the
+  grade — is compensated entirely by telling the teacher, so that telling has
+  to land. The tag now says the grade needs releasing and how to release it,
+  rather than explaining the measurement to somebody auditing it; the README
+  gains a "What counts as a response" section, because the plugin's own
+  user-facing documentation said nothing about the gradebook at all; and a test
+  asserts the flag reaches the pending report for exactly that case. Its
+  absence mattered: the row carries no `overridden` stamp, because mod_assign
+  pushes its mark through `grade_update()`, which never sets that column — so a
+  detection keyed on it would have missed precisely the case the tag exists for,
+  with nothing to catch the mistake.
+
 - **Two per-row disclosures on the pending report.** A row answered from the
   gradebook says so, because the activity's grading screen shows nothing that
   explains it. And a row whose grade the gradebook is hiding says so too: that

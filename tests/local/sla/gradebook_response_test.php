@@ -290,6 +290,77 @@ final class gradebook_response_test extends \advanced_testcase {
     }
 
     /**
+     * A mark made inside the activity still closes the clock while the
+     * gradebook hides the grade — and the row says so.
+     *
+     * This is the one case the model deliberately does NOT repair: the
+     * behaviour predates the gradebook work and changing it would move figures
+     * already reported. The disclosure is the whole compensation, so it has to
+     * actually reach the teacher — which is why it is asserted here through
+     * `submission_browser`, the surface the pending report reads, rather than
+     * against the writer. Note the row carries no `overridden` stamp at all:
+     * mod_assign pushes its mark to the gradebook through `grade_update()`,
+     * which never sets that column, so a detection keyed on it would miss
+     * exactly this case.
+     *
+     * @return void
+     */
+    public function test_an_activity_mark_hidden_in_the_gradebook_is_flagged(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $submitted = time() - 5 * 86400;
+        $marked = time() - 2 * 86400;
+        $this->submit($assign, $student, $submitted);
+        $DB->insert_record('assign_grades', (object) [
+            'assignment' => $assign->id,
+            'userid' => $student->id,
+            'attemptnumber' => 0,
+            'grader' => 2,
+            'grade' => 82.0,
+            'timecreated' => $marked,
+            'timemodified' => $marked,
+        ]);
+        /* The gradebook copy mod_assign pushes: a real grade, no override
+         * stamp — and the item hidden, which is how results are held back. */
+        $this->gradebook_grade($assign, $student, 82.0, 0);
+        $itemid = $DB->get_field_sql(
+            "SELECT id FROM {grade_items}
+              WHERE itemtype = :t AND itemmodule = :m AND iteminstance = :a AND itemnumber = 0",
+            ['t' => 'mod', 'm' => 'assign', 'a' => $assign->id]
+        );
+        $DB->set_field('grade_items', 'hidden', 1, ['id' => $itemid]);
+
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(
+            $marked,
+            (int) $row->timeclosed,
+            'The activity mark still stops the clock — that is the deliberate exception.'
+        );
+        $this->assertSame(gradebook_response::SOURCE_ASSIGN, $row->closedsource);
+
+        $teacher = $this->getDataGenerator()->create_and_enrol(
+            get_course((int) $row->courseid),
+            'editingteacher'
+        );
+        $browsed = submission_browser::browse(
+            (int) $row->courseid,
+            (int) $teacher->id,
+            ['mode' => submission_browser::MODE_GRADED]
+        );
+        $this->assertCount(1, $browsed['rows'], 'The row belongs on the graded tab.');
+        $this->assertSame(
+            1,
+            (int) $browsed['rows'][0]['gradehidden'],
+            'And the teacher has to be told the grade still needs releasing.'
+        );
+    }
+
+    /**
      * The gradebook never closes the marker's own clock.
      *
      * queuehours and allochours measure the allocated marker's turnaround, and
