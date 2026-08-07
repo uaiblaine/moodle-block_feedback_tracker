@@ -397,7 +397,6 @@ $string['privacy:metadata:sub:courseid'] = 'Curso ao qual o envio pertence.';
 $string['privacy:metadata:sub:cycle'] = 'Índice de medição dentro de uma tentativa; um novo ciclo é aberto quando o trabalho é reenviado depois de já ter recebido nota.';
 $string['privacy:metadata:sub:effectivedays'] = 'Dias úteis/acadêmicos entre o envio e a avaliação (ou agora).';
 $string['privacy:metadata:sub:effectivehours'] = 'Horas úteis/acadêmicas entre o envio e a avaliação (ou o momento atual).';
-$string['privacy:metadata:sub:gradehidden'] = 'Se existe nota para este envio mas o livro de notas a mantém oculta do aluno.';
 $string['privacy:metadata:sub:gradestate'] = 'Situação de avaliação informada pela tarefa: avaliado, não avaliado ou um estado do fluxo de avaliação.';
 $string['privacy:metadata:sub:groupid'] = 'Atribuição do grupo no momento da última atualização.';
 $string['privacy:metadata:sub:queuehours'] = 'Horas úteis/acadêmicas do envio até a primeira alocação de avaliador.';

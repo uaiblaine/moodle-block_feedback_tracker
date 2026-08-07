@@ -103,7 +103,15 @@ final class gradebook_response_test extends \advanced_testcase {
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNull($row->timeclosed, 'A grade the student cannot see has reached nobody.');
         $this->assertNull($row->closedsource);
-        $this->assertSame(1, (int) $row->gradehidden, 'But the fact is disclosed rather than hidden.');
+
+        /* The visibility fact is deliberately NOT stored on the row. Core fires
+         * no event when a grade is hidden or un-hidden, and a hide-until date
+         * expires with the passage of time alone, so a stored copy would be
+         * right only until the next thing happened. It is read live — here at
+         * its source, and by submission_browser at display time. */
+        $live = gradebook_response::for_assign_user((int) $assign->id, (int) $student->id);
+        $this->assertTrue($live['hidden'], 'But the fact is disclosed rather than left silent.');
+        $this->assertTrue($live['hasgrade']);
     }
 
     /**
@@ -221,6 +229,67 @@ final class gradebook_response_test extends \advanced_testcase {
     }
 
     /**
+     * A held-until grade is dated when it was released, not when it was typed.
+     *
+     * Core overloads `hidden`: any value above 1 is a hide-until date, which is
+     * the ordinary held-results workflow — mark now, publish on results day.
+     * Dating the response at entry would understate the interval by the whole
+     * hold, on a column whose stated meaning is when the response reached the
+     * student.
+     *
+     * @return void
+     */
+    public function test_a_held_until_grade_is_dated_at_its_release(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $typed = time() - 20 * 86400;
+        $released = time() - 2 * 86400;
+        $this->submit($assign, $student, time() - 25 * 86400);
+        $this->gradebook_grade($assign, $student, 70.0, $typed, $released);
+
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(
+            $released,
+            (int) $row->timeclosed,
+            'The student could not see it until the hold expired.'
+        );
+        $this->assertSame(gradebook_response::SOURCE_GRADEBOOK, $row->closedsource);
+    }
+
+    /**
+     * Feedback with no mark is still a response.
+     *
+     * The gradebook's feedback field runs through the same update_final_grade()
+     * path and takes the same `overridden` stamp, but leaves finalgrade null.
+     * Testing the grade value alone would leave a teacher who returned written
+     * feedback and no mark permanently pending — the exact failure this whole
+     * model exists to end.
+     *
+     * @return void
+     */
+    public function test_feedback_with_no_mark_is_a_response(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment();
+
+        $responded = time() - 2 * 86400;
+        $this->submit($assign, $student, time() - 5 * 86400);
+        $this->gradebook_grade($assign, $student, null, $responded, 0, 'See my comments inline.');
+
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame($responded, (int) $row->timeclosed, 'Feedback reached the student.');
+        $this->assertSame($responded, (int) $row->timegraded, 'So the row is no longer pending.');
+    }
+
+    /**
      * The gradebook never closes the marker's own clock.
      *
      * queuehours and allochours measure the allocated marker's turnaround, and
@@ -317,17 +386,19 @@ final class gradebook_response_test extends \advanced_testcase {
      *
      * @param \stdClass $assign
      * @param \stdClass $user
-     * @param float $grade
+     * @param float|null $grade Null for a feedback-only response.
      * @param int $when The override instant.
      * @param int $hidden {grade_grades}.hidden — 1 hides, a larger value is hidden-until.
+     * @param string|null $feedback Written feedback, when there is no mark.
      * @return void
      */
     private function gradebook_grade(
         \stdClass $assign,
         \stdClass $user,
-        float $grade,
+        ?float $grade,
         int $when,
-        int $hidden = 0
+        int $hidden = 0,
+        ?string $feedback = null
     ): void {
         global $DB;
         $itemid = $DB->get_field_sql(
@@ -343,6 +414,7 @@ final class gradebook_response_test extends \advanced_testcase {
             'userid' => $user->id,
             'rawgrade' => $grade,
             'finalgrade' => $grade,
+            'feedback' => $feedback,
             'overridden' => $when,
             'hidden' => $hidden,
             'timecreated' => $when,

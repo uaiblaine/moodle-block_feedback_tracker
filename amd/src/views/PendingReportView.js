@@ -344,21 +344,31 @@ const AllocSplitTag = ({queuehours, allochours, tip}) => {
  * @param {Function} props.onToggle
  * @returns {object} vnode
  */
-const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => html`
-    <span class="bft-row-release-wrap">
-        <button type="button"
-                class="bft-badge bft-badge-${variant}"
-                title=${tip}
-                aria-label=${label + '. ' + tip}
-                aria-expanded=${openid === tagkey ? 'true' : 'false'}
-                onClick=${() => onToggle(openid === tagkey ? null : tagkey)}>
-            ${label}
-        </button>
-        ${openid === tagkey && html`
-            <span class="bft-row-release-pop" role="note">${tip}</span>
-        `}
-    </span>
-`;
+const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => {
+    const popid = 'bft-tip-' + String(tagkey).replace(':', '-');
+    const open = openid === tagkey;
+    /* No aria-label here. The button already has visible text, so an
+       aria-label would REPLACE that two-word name with the whole explanation
+       and demote title to the description — screen readers then read the same
+       paragraph twice on one focus, for every tag on every row. The button is
+       named by its text; aria-controls ties it to the popup it opens. */
+    return html`
+        <span class="bft-row-release-wrap">
+            <button type="button"
+                    class="bft-badge bft-badge-${variant}"
+                    title=${tip}
+                    aria-expanded=${open ? 'true' : 'false'}
+                    aria-controls=${popid}
+                    onKeyDown=${(e) => e.key === 'Escape' && open && onToggle(null)}
+                    onClick=${() => onToggle(open ? null : tagkey)}>
+                ${label}
+            </button>
+            ${open && html`
+                <span class="bft-row-release-pop" id=${popid} role="note">${tip}</span>
+            `}
+        </span>
+    `;
+};
 
 /**
  * Top-level view.

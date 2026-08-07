@@ -55,6 +55,86 @@ class submission_browser {
     public const MAX_PAGE_SIZE = 200;
 
     /**
+     * Which of these rows currently have a grade the gradebook hides from the
+     * student, keyed by ledger row id.
+     *
+     * One bounded query for the whole page rather than a join on the row
+     * query, which is also used for the count and would carry the cost twice.
+     * The over-fetch is deliberate: matching item ids against user ids
+     * separately admits a few pairs that are not on this page, and discarding
+     * those in PHP is cheaper than a composite predicate.
+     *
+     * @param array $rows Rows from the page query; each needs id, iteminstance, userid.
+     * @return array Ledger row id => 1, for the hidden ones only.
+     */
+    private static function hidden_from_student(array $rows): array {
+        global $CFG, $DB;
+
+        // See gradebook_response::for_assign_user() — the same constant, the
+        // same reason: gradelib is not loaded on every request that gets here.
+        require_once($CFG->libdir . '/grade/constants.php');
+        if (empty($rows)) {
+            return [];
+        }
+        $assignids = [];
+        $userids = [];
+        foreach ($rows as $r) {
+            $assignids[(int) $r->iteminstance] = true;
+            $userids[(int) $r->userid] = true;
+        }
+        [$asql, $aparams] = $DB->get_in_or_equal(array_keys($assignids), SQL_PARAMS_NAMED, 'ga');
+        [$usql, $uparams] = $DB->get_in_or_equal(array_keys($userids), SQL_PARAMS_NAMED, 'gu');
+        $now = time();
+        $grades = $DB->get_records_sql(
+            "SELECT gg.id, gi.iteminstance, gg.userid, gg.hidden AS gradehidden, gi.hidden AS itemhidden
+               FROM {grade_items} gi
+               JOIN {grade_grades} gg ON gg.itemid = gi.id
+              WHERE gi.itemtype = :itemtype
+                AND gi.itemmodule = :itemmodule
+                AND gi.itemnumber = 0
+                AND gi.gradetype <> :nograde
+                AND (gg.finalgrade IS NOT NULL OR " . $DB->sql_isnotempty('gg', 'gg.feedback', true, true) . ")
+                AND gi.iteminstance $asql
+                AND gg.userid $usql",
+            $aparams + $uparams + [
+                'itemtype' => 'mod',
+                'itemmodule' => 'assign',
+                'nograde' => GRADE_TYPE_NONE,
+            ]
+        );
+        $hidden = [];
+        foreach ($grades as $g) {
+            $ishidden = self::flag_hides((int) $g->gradehidden, $now)
+                || self::flag_hides((int) $g->itemhidden, $now);
+            if ($ishidden) {
+                $hidden[(int) $g->iteminstance . ':' . (int) $g->userid] = true;
+            }
+        }
+        $out = [];
+        foreach ($rows as $r) {
+            $key = (int) $r->iteminstance . ':' . (int) $r->userid;
+            if (isset($hidden[$key])) {
+                $out[(int) $r->id] = 1;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Whether one of core's overloaded `hidden` flags is hiding right now.
+     *
+     * 1 means hidden outright; anything larger is a hide-until instant that
+     * stops hiding once it passes.
+     *
+     * @param int $flag
+     * @param int $now
+     * @return bool
+     */
+    private static function flag_hides(int $flag, int $now): bool {
+        return $flag === 1 || ($flag > 1 && $flag > $now);
+    }
+
+    /**
      * Browse the ledger for one course as seen by one user.
      *
      * Callers (web services) are responsible for context validation and the
@@ -127,9 +207,9 @@ class submission_browser {
 
         $total = (int) $DB->count_records_sql("SELECT COUNT(1) $from WHERE $rowswhere", $rowsparams);
 
-        $select = "SELECT sub.id, sub.cmid, sub.userid, sub.groupid, sub.timesubmitted,
+        $select = "SELECT sub.id, sub.cmid, sub.userid, sub.iteminstance, sub.groupid, sub.timesubmitted,
                           sub.timegraded, sub.timemarked, sub.timeclosed,
-                          sub.closedsource, sub.gradehidden,
+                          sub.closedsource,
                           sub.queuehours, sub.allochours,
                           sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
@@ -149,6 +229,7 @@ class submission_browser {
         // keeps the stored slabucket + hour bounds.
         $usedays = bucket::use_day_thresholds();
         [$daygoal, , $daycrit] = bucket::parse_thresholds_days();
+        $hiddennow = self::hidden_from_student($rows);
         $out = [];
         foreach ($rows as $r) {
             $eff = $r->effectivehours !== null ? (float) $r->effectivehours : 0.0;
@@ -206,7 +287,13 @@ class submission_browser {
                  * it. And a grade the gradebook is hiding has reached nobody
                  * yet, whatever the activity's own screen says. */
                 'closedsource'     => (string) ($r->closedsource ?? ''),
-                'gradehidden'      => (int) $r->gradehidden,
+                /* Read live, not from the stored column. Visibility is not a
+                 * measurement: core fires no event when a grade is hidden or
+                 * un-hidden, and a hide-until date expires with the passage of
+                 * time alone. The stored snapshot is therefore right only for
+                 * the ordering "hidden first, graded second", and stale for the
+                 * mark-now-publish-later workflow this tag exists to flag. */
+                'gradehidden'      => (int) ($hiddennow[(int) $r->id] ?? 0),
                 /* A mark that the marking workflow has not released is
                  * invisible to the student, and releasing frequently needs a
                  * permission the marker does not hold — so it is surfaced
