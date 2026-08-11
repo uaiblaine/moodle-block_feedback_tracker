@@ -60,25 +60,58 @@ class dirty_queue {
     public static function enqueue(int $courseid, int $groupid, string $reason): void {
         global $DB;
         $now = time();
-        $existing = $DB->get_record(
-            'block_feedback_tracker_queue',
-            ['courseid' => $courseid, 'groupid' => $groupid],
-            'id'
-        );
+        $key = ['courseid' => $courseid, 'groupid' => $groupid];
+        $existing = $DB->get_record('block_feedback_tracker_queue', $key, 'id');
         if ($existing) {
-            $DB->update_record('block_feedback_tracker_queue', (object) [
-                'id' => $existing->id,
-                'reason' => $reason,
-                'timeenqueued' => $now,
-            ]);
-        } else {
+            self::touch((int) $existing->id, $reason, $now);
+            return;
+        }
+        try {
             $DB->insert_record('block_feedback_tracker_queue', (object) [
                 'courseid' => $courseid,
                 'groupid' => $groupid,
                 'reason' => $reason,
                 'timeenqueued' => $now,
             ]);
+        } catch (\dml_write_exception $e) {
+            /* The read above and this insert are not atomic, and enqueue() is
+             * the LAST statement of every ledger write path — so a concurrent
+             * writer for the same tuple turns `uq_course_group` into an
+             * exception thrown AFTER the ledger row has already been committed.
+             * Left to escape, it fails the surrounding adhoc task, burns one of
+             * its twelve attempts, and on Moodle 4.5 an attempts-exhausted row
+             * still matches the dedup probe — so that exact payload stays
+             * blocked for as long as `task_adhoc_failed_retention` keeps it.
+             * The row the other writer inserted is the row we wanted; adopt it.
+             *
+             * Inside a transaction the connection is already aborted and
+             * nothing can be read, so the exception has to travel. */
+            if ($DB->is_transaction_started()) {
+                throw $e;
+            }
+            $row = $DB->get_record('block_feedback_tracker_queue', $key, 'id', IGNORE_MISSING);
+            if (!$row) {
+                throw $e;
+            }
+            self::touch((int) $row->id, $reason, $now);
         }
+    }
+
+    /**
+     * Refresh an existing queue row's reason and enqueue time.
+     *
+     * @param int $id Queue row id.
+     * @param string $reason One of self::REASON_*.
+     * @param int $now Epoch seconds to stamp.
+     * @return void
+     */
+    private static function touch(int $id, string $reason, int $now): void {
+        global $DB;
+        $DB->update_record('block_feedback_tracker_queue', (object) [
+            'id' => $id,
+            'reason' => $reason,
+            'timeenqueued' => $now,
+        ]);
     }
 
     /**
