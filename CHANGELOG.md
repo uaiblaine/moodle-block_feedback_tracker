@@ -21,6 +21,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repairs are not happening at all.
 
 ### Changed
+- **The academic-time engine no longer runs inside the reconciler's tick.** The
+  allocation sweep called `stamp_allocation_for_user()` inline, which invokes
+  the engine once per ledger row of each (activity, student) pair — inside a
+  cap shared by every sweep, on the sweep sitting last in the registry. It now
+  dispatches an adhoc `stamp_allocations` task instead.
+
+  The discovery instant travels in the payload rather than being read from the
+  clock in the worker, so what gets recorded is byte-identical to the inline
+  version: `reconciled` already declares the value as accurate only to the sweep
+  period, and reading `time()` on the worker would fold in however far behind
+  cron happens to be running.
+
+  Descriptors are also deduplicated per (activity, student). The stamp already
+  walks every row of that pair, so a student with several unstamped attempts
+  used to cost one full pass per row.
+- **The reconciler's sweeps rotate, so the tail stops starving.** The time cap
+  is tested *between* sweeps and the order was fixed, so on a site whose ticks
+  run out of budget the sweeps at the end of the registry were never reached —
+  the rule and allocation ones, meaning due-date drift and marker turnaround
+  stopped being repaired entirely, with nothing anywhere saying so.
+
+  Each tick now resumes after the last sweep that actually ran. The marker is
+  the sweep's key, never an index: an index re-points on its own the moment the
+  registry changes. Rotation is a no-op on any tick that reaches every sweep,
+  so it only does anything once the cap bites. The order a tick used is recorded
+  in its audit row, and the `skipped` list is sliced from that order rather than
+  from the registry.
 - **Rows for departed participants are cleared in hours, not months.** The sweep
   that removes ledger rows for people who are no longer active participants
   visited exactly one course per tick, behind a cursor that was an *index* into
