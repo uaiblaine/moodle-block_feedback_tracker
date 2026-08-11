@@ -100,9 +100,7 @@ class backfill_history extends \core\task\scheduled_task {
             set_config('backfill_active', '0', 'block_feedback_tracker');
             return;
         }
-        foreach ($processable as $cid) {
-            backfill_cursor::get_or_create($cid);
-        }
+        backfill_cursor::ensure_for_courses($processable);
 
         $activerows = backfill_cursor::active_rows();
         // Filter to currently-processable courses only — a course whose
