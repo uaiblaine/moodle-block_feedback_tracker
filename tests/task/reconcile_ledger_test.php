@@ -853,14 +853,73 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $this->assertGreaterThan(0, (int) $seconddetails['courses'], 'The scope of the pass is recorded.');
 
         /* A sweep that returned fewer rows than the batch spent its driving
-         * set, so its pass completed. The one sweep that cannot answer this is
-         * the departed-participant one, whose cursor indexes courses rather
-         * than rows — reported null, not false, so the two stay distinguishable. */
+         * set, so its pass completed. The departed-participant sweep answers
+         * this too since its cursor became a courseid keyset: its driving set
+         * is the tracked-course list, and one course fits in one tick. */
         $this->assertTrue($seconddetails['sweeps']['missing']['exhausted'], 'The pass completed.');
-        $this->assertNull(
+        $this->assertTrue(
             $seconddetails['sweeps']['participant']['exhausted'],
-            'The course-indexed sweep has no driving set to spend.'
+            'The course list is a driving set like any other, and it fits in one tick here.'
         );
+    }
+
+    /**
+     * More than one course sheds its departed participants in a single tick.
+     *
+     * The sweep used to visit exactly one course per tick behind a cursor that
+     * was an index into the tracked-course list, so a full pass cost one tick
+     * per course — at the two-hourly schedule, months on a large site. Every
+     * other test in this file uses one course, which is why the defect could
+     * live here undisturbed.
+     *
+     * The still-enrolled student in each course is the control: without them
+     * this would pass if the sweep deleted everything, or nothing.
+     *
+     * @return void
+     */
+    public function test_two_courses_shed_their_departed_participants_in_one_tick(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        $left = [];
+        $stayed = [];
+        foreach ([0, 1] as $i) {
+            [$cm, $student, $assign, $course] = $this->build_environment();
+            $other = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+            $this->insert_submission((int) $assign->id, (int) $other->id, time() - 3 * 86400, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $other->id, 0);
+
+            // Suspending the enrolment is what get_enrolled_sql(..., true) reads as gone.
+            $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['userid' => $student->id]);
+            $left[] = (int) $student->id;
+            $stayed[] = (int) $other->id;
+        }
+        course_access::reset_memo();
+
+        foreach ($left as $userid) {
+            $this->assertTrue(
+                $DB->record_exists('block_feedback_tracker_sub', ['userid' => $userid]),
+                'Sanity: both departed students have a row before the tick.'
+            );
+        }
+
+        $this->run_reconciler();
+
+        foreach ($stayed as $userid) {
+            $this->assertTrue(
+                $DB->record_exists('block_feedback_tracker_sub', ['userid' => $userid]),
+                'Control: a still-enrolled student keeps their row.'
+            );
+        }
+        foreach ($left as $userid) {
+            $this->assertFalse(
+                $DB->record_exists('block_feedback_tracker_sub', ['userid' => $userid]),
+                'One tick must reach every tracked course, not just the first.'
+            );
+        }
     }
 
     /**

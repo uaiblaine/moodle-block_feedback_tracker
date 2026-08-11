@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repairs are not happening at all.
 
 ### Changed
+- **Rows for departed participants are cleared in hours, not months.** The sweep
+  that removes ledger rows for people who are no longer active participants
+  visited exactly one course per tick, behind a cursor that was an *index* into
+  the list of tracked courses. A full pass therefore took one tick per course —
+  at the two-hourly schedule, a site with 1,000 tracked courses needed about
+  83 days — and the index was unstable: adding the block to a course with a
+  lower id shifted every later position and silently skipped a course for a
+  whole cycle.
+
+  The cursor is now a course id, which survives the list changing under it, and
+  the sweep visits up to 25 courses per tick within its time budget. A course
+  with a large backlog sheds what fits and the rest on the next pass, rather
+  than holding the cursor and starving the courses behind it.
+
+  The upgrade unsets the old cursor, because reading the old index as a course
+  id would skip every course at or below it for the first pass.
 - **The reconciler's sweeps are indexed.** New `idx_course_id` on
   `block_feedback_tracker_sub (courseid, id)`. The keyset sweeps page on
   `id > :cursor` while filtering on `courseid`, and no existing index led with
