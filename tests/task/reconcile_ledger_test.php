@@ -720,6 +720,53 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A repair that could not be queued is reported, not assumed.
+     *
+     * `queue_adhoc_task()` returns false when an identical payload is already
+     * pending — and since Moodle 5.2 also for a refused component, before the
+     * dedup check runs. On 4.5 a retry-exhausted row still matches the probe,
+     * so an identical payload stays blocked for as long as
+     * `task_adhoc_failed_retention` keeps the dead row. Discarding that return
+     * made the sweep count a repair it never dispatched.
+     *
+     * @return void
+     */
+    public function test_a_refused_repair_batch_is_reported(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [, $student, $assign] = $this->build_environment();
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        // First tick queues the repair. It is deliberately NOT drained.
+        (new reconcile_ledger())->execute();
+        $this->assertSame(
+            1,
+            $DB->count_records('task_adhoc'),
+            'Control: the first tick must actually queue something to be refused later.'
+        );
+
+        /* The cursor resets whenever a sweep returns fewer rows than the batch,
+         * so the next tick rebuilds a byte-identical payload — which is what
+         * core's dedup compares. */
+        ob_clean();
+        (new reconcile_ledger())->execute();
+        $output = (string) ob_get_contents();
+
+        $this->assertSame(
+            1,
+            $DB->count_records('task_adhoc'),
+            'Sanity: core dedup collapsed the second dispatch onto the pending one.'
+        );
+        $this->assertStringContainsString(
+            'repair batch(es) refused',
+            $output,
+            'The sweep must say a batch was refused rather than counting it as dispatched.'
+        );
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator

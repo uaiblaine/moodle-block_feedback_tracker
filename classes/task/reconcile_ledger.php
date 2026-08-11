@@ -735,6 +735,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
         $buffer = [];
         $seen = [];
         $lastid = 0;
+        $batches = 0;
+        $queued = 0;
         foreach ($rows as $r) {
             $lastid = (int) $r->{$cursorfield};
             $cmid = (int) $r->cmid;
@@ -774,12 +776,23 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $seen[$dedupkey] = true;
             $buffer[] = $descriptor;
             if (count($buffer) >= self::REPAIR_CHUNK) {
-                $this->queue_repair($buffer);
+                $queued += $this->queue_repair($buffer) ? 1 : 0;
+                $batches++;
                 $buffer = [];
             }
         }
         if (!empty($buffer)) {
-            $this->queue_repair($buffer);
+            $queued += $this->queue_repair($buffer) ? 1 : 0;
+            $batches++;
+        }
+        if ($batches > $queued) {
+            mtrace(sprintf(
+                'reconcile_ledger: %s had %d of %d repair batch(es) refused '
+                . '(already pending, or blocked by a retry-exhausted row).',
+                $key,
+                $batches - $queued,
+                $batches
+            ));
         }
         $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
         return count($rows);
@@ -788,20 +801,31 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Queue one adhoc repair batch, logging rather than propagating failures.
      *
+     * The return value of `queue_adhoc_task()` is not discardable. A `false`
+     * used to mean only "an identical payload is already pending", which is the
+     * dedup working as intended; since Moodle 5.2 it is also returned up front
+     * for a refused component, before the dedup check runs. And on 4.5 a
+     * retry-exhausted `{task_adhoc}` row still matches the dedup probe, so an
+     * identical payload stays blocked for as long as
+     * `task_adhoc_failed_retention` keeps the dead row — up to four weeks.
+     * Either way the caller has NOT queued anything, so it counts the outcome
+     * instead of assuming the repair is on its way.
+     *
      * @param array $rows Row descriptors for backfill_one_submission.
-     * @return void
+     * @return bool True when a new adhoc task was created.
      */
-    private function queue_repair(array $rows): void {
+    private function queue_repair(array $rows): bool {
         try {
             $task = new backfill_one_submission();
             $task->set_custom_data(['rows' => $rows]);
-            \core\task\manager::queue_adhoc_task($task, true);
+            return \core\task\manager::queue_adhoc_task($task, true) !== false;
         } catch (\Throwable $e) {
             debugging(sprintf(
                 'reconcile_ledger: could not queue a repair batch of %d row(s): %s',
                 count($rows),
                 $e->getMessage()
             ));
+            return false;
         }
     }
 
