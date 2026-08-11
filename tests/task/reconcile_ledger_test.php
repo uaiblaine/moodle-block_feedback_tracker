@@ -1000,6 +1000,48 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * The allocation stamp leaves the reconciler's own time budget.
+     *
+     * stamp_allocation_for_user() runs the academic-time engine once per ledger
+     * row of the pair, and the sweep called it inline — inside a cap shared by
+     * every sweep, on the one sitting last in the registry. This asserts the
+     * work is now dispatched: after the tick and before the queue is drained,
+     * nothing has been stamped and a worker is waiting.
+     *
+     * @return void
+     */
+    public function test_the_allocation_stamp_is_dispatched_not_run_inline(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment(['markingallocation' => 1]);
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $marker = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
+
+        $DB->delete_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+
+        $queued = \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\stamp_allocations');
+        $this->assertCount(1, $queued, 'Control: the sweep found the allocation and queued the work.');
+        $this->assertNull(
+            $DB->get_field('block_feedback_tracker_sub', 'timeallocated', ['cmid' => $cm->id]),
+            'The tick itself must not have run the engine.'
+        );
+
+        $this->runAdhocTasks('\block_feedback_tracker\task\stamp_allocations');
+
+        $this->assertNotNull(
+            $DB->get_field('block_feedback_tracker_sub', 'timeallocated', ['cmid' => $cm->id]),
+            'And the worker must actually do it.'
+        );
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator
@@ -1016,6 +1058,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
     private function run_reconciler(): void {
         (new reconcile_ledger())->execute();
         $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        /* runAdhocTasks() is class-scoped, so every worker the sweeps dispatch
+         * has to be named here or its repair simply sits in {task_adhoc}. */
+        $this->runAdhocTasks('\block_feedback_tracker\task\stamp_allocations');
     }
 
     /**

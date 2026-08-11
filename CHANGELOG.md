@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repairs are not happening at all.
 
 ### Changed
+- **The academic-time engine no longer runs inside the reconciler's tick.** The
+  allocation sweep called `stamp_allocation_for_user()` inline, which invokes
+  the engine once per ledger row of each (activity, student) pair — inside a
+  cap shared by every sweep, on the sweep sitting last in the registry. It now
+  dispatches an adhoc `stamp_allocations` task instead.
+
+  The discovery instant travels in the payload rather than being read from the
+  clock in the worker, so what gets recorded is byte-identical to the inline
+  version: `reconciled` already declares the value as accurate only to the sweep
+  period, and reading `time()` on the worker would fold in however far behind
+  cron happens to be running.
+
+  Descriptors are also deduplicated per (activity, student). The stamp already
+  walks every row of that pair, so a student with several unstamped attempts
+  used to cost one full pass per row.
 - **The reconciler's sweeps rotate, so the tail stops starving.** The time cap
   is tested *between* sweeps and the order was fixed, so on a site whose ticks
   run out of budget the sweeps at the end of the registry were never reached —

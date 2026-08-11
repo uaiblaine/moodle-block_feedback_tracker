@@ -605,6 +605,7 @@ $string['task_recompute_pending'] = 'Feedback Flow: recompute pending submission
 $string['task_recompute_site_stats'] = 'Feedback Flow: recompute site-wide stats';
 $string['task_recompute_trend'] = 'Feedback Flow: recompute daily trend';
 $string['task_reconcile_ledger'] = 'Feedback Flow: reconcile the ledger against the assignment tables';
+$string['task_stamp_allocations'] = 'Feedback Flow: record marker allocations the reconciler found';
 $string['timeline_norule'] = 'no rule';
 $string['trend_faster'] = 'faster';
 $string['trend_slower'] = 'slower';

@@ -54,18 +54,19 @@ use block_feedback_tracker\local\sla\submission_status;
  *    signal.
  *
  * Each sweep is keyset-paged behind its own cursor, bounded per tick and
- * gated on {@see course_access::is_processable()}. Six sweeps dispatch their
- * repairs as adhoc {@see backfill_one_submission} tasks, keeping the
- * academic-time engine out of this task's own time budget.
+ * gated on {@see course_access::is_processable()}. Seven sweeps dispatch their
+ * repairs — six as {@see backfill_one_submission}, the allocation one as
+ * {@see stamp_allocations} — which keeps the academic-time engine out of this
+ * task's own time budget.
  *
- * THREE act directly, for two different reasons. The two cleanup sweeps
- * ({@see self::sweep_orphans()}, {@see self::sweep_departed_participants()})
- * must, because the repair task re-gates every row on processability and would
- * silently skip exactly the hidden or block-less courses whose rows most need
- * removing. {@see self::sweep_unstamped_allocations()} does so for no such
- * reason: it calls `stamp_allocation_for_user()`, which runs the academic-time
- * engine per row, inside this budget, on the sweep that is last in the
- * registry and therefore the first to be cut off by the shared deadline.
+ * The two cleanup sweeps ({@see self::sweep_orphans()},
+ * {@see self::sweep_departed_participants()}) still act directly, and must:
+ * a repair task re-gates every row on processability and would silently skip
+ * exactly the hidden or block-less courses whose rows most need removing.
+ *
+ * Sweeps run in a rotating order — each tick resumes after the last one that
+ * ran — because the deadline is tested between them and a fixed order meant the
+ * tail was never reached on a site that runs out of budget.
  */
 class reconcile_ledger extends \core\task\scheduled_task {
     /** Default rows examined per sweep per tick. */
@@ -844,24 +845,70 @@ class reconcile_ledger extends \core\task\scheduled_task {
 
         $now = time();
         $lastid = 0;
-        $tuples = [];
+        $seen = [];
+        $buffer = [];
         foreach ($rows as $r) {
             $lastid = (int) $r->subid;
-            submission_ledger::stamp_allocation_for_user(
-                (int) $r->cmid,
-                (int) $r->userid,
-                $now,
-                submission_ledger::ALLOC_SOURCE_RECONCILED
-            );
-            $tuples[(int) $r->courseid . ':' . (int) $r->groupid] = [
-                (int) $r->courseid, (int) $r->groupid,
+            /* One descriptor per (cmid, userid), not per ledger row.
+             * stamp_allocation_for_user() already walks every row of the pair —
+             * every attempt, every cycle — so a student with k unstamped rows on
+             * one activity used to cost k full passes over the same k rows. */
+            $dedupkey = (int) $r->cmid . ':' . (int) $r->userid;
+            if (isset($seen[$dedupkey])) {
+                continue;
+            }
+            $seen[$dedupkey] = true;
+            $buffer[] = [
+                'cmid' => (int) $r->cmid,
+                'userid' => (int) $r->userid,
+                'courseid' => (int) $r->courseid,
+                /* The moment of DISCOVERY, carried so the worker records what
+                 * this sweep saw rather than whatever the clock says when cron
+                 * gets to it. That is the difference between a number accurate
+                 * to the sweep period, which ALLOC_SOURCE_RECONCILED declares,
+                 * and one that also encodes how far behind cron is running. */
+                'when' => $now,
             ];
+            if (count($buffer) >= self::REPAIR_CHUNK) {
+                $this->queue_stamps($buffer);
+                $buffer = [];
+            }
         }
-        foreach ($tuples as [$courseid, $groupid]) {
-            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
+        if (!empty($buffer)) {
+            $this->queue_stamps($buffer);
         }
+        /* No dirty_queue::enqueue() here any more: stamp_allocation_for_user()
+         * does it for the tuples it actually touched, and it now runs on the
+         * worker. Enqueuing here as well would mark tuples dirty before — or
+         * without — the write that makes them so. */
         $this->advance_cursor($key, $lastid, count($rows) < $batch);
         return count($rows);
+    }
+
+    /**
+     * Queue one adhoc batch of allocation stamps.
+     *
+     * Dispatched WITHOUT the dedup check that {@see self::queue_repair()} uses.
+     * Core compares custom_data as a string and every batch here embeds its own
+     * discovery instant, so no two payloads can ever match — asking would spend
+     * a query to be told what is already known. The sweep's cursor is what
+     * bounds re-dispatch.
+     *
+     * @param array $rows Row descriptors for stamp_allocations.
+     * @return void
+     */
+    private function queue_stamps(array $rows): void {
+        try {
+            $task = new stamp_allocations();
+            $task->set_custom_data(['rows' => $rows]);
+            \core\task\manager::queue_adhoc_task($task);
+        } catch (\Throwable $e) {
+            debugging(sprintf(
+                'reconcile_ledger: could not queue a stamp batch of %d row(s): %s',
+                count($rows),
+                $e->getMessage()
+            ));
+        }
     }
 
     /**
