@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
@@ -141,19 +142,60 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'rules' => 'sweep_rule_drift',
             'allocation' => 'sweep_unstamped_allocations',
         ];
+        $started = time();
         $total = 0;
+        $stats = [];
+        $emptyms = 0;
+        $skipped = [];
+        $timecapped = false;
         foreach ($sweeps as $key => $method) {
             if (time() > $deadline) {
+                $timecapped = true;
+                $keys = array_keys($sweeps);
+                $skipped = array_slice($keys, (int) array_search($key, $keys, true));
                 mtrace('reconcile_ledger: time cap reached; remaining sweeps run next tick.');
                 break;
             }
+            $sweepstarted = microtime(true);
             $repaired = $this->$method($processable, $batch, $key);
+            $sweepms = (int) round((microtime(true) - $sweepstarted) * 1000);
+            $stats[$key] = ['rows' => $repaired, 'ms' => $sweepms, 'cursor' => $this->cursor($key)];
+            if ($repaired === 0) {
+                /* The cost of proving nothing was wrong. On a converged ledger
+                 * this is the whole tick, and it is the number that has to fall
+                 * before any throughput claim about this task means anything. */
+                $emptyms += $sweepms;
+            }
             $total += $repaired;
             if ($repaired > 0) {
                 mtrace(sprintf('reconcile_ledger: %s repaired %d row(s).', $key, $repaired));
             }
         }
         mtrace(sprintf('reconcile_ledger: %d row(s) repaired this tick.', $total));
+
+        /* Recorded on EVERY tick, including the ones that found nothing. The
+         * empty tick is not noise here — it is the measurement. Nine diffs that
+         * prove a converged ledger correct are the steady-state cost of this
+         * task, and until now nothing anywhere recorded it, so no claim about
+         * making reconciliation faster could be checked against anything. Twelve
+         * rows a day against a 90-day prune is a fraction of what drain_queue
+         * already writes. */
+        recompute_log::record(
+            recompute_log::REASON_RECONCILE,
+            $total,
+            null,
+            [
+                'sweeps' => $stats,
+                'emptyms' => $emptyms,
+                'skipped' => array_values($skipped),
+                'timecapped' => $timecapped,
+                'courses' => count($processable),
+                'batch' => $batch,
+                'timecap' => $timecap,
+            ],
+            $started,
+            time()
+        );
     }
 
     /**

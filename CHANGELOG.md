@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - Unreleased
 
+### Added
+- **Reconciliation now records what each tick cost.** One audit row per tick
+  (reason `reconcile`), carrying per-sweep rows repaired, milliseconds and
+  cursor position, plus `emptyms` — the time spent proving nothing was wrong —
+  and whether the time cap cut the tick short, with the names of the sweeps it
+  skipped. The row is written on every tick, including the ones that repair
+  nothing: on a converged ledger that *is* the task's cost, and until now
+  nothing anywhere recorded it. Visible on *Tools → Recompute audit*.
+
+  The skipped list is the operational signal worth watching. The sweeps run in
+  a fixed order, so the same names appearing there tick after tick means those
+  repairs are not happening at all.
+
 ### Changed
 - **The reconciler's sweeps are indexed.** New `idx_course_id` on
   `block_feedback_tracker_sub (courseid, id)`. The keyset sweeps page on

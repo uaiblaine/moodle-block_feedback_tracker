@@ -51,6 +51,13 @@ class recompute_log {
     public const REASON_BACKFILL_DAYS = 'backfill_days';
 
     /**
+     * One reconciliation tick. Written even when the sweeps found nothing,
+     * because the cost of proving a converged ledger correct is exactly what
+     * this row exists to make visible.
+     */
+    public const REASON_RECONCILE = 'reconcile';
+
+    /**
      * A course's history was discarded because the block was removed and the
      * grace period expired. Moodle triggers no event when a block is deleted,
      * so this row is the only record that the deletion ever happened.
