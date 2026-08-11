@@ -94,7 +94,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
-        if ((int) (get_config('block_feedback_tracker', 'reconcile_active') ?: 1) !== 1) {
+        /* Default-ON checkbox: an unset value (false) means enabled, and only
+         * an explicit '0' turns it off. The `?: 1` read this replaced could
+         * never see the off state — admin_setting_configcheckbox stores '0',
+         * which is falsy, so `'0' ?: 1` yielded 1 and the documented escape
+         * hatch never fired. Same read as bootstrap::config_bundle(). */
+        $activecfg = get_config('block_feedback_tracker', 'reconcile_active');
+        $active = ($activecfg === false || $activecfg === null) ? true : ((string) $activecfg !== '0');
+        if (!$active) {
             mtrace('reconcile_ledger: disabled by setting.');
             return;
         }

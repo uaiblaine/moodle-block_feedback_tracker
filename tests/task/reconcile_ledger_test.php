@@ -535,6 +535,49 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * Switching reconciliation off actually stops it.
+     *
+     * `reconcile_active` is a default-ON checkbox, so core stores the off state
+     * as the string '0'. The guard used to read it with `?: 1`, under which '0'
+     * is falsy and yields 1 — the documented escape hatch never fired.
+     *
+     * The control matters more than the assertion here: six of the nine sweeps
+     * write no ledger row at all, they queue adhoc repairs, so "assert no
+     * ledger rows appeared" would pass whether the guard fires or not. This
+     * proves the sweeps were queueing before the setting was touched.
+     *
+     * @return void
+     */
+    public function test_the_kill_switch_actually_stops_the_sweeps(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [, $student, $assign] = $this->build_environment();
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        // Control: with the setting untouched the missing-row sweep queues a repair.
+        $DB->delete_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+        $this->assertGreaterThan(
+            0,
+            $DB->count_records('task_adhoc'),
+            'Control: reconciliation must be doing something before the switch is tested.'
+        );
+
+        // The repair was never drained, so the same row is still there to be found.
+        $DB->delete_records('task_adhoc');
+        set_config('reconcile_active', '0', 'block_feedback_tracker');
+        (new reconcile_ledger())->execute();
+
+        $this->assertSame(
+            0,
+            $DB->count_records('task_adhoc'),
+            'A stored "0" is how the admin form records off, and it must be honoured.'
+        );
+    }
+
+    /**
      * Run the task and drain the adhoc repairs it queued.
      *
      * @return void
