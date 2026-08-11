@@ -267,6 +267,8 @@ class submission_ledger {
      * @param int $teamgroupid Group the row was fanned out from; 0 for individuals.
      * @param \stdClass|null $grade The member's {assign_grades} row, or null.
      * @param int|null $releasedat Observed marking-workflow release instant.
+     * @param bool $retrying True on the single re-entry after a concurrent
+     *                       writer won the insert race; bounds the recursion.
      * @return int|null Ledger row id.
      */
     private static function build_and_store(
@@ -279,7 +281,8 @@ class submission_ledger {
         int $latest,
         int $teamgroupid,
         ?\stdClass $grade,
-        ?int $releasedat
+        ?int $releasedat,
+        bool $retrying = false
     ): ?int {
         global $DB;
 
@@ -598,7 +601,34 @@ class submission_ledger {
             $DB->update_record('block_feedback_tracker_sub', $record);
         } else {
             $record->timecreated = $now;
-            $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle);
+            $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle, $retrying);
+            if ($subid === null) {
+                /* A concurrent writer inserted this exact cycle between the read
+                 * at the top of this method and the insert above, so $record was
+                 * derived as if no row existed — the whole sticky-restore block
+                 * (earliest-wins timegraded, the gradebook closedsource/timeclosed
+                 * reinstatement) never ran. Writing it would silently discard the
+                 * other writer's recorded response.
+                 *
+                 * Re-enter instead of merging here, so the earliest-wins rule
+                 * stays in exactly one place: the second pass reads their row as
+                 * $existing and takes the ordinary update path. Bounded to one
+                 * retry — if the row vanishes again, insert_cycle_row's own
+                 * last-resort recovery adopts whatever is there. */
+                return self::build_and_store(
+                    $cm,
+                    $assign,
+                    $userid,
+                    $attemptnumber,
+                    $status,
+                    $livesubmitted,
+                    $latest,
+                    $teamgroupid,
+                    $grade,
+                    $releasedat,
+                    true
+                );
+            }
         }
 
         // V2.0.0+: the per-submission pause ledger was removed. The
@@ -849,26 +879,56 @@ class submission_ledger {
      * already poisoned the connection on PostgreSQL, so the exception is
      * rethrown and the event manager downgrades it to a debugging notice.
      *
+     * Recovery is NOT to write `$record` over the winner's row. `$record` was
+     * derived on the branch where no row existed, so none of the sticky rules
+     * ran — the earliest-wins `timegraded` restore, and the reinstatement of a
+     * gradebook-sourced `closedsource`/`timeclosed` that {grade_grades} can no
+     * longer report. Overwriting with it discards a response that had already
+     * reached the student. Instead this returns null and lets
+     * {@see self::build_and_store()} re-derive against the winner's row, so the
+     * earliest-wins rule keeps living in exactly one place.
+     *
+     * On the bounded re-entry ($retrying) the blind update is the last resort:
+     * a row that collides twice and then cannot be read is a state no further
+     * retry improves, and adopting it beats throwing.
+     *
+     * NOT COVERED BY A TEST, deliberately. Reaching this catch needs a writer
+     * to insert between the read at the top of build_and_store() and the insert
+     * below, and both key on the same (cmid, userid, attemptnumber) tuple — so
+     * a read that misses guarantees an insert that cannot collide, and one
+     * process can never reach it. Driving it needs either a second connection
+     * interleaved inside one statement pair, or a seam here for a test subclass
+     * to override; the suite has neither, and no test in this repo uses
+     * reflection. The concurrency harness belongs with the work that raises
+     * concurrency (locking the writer), not with this fix. Until then the
+     * guarantee rests on the re-entry landing on the ordinary update path,
+     * which gradebook_response_test does cover.
+     *
      * @param \stdClass $record Fully built ledger record.
      * @param int $cmid
      * @param int $userid
      * @param int $attemptnumber
      * @param int $cycle
-     * @return int Ledger row id.
+     * @param bool $retrying True when the caller has already re-derived once.
+     * @return int|null Ledger row id, or null when the caller must re-derive.
      */
     private static function insert_cycle_row(
         \stdClass $record,
         int $cmid,
         int $userid,
         int $attemptnumber,
-        int $cycle
-    ): int {
+        int $cycle,
+        bool $retrying = false
+    ): ?int {
         global $DB;
         try {
             return (int) $DB->insert_record('block_feedback_tracker_sub', $record);
         } catch (\dml_write_exception $e) {
             if ($DB->is_transaction_started()) {
                 throw $e;
+            }
+            if (!$retrying) {
+                return null;
             }
             $row = $DB->get_record('block_feedback_tracker_sub', [
                 'cmid' => $cmid,
