@@ -53,11 +53,18 @@ use block_feedback_tracker\local\sla\submission_status;
  *    signal.
  *
  * Each sweep is keyset-paged behind its own cursor, bounded per tick and
- * gated on {@see course_access::is_processable()}. Repairs are dispatched as
- * adhoc {@see backfill_one_submission} tasks so the academic-time engine never
- * runs inside this task's own time budget — except the two cleanup sweeps,
- * which must act directly because that task re-gates every row on
- * processability and would silently skip a hidden or block-less course.
+ * gated on {@see course_access::is_processable()}. Six sweeps dispatch their
+ * repairs as adhoc {@see backfill_one_submission} tasks, keeping the
+ * academic-time engine out of this task's own time budget.
+ *
+ * THREE act directly, for two different reasons. The two cleanup sweeps
+ * ({@see self::sweep_orphans()}, {@see self::sweep_departed_participants()})
+ * must, because the repair task re-gates every row on processability and would
+ * silently skip exactly the hidden or block-less courses whose rows most need
+ * removing. {@see self::sweep_unstamped_allocations()} does so for no such
+ * reason: it calls `stamp_allocation_for_user()`, which runs the academic-time
+ * engine per row, inside this budget, on the sweep that is last in the
+ * registry and therefore the first to be cut off by the shared deadline.
  */
 class reconcile_ledger extends \core\task\scheduled_task {
     /** Default rows examined per sweep per tick. */
@@ -87,7 +94,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
-        if ((int) (get_config('block_feedback_tracker', 'reconcile_active') ?: 1) !== 1) {
+        /* Default-ON checkbox: an unset value (false) means enabled, and only
+         * an explicit '0' turns it off. The `?: 1` read this replaced could
+         * never see the off state — admin_setting_configcheckbox stores '0',
+         * which is falsy, so `'0' ?: 1` yielded 1 and the documented escape
+         * hatch never fired. Same read as bootstrap::config_bundle(). */
+        $activecfg = get_config('block_feedback_tracker', 'reconcile_active');
+        $active = ($activecfg === false || $activecfg === null) ? true : ((string) $activecfg !== '0');
+        if (!$active) {
             mtrace('reconcile_ledger: disabled by setting.');
             return;
         }
@@ -289,7 +303,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {course_modules} cm ON cm.id = l.cmid
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -336,7 +350,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {course_modules} cm ON cm.id = l.cmid
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -344,8 +358,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
                JOIN {assign_submission} s
                  ON s.assignment = a.id
                 AND s.attemptnumber = l.attemptnumber
-                AND ((l.teamgroupid = 0 AND s.userid = l.userid)
-                     OR (l.teamgroupid > 0 AND s.userid = 0 AND s.groupid = l.teamgroupid))
+                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
+                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
               WHERE l.id > :cursor
                 AND l.iscurrent = 1
                 AND l.courseid $csql
@@ -368,10 +382,25 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * Course reset deletes {assign_submission} with a bare
      * `delete_records_select()`, and by default leaves the grades behind — so
-     * the probe keys on the submission, not the grade. Team-aware, or the
-     * fan-out and this sweep would delete and recreate each other's rows for
-     * ever. Acts directly: a repair task would re-gate on processability and
-     * skip exactly the courses whose rows most need removing.
+     * the probe keys on the submission, not the grade. Acts directly: a repair
+     * task would re-gate on processability and skip exactly the courses whose
+     * rows most need removing.
+     *
+     * Team-aware, or the fan-out and this sweep would delete and recreate each
+     * other's rows for ever — and the discriminator has to be the LIVE
+     * `assign.teamsubmission` flag, never the stored `teamgroupid`. mod_assign's
+     * default team group IS group 0, so a member row for it is stored with
+     * `teamgroupid = 0`, byte-identical to an individual row; the observer
+     * routes on the live flag for exactly this reason (see
+     * {@see \block_feedback_tracker\local\sla\observer}). Probing such a row as
+     * individual looks for `s.userid = l.userid` while the source row carries
+     * `userid = 0`, finds nothing, and deletes a perfectly good member row that
+     * {@see self::sweep_missing_team_rows()} then recreates on the next tick —
+     * one backfill dispatch plus one rollup recompute per round trip, for ever.
+     *
+     * An activity whose {assign} row is gone leaves `a.teamsubmission` NULL, so
+     * neither branch matches and the row is deleted. That is the intended
+     * reading: no activity means no submission to measure.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Row ceiling for this sweep.
@@ -384,11 +413,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
             "SELECT l.id, l.courseid, l.groupid
                FROM {block_feedback_tracker_sub} l
           LEFT JOIN {course_modules} cm ON cm.id = l.cmid
+          LEFT JOIN {assign} a ON a.id = l.iteminstance
           LEFT JOIN {assign_submission} s
                  ON s.assignment = l.iteminstance
                 AND s.attemptnumber = l.attemptnumber
-                AND ((l.teamgroupid = 0 AND s.userid = l.userid)
-                     OR (l.teamgroupid > 0 AND s.userid = 0 AND s.groupid = l.teamgroupid))
+                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
+                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
               WHERE l.id > :cursor
                 AND (cm.id IS NULL OR s.id IS NULL)
            ORDER BY l.id ASC",
@@ -447,8 +477,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $now = time();
         $rows = $DB->get_records_sql(
-            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid
+            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid,
+                    l.teamgroupid, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
+               JOIN {assign} a ON a.id = l.iteminstance
                JOIN {grade_items} gi
                  ON gi.iteminstance = l.iteminstance
                 AND gi.itemtype = :itemtype
@@ -564,7 +596,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {assign} a ON a.id = l.iteminstance
           LEFT JOIN {assign_user_flags} uf
@@ -678,11 +710,22 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * batch, so the next tick starts a fresh pass rather than stalling at the
      * end of the table.
      *
+     * A team activity's ledger rows are per MEMBER while the repair is
+     * per GROUP: `upsert_for_cm_user_attempt()` re-routes any member of a team
+     * activity back through the whole-group fan-out. Emitting one descriptor
+     * per member therefore ran the entire fan-out once per member — quadratic
+     * in group size, and split across parallel adhoc tasks that then raced to
+     * write the same rows. Team rows collapse to one `userid = 0` container
+     * descriptor per (cmid, team group, attempt) instead, which is the shape
+     * {@see backfill_one_submission} already routes to
+     * `upsert_for_team_attempt()`.
+     *
      * @param array $rows Sweep result, keyed by the cursor column.
      * @param string $key Cursor key.
      * @param int $batch Batch size used.
      * @param string $cursorfield Field carrying the keyset value.
-     * @return int Rows dispatched.
+     * @return int Rows examined (not descriptors emitted — the cursor and the
+     *             end-of-pass test both key on rows read from the driving set).
      */
     private function dispatch_and_advance(array $rows, string $key, int $batch, string $cursorfield): int {
         if (empty($rows)) {
@@ -690,23 +733,66 @@ class reconcile_ledger extends \core\task\scheduled_task {
             return 0;
         }
         $buffer = [];
+        $seen = [];
         $lastid = 0;
+        $batches = 0;
+        $queued = 0;
         foreach ($rows as $r) {
             $lastid = (int) $r->{$cursorfield};
-            $buffer[] = [
-                'cmid' => (int) $r->cmid,
-                'userid' => (int) $r->userid,
-                'groupid' => (int) ($r->teamgroupid ?? 0) ?: (int) ($r->groupid ?? 0),
-                'attemptnumber' => (int) $r->attemptnumber,
-                'courseid' => (int) $r->courseid,
-            ];
+            $cmid = (int) $r->cmid;
+            $attempt = (int) $r->attemptnumber;
+            $courseid = (int) $r->courseid;
+            /* Route on the live teamsubmission flag where the sweep selected
+             * it, and on the source row's own userid where it did not — never
+             * on the stored teamgroupid, which cannot tell a default-group team
+             * row (teamgroupid = 0) from an individual one. */
+            $isteam = isset($r->isteam)
+                ? ((int) $r->isteam === 1)
+                : ((int) ($r->userid ?? 0) === 0);
+            if ($isteam) {
+                $teamgroupid = (int) ($r->teamgroupid ?? $r->groupid ?? 0);
+                $dedupkey = 't:' . $cmid . ':' . $teamgroupid . ':' . $attempt;
+                $descriptor = [
+                    'cmid' => $cmid,
+                    'userid' => 0,
+                    'groupid' => $teamgroupid,
+                    'attemptnumber' => $attempt,
+                    'courseid' => $courseid,
+                ];
+            } else {
+                $userid = (int) $r->userid;
+                $dedupkey = 'u:' . $cmid . ':' . $userid . ':' . $attempt;
+                $descriptor = [
+                    'cmid' => $cmid,
+                    'userid' => $userid,
+                    'groupid' => (int) ($r->groupid ?? 0),
+                    'attemptnumber' => $attempt,
+                    'courseid' => $courseid,
+                ];
+            }
+            if (isset($seen[$dedupkey])) {
+                continue;
+            }
+            $seen[$dedupkey] = true;
+            $buffer[] = $descriptor;
             if (count($buffer) >= self::REPAIR_CHUNK) {
-                $this->queue_repair($buffer);
+                $queued += $this->queue_repair($buffer) ? 1 : 0;
+                $batches++;
                 $buffer = [];
             }
         }
         if (!empty($buffer)) {
-            $this->queue_repair($buffer);
+            $queued += $this->queue_repair($buffer) ? 1 : 0;
+            $batches++;
+        }
+        if ($batches > $queued) {
+            mtrace(sprintf(
+                'reconcile_ledger: %s had %d of %d repair batch(es) refused '
+                . '(already pending, or blocked by a retry-exhausted row).',
+                $key,
+                $batches - $queued,
+                $batches
+            ));
         }
         $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
         return count($rows);
@@ -715,20 +801,31 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Queue one adhoc repair batch, logging rather than propagating failures.
      *
+     * The return value of `queue_adhoc_task()` is not discardable. A `false`
+     * used to mean only "an identical payload is already pending", which is the
+     * dedup working as intended; since Moodle 5.2 it is also returned up front
+     * for a refused component, before the dedup check runs. And on 4.5 a
+     * retry-exhausted `{task_adhoc}` row still matches the dedup probe, so an
+     * identical payload stays blocked for as long as
+     * `task_adhoc_failed_retention` keeps the dead row — up to four weeks.
+     * Either way the caller has NOT queued anything, so it counts the outcome
+     * instead of assuming the repair is on its way.
+     *
      * @param array $rows Row descriptors for backfill_one_submission.
-     * @return void
+     * @return bool True when a new adhoc task was created.
      */
-    private function queue_repair(array $rows): void {
+    private function queue_repair(array $rows): bool {
         try {
             $task = new backfill_one_submission();
             $task->set_custom_data(['rows' => $rows]);
-            \core\task\manager::queue_adhoc_task($task, true);
+            return \core\task\manager::queue_adhoc_task($task, true) !== false;
         } catch (\Throwable $e) {
             debugging(sprintf(
                 'reconcile_ledger: could not queue a repair batch of %d row(s): %s',
                 count($rows),
                 $e->getMessage()
             ));
+            return false;
         }
     }
 

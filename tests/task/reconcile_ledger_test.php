@@ -535,6 +535,289 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * Switching reconciliation off actually stops it.
+     *
+     * `reconcile_active` is a default-ON checkbox, so core stores the off state
+     * as the string '0'. The guard used to read it with `?: 1`, under which '0'
+     * is falsy and yields 1 — the documented escape hatch never fired.
+     *
+     * The control matters more than the assertion here: six of the nine sweeps
+     * write no ledger row at all, they queue adhoc repairs, so "assert no
+     * ledger rows appeared" would pass whether the guard fires or not. This
+     * proves the sweeps were queueing before the setting was touched.
+     *
+     * @return void
+     */
+    public function test_the_kill_switch_actually_stops_the_sweeps(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [, $student, $assign] = $this->build_environment();
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        // Control: with the setting untouched the missing-row sweep queues a repair.
+        $DB->delete_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+        $this->assertGreaterThan(
+            0,
+            $DB->count_records('task_adhoc'),
+            'Control: reconciliation must be doing something before the switch is tested.'
+        );
+
+        // The repair was never drained, so the same row is still there to be found.
+        $DB->delete_records('task_adhoc');
+        set_config('reconcile_active', '0', 'block_feedback_tracker');
+        (new reconcile_ledger())->execute();
+
+        $this->assertSame(
+            0,
+            $DB->count_records('task_adhoc'),
+            'A stored "0" is how the admin form records off, and it must be honoured.'
+        );
+    }
+
+    /**
+     * A team row for mod_assign's DEFAULT group is not an orphan.
+     *
+     * The default team group IS group 0, so a member row for it is stored with
+     * `teamgroupid = 0` — byte-identical to an individual row. Discriminating
+     * on that stored value made the orphan sweep probe for `s.userid = l.userid`
+     * while the source row carries `userid = 0`; it found nothing and deleted a
+     * perfectly good member row, which the missing-team sweep then recreated on
+     * the next tick. The live `assign.teamsubmission` flag is the only thing
+     * that can tell the two shapes apart.
+     *
+     * @return void
+     */
+    public function test_a_default_group_team_row_is_not_mistaken_for_an_orphan(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment(['teamsubmission' => 1]);
+
+        /* No group membership at all, which is exactly what puts the student in
+         * mod_assign's default group — the one numbered 0. */
+        $submitted = time() - 4 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $submitted,
+            'timemodified' => $submitted,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => 0,
+            'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_team_attempt((int) $cm->id, 0, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
+        $this->assertNotEmpty($row, 'Sanity: the member row exists before the sweeps run.');
+        $this->assertSame(0, (int) $row->teamgroupid, 'Sanity: the default group is stored as 0.');
+        $rowid = (int) $row->id;
+
+        // Control: a row whose activity is genuinely gone must still be swept away.
+        $orphanid = $this->generator()->create_ledger_row(['courseid' => (int) $cm->course]);
+
+        $this->run_reconciler();
+        $this->run_reconciler();
+
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['id' => $orphanid]),
+            'Control: the orphan sweep must have run and removed the row with no course module.'
+        );
+        $after = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
+        $this->assertNotEmpty($after, 'A default-group team member row is not an orphan.');
+        /* Identity, not existence. The missing-team sweep runs before the orphan
+         * sweep, so a deleted row is rebuilt on the following tick and a test
+         * that only asks "is there a row" passes while the pair thrash — one
+         * backfill dispatch and one rollup recompute per round trip. A changed
+         * id is the fingerprint of that round trip. */
+        $this->assertSame(
+            $rowid,
+            (int) $after->id,
+            'The row must survive untouched; a new id means it was deleted and rebuilt.'
+        );
+    }
+
+    /**
+     * Every member of a team gets a row, and the repair is dispatched once for
+     * the GROUP rather than once per member.
+     *
+     * Ledger rows are per member while the repair is per group:
+     * `upsert_for_cm_user_attempt()` re-routes any member of a team activity
+     * back through the whole-group fan-out, so one descriptor per member ran
+     * the entire fan-out once per member — quadratic in group size, and split
+     * across parallel adhoc tasks that then raced to write the same rows.
+     *
+     * @return void
+     */
+    public function test_a_team_repair_is_dispatched_once_for_the_group(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment(['teamsubmission' => 1]);
+
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $members = [];
+        for ($i = 0; $i < 3; $i++) {
+            $member = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->getDataGenerator()->create_group_member([
+                'groupid' => $group->id,
+                'userid' => $member->id,
+            ]);
+            $members[] = $member;
+        }
+        group_resolver::reset_memo();
+
+        $submitted = time() - 4 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $submitted,
+            'timemodified' => $submitted,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => $group->id,
+            'latest' => 1,
+        ]);
+
+        // The missing-team sweep has to build all three member rows from the one source row.
+        $this->run_reconciler();
+        foreach ($members as $member) {
+            $this->assertTrue(
+                $DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $member->id]),
+                'Every member of the team carries the group\'s work.'
+            );
+        }
+
+        /* Drive a ledger-rooted dispatching sweep: the latest flag drifting is
+         * the direct fingerprint of add_attempt(), and it selects one row PER
+         * MEMBER — which is the shape that used to fan out three times. */
+        $DB->set_field('block_feedback_tracker_sub', 'islatest', 0, ['cmid' => $cm->id]);
+        $DB->delete_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+
+        $descriptors = [];
+        $tasks = \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission');
+        foreach ($tasks as $task) {
+            $data = (array) $task->get_custom_data();
+            foreach ((array) ($data['rows'] ?? []) as $descriptor) {
+                $descriptor = (array) $descriptor;
+                if ((int) $descriptor['cmid'] === (int) $cm->id) {
+                    $descriptors[] = $descriptor;
+                }
+            }
+        }
+
+        $this->assertCount(
+            1,
+            $descriptors,
+            'A three-member team must produce ONE container descriptor, not one per member.'
+        );
+        $this->assertSame(0, (int) $descriptors[0]['userid'], 'The container descriptor carries userid 0.');
+        $this->assertSame((int) $group->id, (int) $descriptors[0]['groupid'], 'And the team group id.');
+    }
+
+    /**
+     * A due date changed with no event is repaired.
+     *
+     * Due dates, cut-offs, overrides and extensions all move with no per-row
+     * signal, so the stored rule silently stops describing the activity and
+     * every downstream "within SLA" answer is computed against a deadline that
+     * no longer exists. The rule sweep is the only thing that notices.
+     *
+     * @return void
+     */
+    public function test_a_due_date_changed_behind_the_plugin_is_repaired(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        $duedate = time() + 7 * 86400;
+        [$cm, $student, $assign] = $this->build_environment(['duedate' => $duedate]);
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        $this->run_reconciler();
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertNotEmpty($row, 'Sanity: the row exists before the due date moves.');
+        $this->assertSame(1, (int) $row->hasrule, 'Sanity: an activity with a due date carries a rule.');
+        $this->assertSame($duedate, (int) $row->timecloses, 'Sanity: the stored rule matches the activity.');
+
+        /* Core moves the due date with no per-row event, which is exactly the
+         * hole this sweep exists to cover — so the fixture writes it the same
+         * silent way rather than going through the module's own update path. */
+        $moved = $duedate + 3 * 86400;
+        $DB->set_field('assign', 'duedate', $moved, ['id' => $assign->id]);
+
+        $this->run_reconciler();
+
+        $after = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(
+            $moved,
+            (int) $after->timecloses,
+            'The rule sweep must re-resolve a due date that moved without an event.'
+        );
+    }
+
+    /**
+     * A repair that could not be queued is reported, not assumed.
+     *
+     * `queue_adhoc_task()` returns false when an identical payload is already
+     * pending — and since Moodle 5.2 also for a refused component, before the
+     * dedup check runs. On 4.5 a retry-exhausted row still matches the probe,
+     * so an identical payload stays blocked for as long as
+     * `task_adhoc_failed_retention` keeps the dead row. Discarding that return
+     * made the sweep count a repair it never dispatched.
+     *
+     * @return void
+     */
+    public function test_a_refused_repair_batch_is_reported(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [, $student, $assign] = $this->build_environment();
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        // First tick queues the repair. It is deliberately NOT drained.
+        (new reconcile_ledger())->execute();
+        $this->assertSame(
+            1,
+            $DB->count_records('task_adhoc'),
+            'Control: the first tick must actually queue something to be refused later.'
+        );
+
+        /* The cursor resets whenever a sweep returns fewer rows than the batch,
+         * so the next tick rebuilds a byte-identical payload — which is what
+         * core's dedup compares. */
+        ob_clean();
+        (new reconcile_ledger())->execute();
+        $output = (string) ob_get_contents();
+
+        $this->assertSame(
+            1,
+            $DB->count_records('task_adhoc'),
+            'Sanity: core dedup collapsed the second dispatch onto the pending one.'
+        );
+        $this->assertStringContainsString(
+            'repair batch(es) refused',
+            $output,
+            'The sweep must say a batch was refused rather than counting it as dispatched.'
+        );
+    }
+
+    /**
+     * Fetch the plugin generator.
+     *
+     * @return \block_feedback_tracker_generator
+     */
+    private function generator(): \block_feedback_tracker_generator {
+        return $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+    }
+
+    /**
      * Run the task and drain the adhoc repairs it queued.
      *
      * @return void
