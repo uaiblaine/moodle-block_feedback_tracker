@@ -115,7 +115,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
         if ($batch < 1) {
             $batch = self::DEFAULT_BATCH;
         }
-        $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
+        /* Its own cap since 2026081100. Sharing drain_time_cap_seconds meant one
+         * number sized a task that inserts a couple of hundred queue rows AND a
+         * task that runs nine diffs against the assignment tables. The upgrade
+         * step seeds this from the old key, so a site that had tuned the drain
+         * cap keeps the behaviour it had rather than silently reverting to the
+         * default. */
+        $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
+            ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
 
         // Flush the memos the ledger consults; a long-lived cron process would

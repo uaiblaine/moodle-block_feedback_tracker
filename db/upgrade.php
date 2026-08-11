@@ -660,5 +660,20 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026080401, 'feedback_tracker');
     }
 
+    /* Give reconciliation its own time cap, seeded from the drain cap it used
+     * to share. Letting the new setting take its own default would silently
+     * revert any site that had tuned the old one — the admin raised a number to
+     * make reconciliation reach its later sweeps, and an upgrade must not undo
+     * that without saying so. Sites that never touched it read the same 50
+     * either way. */
+    if ($oldversion < 2026081100) {
+        $inherited = get_config('block_feedback_tracker', 'drain_time_cap_seconds');
+        if ($inherited !== false && $inherited !== null && (string) $inherited !== '') {
+            set_config('reconcile_time_cap_seconds', (string) $inherited, 'block_feedback_tracker');
+        }
+
+        upgrade_block_savepoint(true, 2026081100, 'feedback_tracker');
+    }
+
     return true;
 }

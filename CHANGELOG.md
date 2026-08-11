@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - Unreleased
 
 ### Changed
+- **Reconciliation has its own time cap.** `reconcile_time_cap_seconds` replaces
+  the reconciler's use of `drain_time_cap_seconds`. One number was sizing two
+  very different tasks: the drain inserts a couple of hundred rows into
+  `{task_adhoc}`, while reconciliation runs nine diffs against the assignment
+  tables. The cap is tested between sweeps, in a fixed order, so a value too low
+  for the site means the sweeps at the end of that order are reached rarely or
+  never — which is a silent loss of repair, not a slowdown.
+
+  The upgrade seeds the new setting from the old one's stored value, so a site
+  that had raised the drain cap keeps the behaviour it had. Sites that never
+  touched it read the same 50 either way. `drain_time_cap_seconds` continues to
+  govern the drain, pending and backfill tasks.
+
 - **A grade entered straight into the gradebook now counts as a response.**
   Until now the plugin only ever looked inside the activity, so a teacher who
   graded in the grader report, the single view or an import was invisible to
