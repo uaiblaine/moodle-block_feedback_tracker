@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - Unreleased
 
 ### Changed
+- **The reconciler's sweeps are indexed.** New `idx_course_id` on
+  `block_feedback_tracker_sub (courseid, id)`. The keyset sweeps page on
+  `id > :cursor` while filtering on `courseid`, and no existing index led with
+  `id` — the primary key does, but the course filter was then a residual over
+  whatever the range scan produced. On a ledger where the tracked courses are a
+  small slice of the table, that residual was most of the work.
+
+  It does not help the two row-creating sweeps: those drive from
+  `{assign_submission}`, which carries no course column on either supported
+  core version.
 - **Reconciliation has its own time cap.** `reconcile_time_cap_seconds` replaces
   the reconciler's use of `drain_time_cap_seconds`. One number was sizing two
   very different tasks: the drain inserts a couple of hundred rows into
