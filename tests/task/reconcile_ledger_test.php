@@ -809,6 +809,61 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * Every tick records what it cost, including the ones that repair nothing.
+     *
+     * Reconciliation emitted no audit row at all, so the only thing anyone
+     * could see was the cron duration of a task that does nine different
+     * things. The converged tick is the one that matters most: nine diffs that
+     * find nothing are this task's steady-state cost, and no claim about making
+     * it cheaper can be checked without a number to compare against.
+     *
+     * @return void
+     */
+    public function test_every_tick_records_what_it_cost(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [, $student, $assign] = $this->build_environment();
+
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        $DB->delete_records('block_feedback_tracker_log');
+        $this->run_reconciler();
+
+        $row = $DB->get_record('block_feedback_tracker_log', ['reason' => 'reconcile']);
+        $this->assertNotEmpty($row, 'A tick that repaired a row must say so.');
+        $this->assertSame(1, (int) $row->affectedrows);
+        $details = json_decode((string) $row->details, true);
+        $this->assertSame(1, (int) $details['sweeps']['missing']['rows'], 'Attributed to the sweep that found it.');
+        $this->assertArrayHasKey('ms', $details['sweeps']['missing']);
+        $this->assertFalse($details['timecapped'], 'A one-row tick cannot have hit the cap.');
+        $this->assertSame([], $details['skipped'], 'And nothing was skipped.');
+
+        /* The second tick is the control AND the claim: the ledger is now
+         * correct, so the sweeps repair nothing — and the row still has to
+         * appear, carrying the cost of having proved it. */
+        $DB->delete_records('block_feedback_tracker_log');
+        $this->run_reconciler();
+
+        $second = $DB->get_record('block_feedback_tracker_log', ['reason' => 'reconcile']);
+        $this->assertNotEmpty($second, 'A tick that repairs nothing still records its cost.');
+        $this->assertSame(0, (int) $second->affectedrows, 'Control: the ledger really had converged.');
+        $seconddetails = json_decode((string) $second->details, true);
+        $this->assertArrayHasKey('emptyms', $seconddetails);
+        $this->assertGreaterThan(0, (int) $seconddetails['courses'], 'The scope of the pass is recorded.');
+
+        /* A sweep that returned fewer rows than the batch spent its driving
+         * set, so its pass completed. The one sweep that cannot answer this is
+         * the departed-participant one, whose cursor indexes courses rather
+         * than rows — reported null, not false, so the two stay distinguishable. */
+        $this->assertTrue($seconddetails['sweeps']['missing']['exhausted'], 'The pass completed.');
+        $this->assertNull(
+            $seconddetails['sweeps']['participant']['exhausted'],
+            'The course-indexed sweep has no driving set to spend.'
+        );
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator

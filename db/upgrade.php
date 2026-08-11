@@ -660,5 +660,39 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026080401, 'feedback_tracker');
     }
 
+    /* Give reconciliation its own time cap, seeded from the drain cap it used
+     * to share. Letting the new setting take its own default would silently
+     * revert any site that had tuned the old one — the admin raised a number to
+     * make reconciliation reach its later sweeps, and an upgrade must not undo
+     * that without saying so. Sites that never touched it read the same 50
+     * either way. */
+    if ($oldversion < 2026081100) {
+        $inherited = get_config('block_feedback_tracker', 'drain_time_cap_seconds');
+        if ($inherited !== false && $inherited !== null && (string) $inherited !== '') {
+            set_config('reconcile_time_cap_seconds', (string) $inherited, 'block_feedback_tracker');
+        }
+
+        upgrade_block_savepoint(true, 2026081100, 'feedback_tracker');
+    }
+
+    /* Index the reconciler's keyset sweeps. They page on `id > :cursor` while
+     * filtering on courseid, and no existing index leads with id — the primary
+     * key does, but the course filter then has to be applied as a residual over
+     * whatever the range scan produces. On a ledger where the tracked courses
+     * are a small slice of the table, that is most of the work.
+     *
+     * It does not help the two row-creating sweeps: they drive from
+     * {assign_submission}, which has no course column on either supported core
+     * version, so their keyset is over a different table entirely. */
+    if ($oldversion < 2026081101) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $index = new xmldb_index('idx_course_id', XMLDB_INDEX_NOTUNIQUE, ['courseid', 'id']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_block_savepoint(true, 2026081101, 'feedback_tracker');
+    }
+
     return true;
 }

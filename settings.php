@@ -280,6 +280,7 @@ if ($ADMIN->fulltree) {
         'trend_window_days'         => '30',
         'purge_inactive_after_days' => '730',
         'reconcile_batch_size'      => '500',
+        'reconcile_time_cap_seconds' => '50',
         'retention_days'            => '365',
         'retention_batch_size'      => '5000',
     ];

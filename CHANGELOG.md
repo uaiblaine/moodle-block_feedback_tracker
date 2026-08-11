@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - Unreleased
 
+### Added
+- **Reconciliation now records what each tick cost.** One audit row per tick
+  (reason `reconcile`), carrying per-sweep rows repaired, milliseconds and
+  cursor position, plus `emptyms` — the time spent proving nothing was wrong —
+  and whether the time cap cut the tick short, with the names of the sweeps it
+  skipped. The row is written on every tick, including the ones that repair
+  nothing: on a converged ledger that *is* the task's cost, and until now
+  nothing anywhere recorded it. Visible on *Tools → Recompute audit*.
+
+  The skipped list is the operational signal worth watching. The sweeps run in
+  a fixed order, so the same names appearing there tick after tick means those
+  repairs are not happening at all.
+
 ### Changed
+- **The reconciler's sweeps are indexed.** New `idx_course_id` on
+  `block_feedback_tracker_sub (courseid, id)`. The keyset sweeps page on
+  `id > :cursor` while filtering on `courseid`, and no existing index led with
+  `id` — the primary key does, but the course filter was then a residual over
+  whatever the range scan produced. On a ledger where the tracked courses are a
+  small slice of the table, that residual was most of the work.
+
+  It does not help the two row-creating sweeps: those drive from
+  `{assign_submission}`, which carries no course column on either supported
+  core version.
+- **Reconciliation has its own time cap.** `reconcile_time_cap_seconds` replaces
+  the reconciler's use of `drain_time_cap_seconds`. One number was sizing two
+  very different tasks: the drain inserts a couple of hundred rows into
+  `{task_adhoc}`, while reconciliation runs nine diffs against the assignment
+  tables. The cap is tested between sweeps, in a fixed order, so a value too low
+  for the site means the sweeps at the end of that order are reached rarely or
+  never — which is a silent loss of repair, not a slowdown.
+
+  The upgrade seeds the new setting from the old one's stored value, so a site
+  that had raised the drain cap keeps the behaviour it had. Sites that never
+  touched it read the same 50 either way. `drain_time_cap_seconds` continues to
+  govern the drain, pending and backfill tasks.
+
 - **A grade entered straight into the gradebook now counts as a response.**
   Until now the plugin only ever looked inside the activity, so a teacher who
   graded in the grader report, the single view or an import was invisible to
