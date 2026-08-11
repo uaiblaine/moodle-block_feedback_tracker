@@ -80,6 +80,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /** Config key prefix for the per-sweep keyset cursors. */
     private const CURSOR_PREFIX = 'reconcile_cursor_';
 
+    /** Config key holding the key of the last sweep that ran, for rotation. */
+    private const LAST_SWEEP_KEY = 'reconcile_last_sweep';
+
     /**
      * Courses the departed-participant sweep visits per tick. A constant rather
      * than a setting: the tick's real bound is the time cap, and this only stops
@@ -163,17 +166,49 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'rules' => 'sweep_rule_drift',
             'allocation' => 'sweep_unstamped_allocations',
         ];
+        /* Resume after the last sweep that actually RAN, so the tail of the
+         * registry stops starving. The cap is tested between sweeps and the
+         * order was fixed, so on a site whose ticks run out of budget the same
+         * sweeps at the end were never reached — not late, absent.
+         *
+         * The marker is the sweep KEY, never an index. An index re-points on
+         * its own the moment the registry changes, which is the exact bug the
+         * departed-participant cursor was just fixed for; and reordering the
+         * registry is precisely the sort of change nobody thinks to check a
+         * stored integer against.
+         *
+         * Rotation is a no-op on any tick that reaches every sweep: the last
+         * one to run is the last in the order, so the next tick starts at the
+         * beginning again. It only does anything once the cap bites. */
+        $order = array_keys($sweeps);
+        $lastran = (string) (get_config('block_feedback_tracker', self::LAST_SWEEP_KEY) ?: '');
+        $resumeat = array_search($lastran, $order, true);
+        if ($resumeat !== false) {
+            $start = ((int) $resumeat + 1) % count($order);
+            if ($start > 0) {
+                $order = array_merge(array_slice($order, $start), array_slice($order, 0, $start));
+            }
+        }
+
         $started = time();
         $total = 0;
         $stats = [];
         $emptyms = 0;
         $skipped = [];
         $timecapped = false;
-        foreach ($sweeps as $key => $method) {
+        /* Seeded from the stored value, not left undefined and not blanked. A
+         * tick that is already past its deadline runs no sweep at all, and
+         * either of those would turn this into the starvation it exists to
+         * prevent — one by fatal warning under --fail-on-warning, the other by
+         * silently resetting every tick to registry order. */
+        $ranlast = $lastran;
+        foreach ($order as $position => $key) {
+            $method = $sweeps[$key];
             if (time() > $deadline) {
                 $timecapped = true;
-                $keys = array_keys($sweeps);
-                $skipped = array_slice($keys, (int) array_search($key, $keys, true));
+                // Sliced from the ROTATED order: what was skipped is what this
+                // tick would have run next, not what the registry lists next.
+                $skipped = array_slice($order, (int) $position);
                 mtrace('reconcile_ledger: time cap reached; remaining sweeps run next tick.');
                 break;
             }
@@ -198,10 +233,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 $emptyms += $sweepms;
             }
             $total += $repaired;
+            $ranlast = $key;
             if ($repaired > 0) {
                 mtrace(sprintf('reconcile_ledger: %s repaired %d row(s).', $key, $repaired));
             }
         }
+        set_config(self::LAST_SWEEP_KEY, $ranlast, 'block_feedback_tracker');
         mtrace(sprintf('reconcile_ledger: %d row(s) repaired this tick.', $total));
 
         /* Recorded on EVERY tick, including the ones that found nothing. The
@@ -220,6 +257,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 'emptyms' => $emptyms,
                 'skipped' => array_values($skipped),
                 'timecapped' => $timecapped,
+                // The order this tick actually used, so rotation is visible.
+                'order' => $order,
                 'courses' => count($processable),
                 'batch' => $batch,
                 'timecap' => $timecap,

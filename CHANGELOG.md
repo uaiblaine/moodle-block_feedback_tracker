@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repairs are not happening at all.
 
 ### Changed
+- **The reconciler's sweeps rotate, so the tail stops starving.** The time cap
+  is tested *between* sweeps and the order was fixed, so on a site whose ticks
+  run out of budget the sweeps at the end of the registry were never reached —
+  the rule and allocation ones, meaning due-date drift and marker turnaround
+  stopped being repaired entirely, with nothing anywhere saying so.
+
+  Each tick now resumes after the last sweep that actually ran. The marker is
+  the sweep's key, never an index: an index re-points on its own the moment the
+  registry changes. Rotation is a no-op on any tick that reaches every sweep,
+  so it only does anything once the cap bites. The order a tick used is recorded
+  in its audit row, and the `skipped` list is sliced from that order rather than
+  from the registry.
 - **Rows for departed participants are cleared in hours, not months.** The sweep
   that removes ledger rows for people who are no longer active participants
   visited exactly one course per tick, behind a cursor that was an *index* into

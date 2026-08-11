@@ -923,6 +923,83 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A tick resumes after the last sweep that ran, not at the registry head.
+     *
+     * The cap is tested between sweeps and the order was fixed, so on a site
+     * whose ticks run out of budget the sweeps at the end of the registry were
+     * never reached — the rule and allocation ones, meaning due-date drift and
+     * marker turnaround simply stopped being repaired, with nothing saying so.
+     *
+     * @return void
+     */
+    public function test_a_tick_resumes_after_the_last_sweep_that_ran(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $this->build_environment();
+
+        set_config('reconcile_last_sweep', 'gradebook', 'block_feedback_tracker');
+        $DB->delete_records('block_feedback_tracker_log');
+
+        (new reconcile_ledger())->execute();
+
+        $details = json_decode(
+            (string) $DB->get_field('block_feedback_tracker_log', 'details', ['reason' => 'reconcile']),
+            true
+        );
+        $this->assertSame(
+            'latest',
+            $details['order'][0],
+            'The registry lists latest straight after gradebook, so that is where this tick starts.'
+        );
+        $this->assertCount(9, $details['order'], 'Rotation reorders the registry; it never shrinks it.');
+        $this->assertSame(
+            'gradebook',
+            get_config('block_feedback_tracker', 'reconcile_last_sweep'),
+            'A tick that reached every sweep ends on the one it started before.'
+        );
+    }
+
+    /**
+     * A tick that runs no sweep at all leaves the rotation marker alone.
+     *
+     * The marker is seeded from its stored value rather than left undefined or
+     * blanked. Undefined would be a fatal warning under --fail-on-warning;
+     * blanked would reset every tick to registry order, which is the starvation
+     * rotation exists to prevent, reintroduced by the fix for it.
+     *
+     * A stored '-1' is deliberate: it survives the `?:` read that a stored '0'
+     * would not, so the deadline really is already past when the loop starts.
+     *
+     * @return void
+     */
+    public function test_a_tick_that_runs_nothing_keeps_the_rotation_marker(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $this->build_environment();
+
+        set_config('reconcile_last_sweep', 'orphan', 'block_feedback_tracker');
+        set_config('reconcile_time_cap_seconds', '-1', 'block_feedback_tracker');
+        $DB->delete_records('block_feedback_tracker_log');
+
+        (new reconcile_ledger())->execute();
+
+        $this->assertSame(
+            'orphan',
+            get_config('block_feedback_tracker', 'reconcile_last_sweep'),
+            'Nothing ran, so nothing about where to resume changed.'
+        );
+        $details = json_decode(
+            (string) $DB->get_field('block_feedback_tracker_log', 'details', ['reason' => 'reconcile']),
+            true
+        );
+        $this->assertTrue($details['timecapped'], 'Control: the cap is what stopped this tick.');
+        $this->assertCount(9, $details['skipped'], 'Every sweep was skipped, and every one is named.');
+        $this->assertSame('participant', $details['skipped'][0], 'Skipped is sliced from the rotated order.');
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator
