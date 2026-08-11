@@ -578,6 +578,78 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A team row for mod_assign's DEFAULT group is not an orphan.
+     *
+     * The default team group IS group 0, so a member row for it is stored with
+     * `teamgroupid = 0` — byte-identical to an individual row. Discriminating
+     * on that stored value made the orphan sweep probe for `s.userid = l.userid`
+     * while the source row carries `userid = 0`; it found nothing and deleted a
+     * perfectly good member row, which the missing-team sweep then recreated on
+     * the next tick. The live `assign.teamsubmission` flag is the only thing
+     * that can tell the two shapes apart.
+     *
+     * @return void
+     */
+    public function test_a_default_group_team_row_is_not_mistaken_for_an_orphan(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign] = $this->build_environment(['teamsubmission' => 1]);
+
+        /* No group membership at all, which is exactly what puts the student in
+         * mod_assign's default group — the one numbered 0. */
+        $submitted = time() - 4 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $submitted,
+            'timemodified' => $submitted,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => 0,
+            'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_team_attempt((int) $cm->id, 0, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
+        $this->assertNotEmpty($row, 'Sanity: the member row exists before the sweeps run.');
+        $this->assertSame(0, (int) $row->teamgroupid, 'Sanity: the default group is stored as 0.');
+        $rowid = (int) $row->id;
+
+        // Control: a row whose activity is genuinely gone must still be swept away.
+        $orphanid = $this->generator()->create_ledger_row(['courseid' => (int) $cm->course]);
+
+        $this->run_reconciler();
+        $this->run_reconciler();
+
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['id' => $orphanid]),
+            'Control: the orphan sweep must have run and removed the row with no course module.'
+        );
+        $after = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
+        $this->assertNotEmpty($after, 'A default-group team member row is not an orphan.');
+        /* Identity, not existence. The missing-team sweep runs before the orphan
+         * sweep, so a deleted row is rebuilt on the following tick and a test
+         * that only asks "is there a row" passes while the pair thrash — one
+         * backfill dispatch and one rollup recompute per round trip. A changed
+         * id is the fingerprint of that round trip. */
+        $this->assertSame(
+            $rowid,
+            (int) $after->id,
+            'The row must survive untouched; a new id means it was deleted and rebuilt.'
+        );
+    }
+
+    /**
+     * Fetch the plugin generator.
+     *
+     * @return \block_feedback_tracker_generator
+     */
+    private function generator(): \block_feedback_tracker_generator {
+        return $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+    }
+
+    /**
      * Run the task and drain the adhoc repairs it queued.
      *
      * @return void

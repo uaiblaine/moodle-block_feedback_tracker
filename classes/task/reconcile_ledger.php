@@ -358,8 +358,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
                JOIN {assign_submission} s
                  ON s.assignment = a.id
                 AND s.attemptnumber = l.attemptnumber
-                AND ((l.teamgroupid = 0 AND s.userid = l.userid)
-                     OR (l.teamgroupid > 0 AND s.userid = 0 AND s.groupid = l.teamgroupid))
+                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
+                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
               WHERE l.id > :cursor
                 AND l.iscurrent = 1
                 AND l.courseid $csql
@@ -382,10 +382,25 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * Course reset deletes {assign_submission} with a bare
      * `delete_records_select()`, and by default leaves the grades behind — so
-     * the probe keys on the submission, not the grade. Team-aware, or the
-     * fan-out and this sweep would delete and recreate each other's rows for
-     * ever. Acts directly: a repair task would re-gate on processability and
-     * skip exactly the courses whose rows most need removing.
+     * the probe keys on the submission, not the grade. Acts directly: a repair
+     * task would re-gate on processability and skip exactly the courses whose
+     * rows most need removing.
+     *
+     * Team-aware, or the fan-out and this sweep would delete and recreate each
+     * other's rows for ever — and the discriminator has to be the LIVE
+     * `assign.teamsubmission` flag, never the stored `teamgroupid`. mod_assign's
+     * default team group IS group 0, so a member row for it is stored with
+     * `teamgroupid = 0`, byte-identical to an individual row; the observer
+     * routes on the live flag for exactly this reason (see
+     * {@see \block_feedback_tracker\local\sla\observer}). Probing such a row as
+     * individual looks for `s.userid = l.userid` while the source row carries
+     * `userid = 0`, finds nothing, and deletes a perfectly good member row that
+     * {@see self::sweep_missing_team_rows()} then recreates on the next tick —
+     * one backfill dispatch plus one rollup recompute per round trip, for ever.
+     *
+     * An activity whose {assign} row is gone leaves `a.teamsubmission` NULL, so
+     * neither branch matches and the row is deleted. That is the intended
+     * reading: no activity means no submission to measure.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Row ceiling for this sweep.
@@ -398,11 +413,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
             "SELECT l.id, l.courseid, l.groupid
                FROM {block_feedback_tracker_sub} l
           LEFT JOIN {course_modules} cm ON cm.id = l.cmid
+          LEFT JOIN {assign} a ON a.id = l.iteminstance
           LEFT JOIN {assign_submission} s
                  ON s.assignment = l.iteminstance
                 AND s.attemptnumber = l.attemptnumber
-                AND ((l.teamgroupid = 0 AND s.userid = l.userid)
-                     OR (l.teamgroupid > 0 AND s.userid = 0 AND s.groupid = l.teamgroupid))
+                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
+                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
               WHERE l.id > :cursor
                 AND (cm.id IS NULL OR s.id IS NULL)
            ORDER BY l.id ASC",
