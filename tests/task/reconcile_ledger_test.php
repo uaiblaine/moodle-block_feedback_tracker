@@ -720,6 +720,48 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A due date changed with no event is repaired.
+     *
+     * Due dates, cut-offs, overrides and extensions all move with no per-row
+     * signal, so the stored rule silently stops describing the activity and
+     * every downstream "within SLA" answer is computed against a deadline that
+     * no longer exists. The rule sweep is the only thing that notices.
+     *
+     * @return void
+     */
+    public function test_a_due_date_changed_behind_the_plugin_is_repaired(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        $duedate = time() + 7 * 86400;
+        [$cm, $student, $assign] = $this->build_environment(['duedate' => $duedate]);
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        $this->run_reconciler();
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertNotEmpty($row, 'Sanity: the row exists before the due date moves.');
+        $this->assertSame(1, (int) $row->hasrule, 'Sanity: an activity with a due date carries a rule.');
+        $this->assertSame($duedate, (int) $row->timecloses, 'Sanity: the stored rule matches the activity.');
+
+        /* Core moves the due date with no per-row event, which is exactly the
+         * hole this sweep exists to cover — so the fixture writes it the same
+         * silent way rather than going through the module's own update path. */
+        $moved = $duedate + 3 * 86400;
+        $DB->set_field('assign', 'duedate', $moved, ['id' => $assign->id]);
+
+        $this->run_reconciler();
+
+        $after = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(
+            $moved,
+            (int) $after->timecloses,
+            'The rule sweep must re-resolve a due date that moved without an event.'
+        );
+    }
+
+    /**
      * A repair that could not be queued is reported, not assumed.
      *
      * `queue_adhoc_task()` returns false when an identical payload is already
