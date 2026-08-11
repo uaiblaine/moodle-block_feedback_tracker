@@ -303,7 +303,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {course_modules} cm ON cm.id = l.cmid
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -350,7 +350,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {course_modules} cm ON cm.id = l.cmid
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -477,8 +477,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $now = time();
         $rows = $DB->get_records_sql(
-            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid
+            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid,
+                    l.teamgroupid, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
+               JOIN {assign} a ON a.id = l.iteminstance
                JOIN {grade_items} gi
                  ON gi.iteminstance = l.iteminstance
                 AND gi.itemtype = :itemtype
@@ -594,7 +596,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $rows = $DB->get_records_sql(
             "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber
+                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                FROM {block_feedback_tracker_sub} l
                JOIN {assign} a ON a.id = l.iteminstance
           LEFT JOIN {assign_user_flags} uf
@@ -708,11 +710,22 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * batch, so the next tick starts a fresh pass rather than stalling at the
      * end of the table.
      *
+     * A team activity's ledger rows are per MEMBER while the repair is
+     * per GROUP: `upsert_for_cm_user_attempt()` re-routes any member of a team
+     * activity back through the whole-group fan-out. Emitting one descriptor
+     * per member therefore ran the entire fan-out once per member — quadratic
+     * in group size, and split across parallel adhoc tasks that then raced to
+     * write the same rows. Team rows collapse to one `userid = 0` container
+     * descriptor per (cmid, team group, attempt) instead, which is the shape
+     * {@see backfill_one_submission} already routes to
+     * `upsert_for_team_attempt()`.
+     *
      * @param array $rows Sweep result, keyed by the cursor column.
      * @param string $key Cursor key.
      * @param int $batch Batch size used.
      * @param string $cursorfield Field carrying the keyset value.
-     * @return int Rows dispatched.
+     * @return int Rows examined (not descriptors emitted — the cursor and the
+     *             end-of-pass test both key on rows read from the driving set).
      */
     private function dispatch_and_advance(array $rows, string $key, int $batch, string $cursorfield): int {
         if (empty($rows)) {
@@ -720,16 +733,46 @@ class reconcile_ledger extends \core\task\scheduled_task {
             return 0;
         }
         $buffer = [];
+        $seen = [];
         $lastid = 0;
         foreach ($rows as $r) {
             $lastid = (int) $r->{$cursorfield};
-            $buffer[] = [
-                'cmid' => (int) $r->cmid,
-                'userid' => (int) $r->userid,
-                'groupid' => (int) ($r->teamgroupid ?? 0) ?: (int) ($r->groupid ?? 0),
-                'attemptnumber' => (int) $r->attemptnumber,
-                'courseid' => (int) $r->courseid,
-            ];
+            $cmid = (int) $r->cmid;
+            $attempt = (int) $r->attemptnumber;
+            $courseid = (int) $r->courseid;
+            /* Route on the live teamsubmission flag where the sweep selected
+             * it, and on the source row's own userid where it did not — never
+             * on the stored teamgroupid, which cannot tell a default-group team
+             * row (teamgroupid = 0) from an individual one. */
+            $isteam = isset($r->isteam)
+                ? ((int) $r->isteam === 1)
+                : ((int) ($r->userid ?? 0) === 0);
+            if ($isteam) {
+                $teamgroupid = (int) ($r->teamgroupid ?? $r->groupid ?? 0);
+                $dedupkey = 't:' . $cmid . ':' . $teamgroupid . ':' . $attempt;
+                $descriptor = [
+                    'cmid' => $cmid,
+                    'userid' => 0,
+                    'groupid' => $teamgroupid,
+                    'attemptnumber' => $attempt,
+                    'courseid' => $courseid,
+                ];
+            } else {
+                $userid = (int) $r->userid;
+                $dedupkey = 'u:' . $cmid . ':' . $userid . ':' . $attempt;
+                $descriptor = [
+                    'cmid' => $cmid,
+                    'userid' => $userid,
+                    'groupid' => (int) ($r->groupid ?? 0),
+                    'attemptnumber' => $attempt,
+                    'courseid' => $courseid,
+                ];
+            }
+            if (isset($seen[$dedupkey])) {
+                continue;
+            }
+            $seen[$dedupkey] = true;
+            $buffer[] = $descriptor;
             if (count($buffer) >= self::REPAIR_CHUNK) {
                 $this->queue_repair($buffer);
                 $buffer = [];

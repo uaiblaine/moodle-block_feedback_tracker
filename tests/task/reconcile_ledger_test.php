@@ -641,6 +641,85 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * Every member of a team gets a row, and the repair is dispatched once for
+     * the GROUP rather than once per member.
+     *
+     * Ledger rows are per member while the repair is per group:
+     * `upsert_for_cm_user_attempt()` re-routes any member of a team activity
+     * back through the whole-group fan-out, so one descriptor per member ran
+     * the entire fan-out once per member — quadratic in group size, and split
+     * across parallel adhoc tasks that then raced to write the same rows.
+     *
+     * @return void
+     */
+    public function test_a_team_repair_is_dispatched_once_for_the_group(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment(['teamsubmission' => 1]);
+
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $members = [];
+        for ($i = 0; $i < 3; $i++) {
+            $member = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->getDataGenerator()->create_group_member([
+                'groupid' => $group->id,
+                'userid' => $member->id,
+            ]);
+            $members[] = $member;
+        }
+        group_resolver::reset_memo();
+
+        $submitted = time() - 4 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id,
+            'userid' => 0,
+            'attemptnumber' => 0,
+            'timecreated' => $submitted,
+            'timemodified' => $submitted,
+            'status' => submission_status::SUBMITTED,
+            'groupid' => $group->id,
+            'latest' => 1,
+        ]);
+
+        // The missing-team sweep has to build all three member rows from the one source row.
+        $this->run_reconciler();
+        foreach ($members as $member) {
+            $this->assertTrue(
+                $DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $member->id]),
+                'Every member of the team carries the group\'s work.'
+            );
+        }
+
+        /* Drive a ledger-rooted dispatching sweep: the latest flag drifting is
+         * the direct fingerprint of add_attempt(), and it selects one row PER
+         * MEMBER — which is the shape that used to fan out three times. */
+        $DB->set_field('block_feedback_tracker_sub', 'islatest', 0, ['cmid' => $cm->id]);
+        $DB->delete_records('task_adhoc');
+        (new reconcile_ledger())->execute();
+
+        $descriptors = [];
+        $tasks = \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission');
+        foreach ($tasks as $task) {
+            $data = (array) $task->get_custom_data();
+            foreach ((array) ($data['rows'] ?? []) as $descriptor) {
+                $descriptor = (array) $descriptor;
+                if ((int) $descriptor['cmid'] === (int) $cm->id) {
+                    $descriptors[] = $descriptor;
+                }
+            }
+        }
+
+        $this->assertCount(
+            1,
+            $descriptors,
+            'A three-member team must produce ONE container descriptor, not one per member.'
+        );
+        $this->assertSame(0, (int) $descriptors[0]['userid'], 'The container descriptor carries userid 0.');
+        $this->assertSame((int) $group->id, (int) $descriptors[0]['groupid'], 'And the team group id.');
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator
