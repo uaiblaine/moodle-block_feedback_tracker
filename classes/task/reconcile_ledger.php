@@ -81,6 +81,16 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private const CURSOR_PREFIX = 'reconcile_cursor_';
 
     /**
+     * Courses the departed-participant sweep visits per tick. A constant rather
+     * than a setting: the tick's real bound is the time cap, and this only stops
+     * one sweep spending the whole of it before the deadline is next tested.
+     */
+    private const COURSES_PER_TICK = 25;
+
+    /** @var int Epoch second after which this tick must stop starting work. */
+    private int $deadline = 0;
+
+    /**
      * @var array<string, bool> Whether each sweep spent its driving set this
      *                          tick, keyed by sweep key. Reported in the audit
      *                          row: a sweep that never shows true is one whose
@@ -133,6 +143,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
         $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
             ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
+        // Sweeps that iterate internally read this rather than taking it as a
+        // parameter, so the nine keep one signature.
+        $this->deadline = $deadline;
 
         // Flush the memos the ledger consults; a long-lived cron process would
         // otherwise carry one tick's decisions into the next.
@@ -167,10 +180,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $sweepstarted = microtime(true);
             $repaired = $this->$method($processable, $batch, $key);
             $sweepms = (int) round((microtime(true) - $sweepstarted) * 1000);
-            /* `exhausted` is null for the departed-participant sweep alone: its
-             * cursor is an index into the processable-course list rather than a
-             * keyset over rows, so it has no notion of spending a driving set.
-             * Reported as null rather than false so the two are distinguishable. */
+            /* `exhausted` is null only for a sweep that never reached
+             * advance_cursor() — reported as null rather than false so "did not
+             * answer" stays distinguishable from "did not finish". Every sweep
+             * answers it today; the departed-participant one does so over the
+             * tracked-course list rather than over rows. */
             $stats[$key] = [
                 'rows' => $repaired,
                 'ms' => $sweepms,
@@ -597,18 +611,60 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return int Rows deleted.
      */
     private function sweep_departed_participants(array $processable, int $batch, string $key): int {
-        global $DB;
-
-        /* Per course, because get_enrolled_sql() is course-scoped. The cursor
-         * here is a course index rather than a row id: one course per tick
-         * keeps the query bounded without a cross-course keyset. */
+        /* Per course, because get_enrolled_sql() is course-scoped. The cursor is
+         * a COURSE ID, not an index into the list: the list is rebuilt from
+         * {block_instances} on every call, so adding the block to a course with
+         * a lower id used to shift every later position by one and silently skip
+         * a course for a whole cycle. A courseid survives the list changing
+         * under it. */
         sort($processable);
-        $idx = $this->cursor($key);
-        if ($idx >= count($processable)) {
-            $idx = 0;
+        $after = $this->cursor($key);
+        $remaining = array_values(array_filter(
+            $processable,
+            static fn($cid) => (int) $cid > $after
+        ));
+
+        $drained = 0;
+        $visited = 0;
+        $lastvisited = $after;
+        foreach ($remaining as $cid) {
+            /* Deliberately NOT breaking when a course fills its batch. Doing so
+             * would let one course with a large backlog hold the cursor and
+             * starve every course after it — head-of-line blocking, which is a
+             * worse failure than the slow round-robin this replaces, because a
+             * blocked course's departed students keep counting in its pending
+             * totals with nothing saying why. A course that fills its batch
+             * simply sheds the rest on the next pass. */
+            if ($visited >= self::COURSES_PER_TICK || time() > $this->deadline) {
+                break;
+            }
+            $visited++;
+            $lastvisited = (int) $cid;
+            $drained += $this->drain_departed_for_course((int) $cid, $batch);
         }
-        $courseid = (int) $processable[$idx];
-        $this->set_cursor($key, $idx + 1 >= count($processable) ? 0 : $idx + 1);
+
+        /* Exhausted only when the course list itself ran out — never when a
+         * budget stopped us. Getting that wrong wraps the cursor to 0 mid-pass
+         * and pins the sweep to the low-id courses for ever. */
+        $this->advance_cursor($key, $lastvisited, $visited === count($remaining));
+        return $drained;
+    }
+
+    /**
+     * Delete one course's rows for users who are no longer active participants.
+     *
+     * Note the front-page cost: on SITEID `get_enrolled_sql()` degenerates to a
+     * scan of {user}, because `get_enrolled_join()` skips every enrolment join
+     * there — everybody participates on the front page. That is correct, and it
+     * is why this sweep leaves front-page rows alone unless the account itself
+     * is gone, but it is not cheap on a large site.
+     *
+     * @param int $courseid
+     * @param int $batch Row ceiling for this course.
+     * @return int Rows deleted.
+     */
+    private function drain_departed_for_course(int $courseid, int $batch): int {
+        global $DB;
 
         try {
             $context = \context_course::instance($courseid);

@@ -694,5 +694,16 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026081101, 'feedback_tracker');
     }
 
+    /* The departed-participant sweep's cursor changed meaning: it used to be an
+     * INDEX into the sorted list of processable courses, and is now a course id.
+     * Carrying the old value over would read a small integer as "resume after
+     * course N", silently skipping every course whose id is at or below it for
+     * the whole of the first pass. Unset it so the first pass starts clean. */
+    if ($oldversion < 2026081102) {
+        unset_config('reconcile_cursor_participant', 'block_feedback_tracker');
+
+        upgrade_block_savepoint(true, 2026081102, 'feedback_tracker');
+    }
+
     return true;
 }

@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\participation;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
@@ -82,6 +83,22 @@ class backfill_one_submission extends \core\task\adhoc_task {
                     (int) ($row['groupid'] ?? 0),
                     (int) ($row['attemptnumber'] ?? 0)
                 );
+                continue;
+            }
+            /* Re-check participation at EXECUTE time, not just processability.
+             * This is the row-creating half of the reconciler's oldest
+             * disagreement: the delete-side sweep removes the rows of people
+             * who left, and the dispatching sweeps queue repairs for rows they
+             * selected earlier. Between those two moments core may run this
+             * task at any point up to a day later — a failed adhoc backs off
+             * 60s doubling to 86400s — so "the dispatch and the delete happen
+             * in the same tick" is not a property anything guarantees.
+             *
+             * Gating the sweeps' SELECTs cannot close this: they decide before
+             * the wait, and this decides after it. The team branch above is
+             * already covered, because upsert_for_team_attempt() resolves its
+             * members through get_enrolled_sql(). */
+            if (!participation::is_active_participant($courseid, (int) ($row['userid'] ?? 0))) {
                 continue;
             }
             submission_ledger::upsert_for_cm_user_attempt(

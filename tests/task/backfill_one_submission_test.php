@@ -147,6 +147,67 @@ final class backfill_one_submission_test extends \advanced_testcase {
         $this->assertSame((int) $cma->course, (int) $row->courseid);
     }
 
+    /**
+     * A repair queued before the student left is dropped when it finally runs.
+     *
+     * The reconciler's delete-side sweep removes the rows of people who are no
+     * longer active participants, while its dispatching sweeps queue repairs
+     * for rows they selected earlier. Nothing makes those two happen in the
+     * same tick: core backs a failed adhoc task off from 60 seconds to 86400,
+     * so a repair can legitimately land a day after it was dispatched, long
+     * after the delete. Re-checking processability is not enough — the course
+     * is still perfectly processable; it is the person who left.
+     *
+     * The still-enrolled student is the control. Without them this test would
+     * pass if the task had simply not run.
+     *
+     * @return void
+     */
+    public function test_a_repair_for_someone_who_left_is_dropped_at_execute_time(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        course_access::reset_memo();
+
+        [$cm, $students] = $this->build_course_with_submissions(2);
+        [$stays, $leaves] = array_values($students);
+
+        /* Suspending the user enrolment is what get_enrolled_sql($ctx, '', 0,
+         * true) — the predicate the delete-side sweep uses — treats as gone.
+         * Scoped to user_enrolments, not enrol, so the control student's own
+         * enrolment is untouched: enrol.status is per instance and both share
+         * one manual instance. */
+        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['userid' => $leaves->id]);
+
+        $task = new backfill_one_submission();
+        $task->set_custom_data([
+            'rows' => [
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $stays->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $leaves->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+            ],
+        ]);
+        $task->execute();
+
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $stays->id]),
+            'Control: the still-enrolled student must be repaired, or nothing ran.'
+        );
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $leaves->id]),
+            'A repair must not rebuild the row of someone the delete sweep removed.'
+        );
+    }
+
     // Helpers.
 
     /**
