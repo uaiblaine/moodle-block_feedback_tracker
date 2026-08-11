@@ -53,11 +53,18 @@ use block_feedback_tracker\local\sla\submission_status;
  *    signal.
  *
  * Each sweep is keyset-paged behind its own cursor, bounded per tick and
- * gated on {@see course_access::is_processable()}. Repairs are dispatched as
- * adhoc {@see backfill_one_submission} tasks so the academic-time engine never
- * runs inside this task's own time budget — except the two cleanup sweeps,
- * which must act directly because that task re-gates every row on
- * processability and would silently skip a hidden or block-less course.
+ * gated on {@see course_access::is_processable()}. Six sweeps dispatch their
+ * repairs as adhoc {@see backfill_one_submission} tasks, keeping the
+ * academic-time engine out of this task's own time budget.
+ *
+ * THREE act directly, for two different reasons. The two cleanup sweeps
+ * ({@see self::sweep_orphans()}, {@see self::sweep_departed_participants()})
+ * must, because the repair task re-gates every row on processability and would
+ * silently skip exactly the hidden or block-less courses whose rows most need
+ * removing. {@see self::sweep_unstamped_allocations()} does so for no such
+ * reason: it calls `stamp_allocation_for_user()`, which runs the academic-time
+ * engine per row, inside this budget, on the sweep that is last in the
+ * registry and therefore the first to be cut off by the shared deadline.
  */
 class reconcile_ledger extends \core\task\scheduled_task {
     /** Default rows examined per sweep per tick. */
