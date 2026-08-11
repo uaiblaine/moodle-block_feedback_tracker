@@ -163,16 +163,29 @@ final class gradebook_response_test extends \advanced_testcase {
      * The activity side has always required the response to postdate the work;
      * this is the same rule.
      *
+     * The window is exactly seven days, and the business hours are seeded,
+     * because the banding assertion below has to mean the same thing on every
+     * weekday. A window of exactly 7 * 86400 seconds covers each day of the
+     * week once — the partial first day and the partial last day are the same
+     * weekday and sum to a whole one — so the excluded weekend costs exactly
+     * two days whenever the test runs, and the interval is a fixed five
+     * business days. A three-day window is not weekday-independent: run on a
+     * Monday through Wednesday it spans the weekend and collapses towards one
+     * business day, which lands under the 24-hour `excellent` threshold and
+     * fails this assertion for reasons that have nothing to do with the rule
+     * under test. That is what it used to do, on three days out of seven.
+     *
      * @return void
      */
     public function test_a_gradebook_instant_before_the_hand_in_is_ignored(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
+        $this->seed_business_hours();
         [$cm, $student, $assign] = $this->build_environment();
 
-        $stale = time() - 9 * 86400;
-        $submitted = time() - 3 * 86400;
+        $submitted = time() - 7 * 86400;
+        $stale = $submitted - 5 * 86400;
         $this->submit($assign, $student, $submitted);
         $this->gradebook_grade($assign, $student, 55.0, $stale);
 
@@ -181,6 +194,12 @@ final class gradebook_response_test extends \advanced_testcase {
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNull($row->timeclosed, 'A response cannot predate the work it answers.');
         $this->assertNull($row->timegraded, 'And it must not clear the pending clock either.');
+        /* Five business days of ten hours (08:00-18:00), measured to now because
+         * the cycle is still open. Asserting the figure alongside the band is
+         * what makes the weekday-independence claim above self-checking: any
+         * drift in the window shows up here, with a number, before it can
+         * silently re-band and turn this into a calendar test. */
+        $this->assertEqualsWithDelta(50.0, (float) $row->effectivehours, 0.5, 'Five ten-hour days.');
         $this->assertNotSame(
             'excellent',
             (string) $row->slabucket,
@@ -559,5 +578,31 @@ final class gradebook_response_test extends \advanced_testcase {
         set_config('weekendmask', '96', 'block_feedback_tracker');
         set_config('enablebusinesshours', '1', 'block_feedback_tracker');
         set_config('bucket_thresholds_eff', '24,48,120', 'block_feedback_tracker');
+    }
+
+    /**
+     * Seed Monday-to-Friday business hours, 08:00 to 18:00.
+     *
+     * `seed_calendar()` switches business hours ON without describing any, which
+     * leaves the width of a working day undefined — fine for the tests that only
+     * assert on the closure instants, wrong for any test that asserts on hours
+     * or on a band derived from them.
+     *
+     * @return void
+     */
+    private function seed_business_hours(): void {
+        global $DB;
+        $now = time();
+        for ($dow = 0; $dow <= 4; $dow++) {
+            $DB->insert_record('block_feedback_tracker_chours', (object) [
+                'dayofweek' => $dow,
+                'starttime' => 480,
+                'endtime' => 1080,
+                'enabled' => 1,
+                'timecreated' => $now,
+                'timemodified' => $now,
+            ]);
+        }
+        academic_time::reset_memos();
     }
 }
