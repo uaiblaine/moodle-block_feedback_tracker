@@ -596,6 +596,27 @@ class submission_ledger {
         }
 
         if ($existing !== null) {
+            if (!$alloc['known']) {
+                /* This snapshot saw no allocation, so it has nothing to say
+                 * about the four measures — and saying nothing is not the same
+                 * as saying null. stamp_allocation_for_user() writes
+                 * timeallocated and queuehours together, and timeallocated is
+                 * not part of this record; so a re-derivation whose snapshot
+                 * predates that stamp would leave the instant standing while
+                 * erasing the measure taken from it. The row then reads as
+                 * allocated with no queue time, and the sweep that would repair
+                 * it selects on `timeallocated IS NULL` and cannot see it.
+                 *
+                 * Omitting the keys leaves the stored values alone. On the
+                 * insert path below they are written as-is, which is right: a
+                 * brand-new row has nothing to preserve. */
+                unset(
+                    $record->queuehours,
+                    $record->allochours,
+                    $record->allocdays,
+                    $record->allocbucket
+                );
+            }
             $record->id = $existing->id;
             $subid = (int) $existing->id;
             $DB->update_record('block_feedback_tracker_sub', $record);
@@ -742,12 +763,19 @@ class submission_ledger {
         int $timesubmitted,
         ?int $timegraded
     ): array {
+        /* `known` says whether this snapshot could see an allocation at all,
+         * which is not the same as the measures coming out null. The late
+         * branch below returns three nulls and is a KNOWN answer: the marker
+         * interval is genuinely unmeasurable. Only the two early returns here
+         * mean "I have nothing to say", and the caller must not write silence
+         * over what another writer may have recorded since. */
         $none = [
             'queuehours' => null,
             'allochours' => null,
             'allocdays' => null,
             'allocbucket' => null,
             'late' => false,
+            'known' => false,
         ];
         if ($existing === null) {
             return $none;
@@ -760,6 +788,7 @@ class submission_ledger {
         }
 
         $out = $none;
+        $out['known'] = true;
         if ($allocated > $timesubmitted) {
             $out['queuehours'] = academic_time::elapsed_with_audit(
                 $courseid,
@@ -1094,6 +1123,14 @@ class submission_ledger {
                 'timemodified' => time(),
             ];
             if ($marker > 0) {
+                /* allocsource describes how the instant THIS row now carries
+                 * was obtained, so it may only move when an instant moves.
+                 * Writing it on every row of the pair meant a sweep running
+                 * with ALLOC_SOURCE_RECONCILED relabelled rows whose stamp came
+                 * from a real marker_updated event and had not changed —
+                 * quietly folding exact measurements into the discovery-time
+                 * population that allocsource exists to keep separate. */
+                $stamped = false;
                 if ($row->timeallocated === null) {
                     $update->timeallocated = $when;
                     /* The coordination queue closes now, so measure it now —
@@ -1107,6 +1144,7 @@ class submission_ledger {
                             $when
                         )['hours']
                         : 0.0;
+                    $stamped = true;
                 }
                 if ((int) $row->allocmarkerid !== $marker) {
                     // A new marker starts their own clock; the queue metric stays put.
@@ -1114,8 +1152,15 @@ class submission_ledger {
                     $update->allochours = null;
                     $update->allocdays = null;
                     $update->allocbucket = null;
+                    $stamped = true;
                 }
-                $update->allocsource = $source;
+                /* Either branch recorded an instant, so the label describes it.
+                 * A reassignment counts: timeallocmarker is the instant the
+                 * marker turnaround is measured from, and it was obtained the
+                 * same way this call obtained everything else. */
+                if ($stamped) {
+                    $update->allocsource = $source;
+                }
             }
             $DB->update_record('block_feedback_tracker_sub', $update);
             $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [

@@ -772,6 +772,121 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
+     * A stamp that did not move keeps the provenance it was recorded with.
+     *
+     * allocsource separates an instant captured from a real marker_updated
+     * event (exact) from one a reconciliation sweep discovered later (accurate
+     * only to the sweep period) — the whole point being that a median is never
+     * built from a mix without saying so. The label was written on every row of
+     * the (cmid, userid) pair on every call, so a sweep running with
+     * ALLOC_SOURCE_RECONCILED relabelled rows whose stamp came from an event
+     * and had not changed, quietly folding exact measurements into the
+     * discovery-time population.
+     *
+     * @return void
+     */
+    public function test_an_unchanged_allocation_keeps_its_provenance(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment(['markingallocation' => 1]);
+
+        $talloc = $this->recent_weekday_at(9);
+        $this->insert_submission((int) $assign->id, (int) $student->id, $talloc - 2 * 86400);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $marker = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
+            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
+        submission_ledger::stamp_allocation_for_user(
+            (int) $cm->id,
+            (int) $student->id,
+            $talloc,
+            submission_ledger::ALLOC_SOURCE_OBSERVED
+        );
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
+
+        /* Rewind timemodified so the control is not a same-second comparison:
+         * it has to prove the second call really wrote this row, or "the label
+         * did not change" would also be satisfied by nothing happening. */
+        $DB->set_field('block_feedback_tracker_sub', 'timemodified', 100, ['id' => $row->id]);
+
+        // The sweep re-runs over the same, unchanged allocation.
+        submission_ledger::stamp_allocation_for_user(
+            (int) $cm->id,
+            (int) $student->id,
+            $talloc + 3600,
+            submission_ledger::ALLOC_SOURCE_RECONCILED
+        );
+
+        $after = $DB->get_record('block_feedback_tracker_sub', ['id' => $row->id]);
+        $this->assertGreaterThan(100, (int) $after->timemodified, 'Control: the second call wrote this row.');
+        $this->assertSame(
+            (int) $row->timeallocated,
+            (int) $after->timeallocated,
+            'Sanity: the instant itself is sticky.'
+        );
+        $this->assertSame(
+            submission_ledger::ALLOC_SOURCE_OBSERVED,
+            $after->allocsource,
+            'A label may only move when the instant it describes moves.'
+        );
+    }
+
+    /**
+     * Reassigning the marker DOES relabel, because it records a new instant.
+     *
+     * The pair with the test above: confining allocsource to the first-stamp
+     * branch would be the obvious way to fix that one, and it would leave a
+     * reassignment wearing the previous provenance while carrying a
+     * timeallocmarker this call just wrote. The marker turnaround is measured
+     * from that instant, so the label has to describe it.
+     *
+     * @return void
+     */
+    public function test_reassigning_the_marker_relabels_the_provenance(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment(['markingallocation' => 1]);
+
+        $talloc = $this->recent_weekday_at(9);
+        $this->insert_submission((int) $assign->id, (int) $student->id, $talloc - 2 * 86400);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $first = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $generator->allocate_marker((int) $assign->id, (int) $student->id, (int) $first->id);
+        submission_ledger::stamp_allocation_for_user(
+            (int) $cm->id,
+            (int) $student->id,
+            $talloc,
+            submission_ledger::ALLOC_SOURCE_OBSERVED
+        );
+
+        // A different marker inherits the work, discovered by a sweep.
+        $second = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $generator->allocate_marker((int) $assign->id, (int) $student->id, (int) $second->id);
+        submission_ledger::stamp_allocation_for_user(
+            (int) $cm->id,
+            (int) $student->id,
+            $talloc + 7200,
+            submission_ledger::ALLOC_SOURCE_RECONCILED
+        );
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame((int) $second->id, (int) $row->allocmarkerid, 'Control: the reassignment landed.');
+        $this->assertSame($talloc + 7200, (int) $row->timeallocmarker, 'The new marker starts their own clock.');
+        $this->assertSame(
+            submission_ledger::ALLOC_SOURCE_RECONCILED,
+            $row->allocsource,
+            'The label describes the instant this call recorded.'
+        );
+    }
+
+    /**
      * Build a processable course with an enrolled student and an assign.
      *
      * @param array $assignopts Extra {assign} settings, e.g. markingworkflow.
