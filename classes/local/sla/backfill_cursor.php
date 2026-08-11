@@ -72,6 +72,63 @@ class backfill_cursor {
     }
 
     /**
+     * Make sure every listed course has a cursor row, in two queries.
+     *
+     * The dispatcher calls this once a tick for every tracked course, so doing
+     * it with {@see self::get_or_create()} in a loop cost one point SELECT per
+     * course per tick — and it happens BEFORE the dispatcher's own "everything
+     * is complete, nothing to do" early return, so a site that finished its
+     * backfill months ago went on paying that every five minutes, for ever.
+     *
+     * Reads the whole cursor table rather than filtering on the ids passed in:
+     * the table holds at most one row per course that has ever been tracked, so
+     * it is small, and an IN list over every tracked course would be thousands
+     * of bind parameters to answer a question one unfiltered read answers.
+     *
+     * @param array $courseids Course ids that should have a cursor.
+     * @return void
+     */
+    public static function ensure_for_courses(array $courseids): void {
+        global $DB;
+
+        if (empty($courseids)) {
+            return;
+        }
+        $known = $DB->get_fieldset_select('block_feedback_tracker_bfcursor', 'courseid', '');
+        /* array_unique as well as array_diff: a repeated courseid in the input
+         * would otherwise be inserted twice against a UNIQUE index, and
+         * insert_records batches, so on PostgreSQL the failing statement takes
+         * the whole chunk down and the other courses in it get no cursor
+         * either. The loop this replaces could not do that — it re-read per
+         * course and found the row it had just made. Today's only caller
+         * dedups upstream, but the method is public and says nothing about
+         * requiring it. */
+        $missing = array_values(array_unique(array_diff(
+            array_map('intval', $courseids),
+            array_map('intval', $known ?: [])
+        )));
+        if (empty($missing)) {
+            return;
+        }
+
+        /* insert_records() requires every row to carry the same keys in the
+         * same order, and array_diff preserves the original keys — hence the
+         * array_values above, and a record built the same way each time here. */
+        $now = time();
+        $records = [];
+        foreach ($missing as $courseid) {
+            $records[] = (object) [
+                'courseid'    => (int) $courseid,
+                'lastsubid'   => 0,
+                'active'      => 1,
+                'lastrunat'   => null,
+                'timecreated' => $now,
+            ];
+        }
+        $DB->insert_records('block_feedback_tracker_bfcursor', $records);
+    }
+
+    /**
      * Advance the cursor for one course to the given subid and record
      * the run timestamp. If $complete is true, also flip active=0
      * (no more rows past the cursor — admin can reset to retry).
