@@ -851,6 +851,16 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $seconddetails = json_decode((string) $second->details, true);
         $this->assertArrayHasKey('emptyms', $seconddetails);
         $this->assertGreaterThan(0, (int) $seconddetails['courses'], 'The scope of the pass is recorded.');
+
+        /* A sweep that returned fewer rows than the batch spent its driving
+         * set, so its pass completed. The one sweep that cannot answer this is
+         * the departed-participant one, whose cursor indexes courses rather
+         * than rows — reported null, not false, so the two stay distinguishable. */
+        $this->assertTrue($seconddetails['sweeps']['missing']['exhausted'], 'The pass completed.');
+        $this->assertNull(
+            $seconddetails['sweeps']['participant']['exhausted'],
+            'The course-indexed sweep has no driving set to spend.'
+        );
     }
 
     /**

@@ -81,6 +81,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private const CURSOR_PREFIX = 'reconcile_cursor_';
 
     /**
+     * @var array<string, bool> Whether each sweep spent its driving set this
+     *                          tick, keyed by sweep key. Reported in the audit
+     *                          row: a sweep that never shows true is one whose
+     *                          pass never completes, which no other signal says.
+     */
+    private array $exhausted = [];
+
+    /**
      * Task display name.
      *
      * @return string
@@ -159,7 +167,16 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $sweepstarted = microtime(true);
             $repaired = $this->$method($processable, $batch, $key);
             $sweepms = (int) round((microtime(true) - $sweepstarted) * 1000);
-            $stats[$key] = ['rows' => $repaired, 'ms' => $sweepms, 'cursor' => $this->cursor($key)];
+            /* `exhausted` is null for the departed-participant sweep alone: its
+             * cursor is an index into the processable-course list rather than a
+             * keyset over rows, so it has no notion of spending a driving set.
+             * Reported as null rather than false so the two are distinguishable. */
+            $stats[$key] = [
+                'rows' => $repaired,
+                'ms' => $sweepms,
+                'cursor' => $this->cursor($key),
+                'exhausted' => $this->exhausted[$key] ?? null,
+            ];
             if ($repaired === 0) {
                 /* The cost of proving nothing was wrong. On a converged ledger
                  * this is the whole tick, and it is the number that has to fall
@@ -476,7 +493,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $batch
         );
         if (empty($rows)) {
-            $this->set_cursor($key, 0);
+            $this->advance_cursor($key, 0, true);
             return 0;
         }
         $ids = [];
@@ -494,7 +511,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         foreach ($tuples as [$courseid, $groupid]) {
             dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
         }
-        $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
+        $this->advance_cursor($key, $lastid, count($rows) < $batch);
         return count($rows);
     }
 
@@ -726,7 +743,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
         $rows = $DB->get_records_sql($sql, $params, 0, $batch);
         if (empty($rows)) {
-            $this->set_cursor($key, 0);
+            $this->advance_cursor($key, 0, true);
             return 0;
         }
 
@@ -748,7 +765,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         foreach ($tuples as [$courseid, $groupid]) {
             dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
         }
-        $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
+        $this->advance_cursor($key, $lastid, count($rows) < $batch);
         return count($rows);
     }
 
@@ -778,7 +795,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      */
     private function dispatch_and_advance(array $rows, string $key, int $batch, string $cursorfield): int {
         if (empty($rows)) {
-            $this->set_cursor($key, 0);
+            $this->advance_cursor($key, 0, true);
             return 0;
         }
         $buffer = [];
@@ -843,7 +860,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 $batches
             ));
         }
-        $this->set_cursor($key, count($rows) < $batch ? 0 : $lastid);
+        $this->advance_cursor($key, $lastid, count($rows) < $batch);
         return count($rows);
     }
 
@@ -876,6 +893,33 @@ class reconcile_ledger extends \core\task\scheduled_task {
             ));
             return false;
         }
+    }
+
+    /**
+     * Move a sweep's cursor on, or start its pass over.
+     *
+     * `$exhausted` is a claim the caller has to make deliberately: it means the
+     * driving set had no more rows to give, so the pass is complete and the
+     * next tick starts a fresh one. Every call site currently derives it from
+     * `count($rows) < $batch`, which is only the same statement while nothing
+     * can truncate a batch early — there is no in-sweep deadline today, so it
+     * holds.
+     *
+     * The moment one exists, it stops holding, and the failure is silent: a
+     * sweep that stopped halfway would report a short batch, be read as
+     * complete, and wrap its cursor to 0 — losing the rest of the pass and
+     * rescanning the beginning for ever. Passing the claim in rather than
+     * re-deriving it here is what makes that a decision someone has to get
+     * right rather than an accident of arithmetic.
+     *
+     * @param string $key Sweep key.
+     * @param int $lastid Highest keyset value examined this pass.
+     * @param bool $exhausted True when the driving set is spent.
+     * @return void
+     */
+    private function advance_cursor(string $key, int $lastid, bool $exhausted): void {
+        $this->exhausted[$key] = $exhausted;
+        $this->set_cursor($key, $exhausted ? 0 : $lastid);
     }
 
     /**
