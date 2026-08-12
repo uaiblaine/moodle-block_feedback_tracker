@@ -90,13 +90,12 @@ class pending_recomputer {
                 continue;
             }
 
-            $audit = academic_time::elapsed_with_audit(
+            $effective = academic_time::elapsed_effective_hours(
                 (int) $r->courseid,
                 (int) $r->groupid,
                 $timesubmitted,
                 $now
             );
-            $effective = $audit['hours'];
             $waiting = round(max(0.0, ($now - $timesubmitted) / 3600.0), 2);
 
             $DB->update_record('block_feedback_tracker_sub', (object) [
@@ -109,9 +108,6 @@ class pending_recomputer {
                 'slabucket'       => bucket::for_effective($effective),
                 'timemodified'    => $now,
             ]);
-
-            // V2.0.0+: pause ledger removed; get_pause_timeline recomputes
-            // on demand. $audit['pauses'] is intentionally unused here.
 
             $touched[(int) $r->courseid . ':' . (int) $r->groupid] = [
                 (int) $r->courseid, (int) $r->groupid,
