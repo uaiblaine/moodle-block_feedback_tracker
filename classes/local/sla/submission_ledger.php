@@ -534,10 +534,9 @@ class submission_ledger {
             ? round(max(0.0, ($upperbound - $timesubmitted) / 3600.0), 2)
             : 0.0;
 
-        $audit = ($timesubmitted > 0 && $upperbound > $timesubmitted)
-            ? academic_time::elapsed_with_audit((int) $cm->course, $groupid, $timesubmitted, $upperbound)
-            : ['hours' => 0.0, 'pauses' => []];
-        $effectivehours = $audit['hours'];
+        $effectivehours = ($timesubmitted > 0 && $upperbound > $timesubmitted)
+            ? academic_time::elapsed_effective_hours((int) $cm->course, $groupid, $timesubmitted, $upperbound)
+            : 0.0;
 
         /* The response interval, split by who owns each part. A submission
          * that sat ten days waiting to be allocated and was then marked in two
@@ -790,12 +789,12 @@ class submission_ledger {
         $out = $none;
         $out['known'] = true;
         if ($allocated > $timesubmitted) {
-            $out['queuehours'] = academic_time::elapsed_with_audit(
+            $out['queuehours'] = academic_time::elapsed_effective_hours(
                 $courseid,
                 $groupid,
                 $timesubmitted,
                 $allocated
-            )['hours'];
+            );
         } else {
             // Allocated before or at hand-in: there was no queue at all.
             $out['queuehours'] = 0.0;
@@ -806,7 +805,7 @@ class submission_ledger {
             $out['late'] = $timegraded !== null;
             return $out;
         }
-        $hours = academic_time::elapsed_with_audit($courseid, $groupid, $current, $upper)['hours'];
+        $hours = academic_time::elapsed_effective_hours($courseid, $groupid, $current, $upper);
         $out['allochours'] = $hours;
         $out['allocdays'] = day_counter::business_days($current, $upper);
         $out['allocbucket'] = bucket::for_effective($hours);
@@ -1137,12 +1136,12 @@ class submission_ledger {
                      * the value is final and nothing later can recover it if
                      * the row is rebuilt from a different starting point. */
                     $update->queuehours = $when > (int) $row->timesubmitted
-                        ? academic_time::elapsed_with_audit(
+                        ? academic_time::elapsed_effective_hours(
                             (int) $row->courseid,
                             (int) $row->groupid,
                             (int) $row->timesubmitted,
                             $when
-                        )['hours']
+                        )
                         : 0.0;
                     $stamped = true;
                 }
