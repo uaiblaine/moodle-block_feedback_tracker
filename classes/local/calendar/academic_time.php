@@ -95,8 +95,38 @@ class academic_time {
         int $tsfrom,
         int $tsto
     ): array {
+        $result = self::active_seconds_with_audit($courseid, $groupid, $tsfrom, $tsto);
+        return [
+            'hours' => round($result['seconds'] / 3600.0, 2),
+            'pauses' => $result['pauses'],
+        ];
+    }
+
+    /**
+     * Walk the interval day by day: exact active seconds plus the audit trail.
+     *
+     * This is the full engine. Every day in the interval is resolved through
+     * {@see day_rule_resolver} and intersected with its absolute
+     * business-hours windows; manual pauses are subtracted afterwards over
+     * the union of all active intervals. Seconds are returned UNROUNDED so
+     * callers can aggregate results over sub-intervals exactly; rounding to
+     * hours happens once, at the public API boundary.
+     *
+     * @param int $courseid Course context (for manual pause scoping).
+     * @param int $groupid Group context (for manual pause scoping); 0 if none.
+     * @param int $tsfrom Inclusive unix timestamp.
+     * @param int $tsto Exclusive unix timestamp.
+     * @return array{seconds: int|float, pauses: array} Unrounded active
+     *     seconds (never negative) and the pause records that contributed.
+     */
+    private static function active_seconds_with_audit(
+        int $courseid,
+        int $groupid,
+        int $tsfrom,
+        int $tsto
+    ): array {
         if ($tsto <= $tsfrom) {
-            return ['hours' => 0.0, 'pauses' => []];
+            return ['seconds' => 0, 'pauses' => []];
         }
 
         $tz = calendar::timezone();
@@ -229,11 +259,10 @@ class academic_time {
         }
 
         $activeseconds = interval_math::total($activeintervals);
-        $hours = round($activeseconds / 3600.0, 2);
 
         usort($pauses, static fn($a, $b) => $a['timestart'] <=> $b['timestart']);
 
-        return ['hours' => $hours, 'pauses' => $pauses];
+        return ['seconds' => $activeseconds, 'pauses' => $pauses];
     }
 
     /**
