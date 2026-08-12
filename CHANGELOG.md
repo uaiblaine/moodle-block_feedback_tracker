@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing: on a converged ledger that *is* the task's cost, and until now
   nothing anywhere recorded it. Visible on *Tools → Recompute audit*.
 
-  The skipped list is the operational signal worth watching. The sweeps run in
-  a fixed order, so the same names appearing there tick after tick means those
-  repairs are not happening at all.
+  The skipped list is the operational signal worth watching. Sweep order
+  rotates between ticks, so a cap too low for the site shows up as a skipped
+  list that is rarely empty — the deferred repairs spread across the nine
+  sweeps instead of pinning to the same names every tick.
 
 ### Changed
 - **The academic-time engine no longer runs inside the reconciler's tick.** The
@@ -78,9 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reconciler's use of `drain_time_cap_seconds`. One number was sizing two
   very different tasks: the drain inserts a couple of hundred rows into
   `{task_adhoc}`, while reconciliation runs nine diffs against the assignment
-  tables. The cap is tested between sweeps, in a fixed order, so a value too low
-  for the site means the sweeps at the end of that order are reached rarely or
-  never — which is a silent loss of repair, not a slowdown.
+  tables. The cap is tested between sweeps, so a value too low for the site
+  means some sweeps are deferred on every tick — a loss of repair throughput,
+  not a slowdown. The rotation entry above keeps that loss spread across the
+  nine sweeps rather than pinned to the tail of the order.
 
   The upgrade seeds the new setting from the old one's stored value, so a site
   that had raised the drain cap keeps the behaviour it had. Sites that never
