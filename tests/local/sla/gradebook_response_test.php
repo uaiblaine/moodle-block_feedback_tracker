@@ -387,28 +387,59 @@ final class gradebook_response_test extends \advanced_testcase {
      * Crediting it would measure the wrong person on a figure carrying their
      * name — the same refusal the ALLOC_SOURCE_LATE constant already encodes.
      *
+     * The fixture puts exactly one week between the gradebook answer and now,
+     * and that is load-bearing rather than arbitrary. allochours runs to
+     * time(), which no fixture can pin, so the only quantity this test governs
+     * is the WIDTH of the window between the answer and now. A width of
+     * 7 * 86400 covers every weekday exactly once whatever the hour: the
+     * partial head day and the partial tail day are the same weekday and their
+     * two fragments sum to one whole day of it. The gap is therefore a
+     * constant 50.0 effective hours — five ten-hour days — at every instant of
+     * the year. At the previous width of two days it was zero from Sunday
+     * 18:00 to Monday 08:00 UTC, because the longest business-hour-free
+     * stretch runs Friday 18:00 to Monday 08:00 and a 48-hour window fits
+     * inside it; the two measures then coincided legitimately and the old
+     * assertNotEquals failed for about 14 hours every weekend. Push-triggered
+     * CI cannot catch that, so the width is the guard.
+     *
+     * The sibling helper recent_weekday_at() in grading_cycle_test does not
+     * serve here: it pins an absolute instant, which settles nothing when the
+     * far end of the interval is now.
+     *
      * @return void
      */
     public function test_a_gradebook_response_leaves_the_marker_clock_alone(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
+        /* The assertion below states an hours figure, so the width of a
+         * working day has to be a property of this test rather than of
+         * whatever db/install.php happened to seed. */
+        $this->seed_business_hours();
         [$cm, $student, $assign] = $this->build_environment();
 
+        /* Every instant hangs off the gradebook answer, so the week between
+         * that answer and now stays a week however the fixture is later
+         * retuned. See the docblock for why the width is what makes this test
+         * weekday-independent. */
+        $answered = time() - 7 * 86400;
+        $submitted = $answered - 2 * 86400;
+        $allocated = $answered - 86400;
+
         $marker = $this->getDataGenerator()->create_user();
-        $this->submit($assign, $student, time() - 5 * 86400);
+        $this->submit($assign, $student, $submitted);
         /* The ledger row has to exist before the allocation can be stamped on
          * to it — stamping first would write nothing at all, and the assertion
          * below would then hold for the wrong reason. */
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
         $this->allocate_marker($assign, $student, $marker);
-        submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, time() - 4 * 86400);
+        submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $allocated);
         $this->assertNotNull(
             $DB->get_field('block_feedback_tracker_sub', 'timeallocmarker', ['cmid' => $cm->id]),
             'The fixture is only meaningful once a marker allocation is on the row.'
         );
 
-        $this->gradebook_grade($assign, $student, 70.0, time() - 2 * 86400);
+        $this->gradebook_grade($assign, $student, 70.0, $answered);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
@@ -416,21 +447,34 @@ final class gradebook_response_test extends \advanced_testcase {
         $this->assertNotNull($row->timegraded, 'And so did the pending clock — that is the point.');
 
         /* The marker's interval is still running. Measured against the
-         * gradebook response it would read as the two days from allocation to
-         * that grade; measured correctly it runs to now, because nobody has
-         * marked inside the activity yet. Comparing against the closed value
-         * rather than asserting a business-hours figure keeps the test exact
-         * without pinning the academic calendar. */
-        $closedvalue = academic_time::elapsed_with_audit(
+         * gradebook response it would stop at that grade; measured correctly
+         * it runs to now, because nobody has marked inside the activity yet.
+         *
+         * This reads the closed value through the same entry point production
+         * uses for allochours, so the two sides of the comparison cannot come
+         * from different code paths — elapsed_effective_hours() takes a fast
+         * path that elapsed_with_audit() does not. */
+        $closedvalue = academic_time::elapsed_effective_hours(
             (int) $row->courseid,
             (int) $row->groupid,
             (int) $row->timeallocmarker,
             (int) $row->timeclosed
-        )['hours'];
-        $this->assertNotEquals(
+        );
+        $this->assertGreaterThan(
             round((float) $closedvalue, 2),
             round((float) $row->allochours, 2),
             'A coordinator grading in the gradebook must not close the allocated marker\'s clock.'
+        );
+        /* And the figure, not merely the direction. The inequality above is
+         * satisfied by any upper bound later than the gradebook answer, so it
+         * would survive a regression that stopped the marker's clock somewhere
+         * short of now. The week the fixture pinned is worth five ten-hour
+         * days, and naming that number is what closes the gap. */
+        $this->assertEqualsWithDelta(
+            $closedvalue + 50.0,
+            (float) $row->allochours,
+            0.05,
+            'The marker\'s clock ran on for the whole week since the gradebook answered.'
         );
     }
 

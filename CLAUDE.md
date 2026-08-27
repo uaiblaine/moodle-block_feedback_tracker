@@ -687,6 +687,56 @@ The canonical guard is in [`lib.php`](lib.php):
   DB-derived arrays (which carry string ids), normalise the haystack:
   `array_map('intval', $contextlist->get_contextids())`.
 
+### Clock-dependent tests — the width rule
+
+This defect class has shipped twice in `gradebook_response_test.php` alone
+(`0026f08`, then the marker-clock test on 2026-08-27), and push-triggered CI
+structurally cannot catch a window that only opens on a Sunday night. The rules
+below are what stops a third.
+
+- **A fixture anchored to `time()` must span a whole number of weeks.** The
+  academic-time engine counts only business hours, so what an interval is worth
+  depends on which weekday the suite runs — and the longest business-hour-free
+  stretch is Friday 18:00 to Monday 08:00 UTC, **62 hours**. Any window shorter
+  than that collapses to zero effective hours somewhere in the weekend, and an
+  assertion resting on it flips. A width of exactly `7 * 86400` is immune: the
+  partial head day and the partial tail day are the same weekday and their two
+  fragments sum to one whole day of it, so the window covers every weekday once
+  whatever the hour, and is worth a constant **50.0 hours** — five ten-hour
+  days under the Mon-Fri 08:00-18:00 that `db/install.php` seeds. Measured over
+  2688 phases spanning four weeks: a 2-day window fails 14.25 h every week, a
+  7-day window never, with min and max both exactly 50.00. **8 days is not
+  safe** — its minimum is also 50.00 but its maximum is 60.00, so it is not
+  invariant, and 1 day is dead for 38.25 h a week.
+- **Two techniques exist and only one fits any given test.** When BOTH ends of
+  the interval are fixture-controlled, pin an absolute instant:
+  `recent_weekday_at($hour)` in `grading_cycle_test.php` returns last Tuesday at
+  a given hour UTC. When the far end is `time()` — anything measured against
+  "now", such as `allochours` on a row the activity has not graded — pinning an
+  instant settles nothing, and only the width rule works. Freezing the clock is
+  not on the table: the plugin calls bare `time()` in 99 places and never goes
+  through `\core\clock`, so `mock_clock_with_frozen()` would leave every plugin
+  computation reading the real one.
+- **A test that asserts an hours figure must call `seed_business_hours()`.**
+  `seed_calendar()` switches `enablebusinesshours` on but inserts no
+  `{block_feedback_tracker_chours}` rows, so the width of a working day arrives
+  silently from the install defaults rather than from the test. Tests asserting
+  only on closure instants do not need it.
+- **Assert the figure, not only the band or the direction.** An
+  `assertNotEquals` between two business-hours measures passes for free whenever
+  the calendar makes them coincide — precisely the weekend case the width rule
+  exists to prevent — and a bare inequality survives any regression that stops a
+  clock somewhere short of now. Name the expected number beside it
+  (`assertEqualsWithDelta(50.0, ...)`) so a future drift in the window shows up
+  as a wrong figure instead of silently re-banding.
+- **Read the closed value through the same entry point production uses.**
+  `elapsed_effective_hours()` takes a fast path that `elapsed_with_audit()` does
+  not; comparing one against the other puts the two sides of an assertion on
+  different code paths for no benefit, since the audit trail is discarded.
+- **A green local run proves nothing here.** Verify by construction — sweep the
+  phases of a full week and check the invariant holds at every one — not by
+  re-running once and seeing green on a Wednesday.
+
 ## Behat scenarios
 
 Features under `tests/behat/` **actually run in CI** on every runtime
