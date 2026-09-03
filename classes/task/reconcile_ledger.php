@@ -53,8 +53,10 @@ use block_feedback_tracker\local\sla\submission_status;
  *  - Due dates, cut-offs, overrides and extensions change with no per-row
  *    signal.
  *
- * Each sweep is keyset-paged behind its own cursor, bounded per tick and
- * gated on {@see course_access::is_processable()}. Seven sweeps dispatch their
+ * Each sweep walks its driving set in windows of `reconcile_batch_size` rows
+ * behind its own keyset cursor — as many windows as its share of the tick's
+ * time cap allows, see {@see self::walk()} — and is gated on
+ * {@see course_access::is_processable()}. Seven sweeps dispatch their
  * repairs — six as {@see backfill_one_submission}, the allocation one as
  * {@see stamp_allocations} — which keeps the academic-time engine out of this
  * task's own time budget.
@@ -69,7 +71,7 @@ use block_feedback_tracker\local\sla\submission_status;
  * tail was never reached on a site that runs out of budget.
  */
 class reconcile_ledger extends \core\task\scheduled_task {
-    /** Default rows examined per sweep per tick. */
+    /** Default driving rows per window. */
     public const DEFAULT_BATCH = 500;
 
     /** Default soft time cap for the whole tick, in seconds. */
@@ -91,8 +93,29 @@ class reconcile_ledger extends \core\task\scheduled_task {
      */
     private const COURSES_PER_TICK = 25;
 
+    /**
+     * Ceiling on the window size, whatever the setting says. A window becomes
+     * an `id IN (...)` list of that many placeholders in the probe, and
+     * PostgreSQL refuses a statement carrying more than 65 535 of them. The
+     * LIMIT this replaced tolerated any value, so a site that had set the
+     * batch high would otherwise break the task on its first tick after
+     * upgrading, and keep breaking it until someone found the setting.
+     */
+    private const MAX_BATCH = 10000;
+
+    /** Token the window predicate is spliced into, in a probe template. */
+    private const WINDOW_TOKEN = '__window__';
+
     /** @var int Epoch second after which this tick must stop starting work. */
     private int $deadline = 0;
+
+    /**
+     * @var int Epoch second after which the sweep now running must stop
+     *          starting windows: its share of what was left of the tick when
+     *          its turn came. Zero outside execute(), so a sweep driven directly
+     *          walks exactly one window.
+     */
+    private int $sweepdeadline = 0;
 
     /**
      * @var array<string, bool> Whether each sweep spent its driving set this
@@ -101,6 +124,24 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *                          pass never completes, which no other signal says.
      */
     private array $exhausted = [];
+
+    /** @var array<string, int> Driving rows each sweep examined this tick, keyed by sweep key. */
+    private array $examined = [];
+
+    /** @var array<string, int> Windows each sweep walked this tick, keyed by sweep key. */
+    private array $windows = [];
+
+    /** @var array Repair descriptors waiting to be queued for the sweep in flight. */
+    private array $repairbuffer = [];
+
+    /** @var array<string, bool> Dedup keys of the descriptors the sweep in flight emitted. */
+    private array $repairseen = [];
+
+    /** @var int Repair batches the sweep in flight tried to queue. */
+    private int $repairbatches = 0;
+
+    /** @var int Repair batches the sweep in flight actually queued. */
+    private int $repairqueued = 0;
 
     /**
      * Task display name.
@@ -138,6 +179,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         if ($batch < 1) {
             $batch = self::DEFAULT_BATCH;
         }
+        $batch = min($batch, self::MAX_BATCH);
         /* Its own cap since 2026081100. Sharing drain_time_cap_seconds meant one
          * number sized a task that inserts a couple of hundred queue rows AND a
          * task that runs nine diffs against the assignment tables. The upgrade
@@ -213,6 +255,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 mtrace('reconcile_ledger: time cap reached; remaining sweeps run next tick.');
                 break;
             }
+            /* Each sweep gets an equal share of whatever is left of the tick
+             * when its turn comes, tested between windows inside the sweep. A
+             * cheap sweep hands its unused share on to the next; a hungry one
+             * cannot spend the whole tick before the others have had a window. */
+            $this->sweepdeadline = self::share_deadline(time(), $deadline, count($order) - (int) $position);
             $sweepstarted = microtime(true);
             $repaired = $this->$method($processable, $batch, $key);
             $sweepms = (int) round((microtime(true) - $sweepstarted) * 1000);
@@ -220,9 +267,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
              * advance_cursor() — reported as null rather than false so "did not
              * answer" stays distinguishable from "did not finish". Every sweep
              * answers it today; the departed-participant one does so over the
-             * tracked-course list rather than over rows. */
+             * tracked-course list rather than over rows, which is also why its
+             * `examined` and `windows` stay null: it visits courses, not
+             * windows. */
             $stats[$key] = [
                 'rows' => $repaired,
+                'examined' => $this->examined[$key] ?? null,
+                'windows' => $this->windows[$key] ?? null,
                 'ms' => $sweepms,
                 'cursor' => $this->cursor($key),
                 'exhausted' => $this->exhausted[$key] ?? null,
@@ -287,6 +338,128 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
+     * The instant the sweep whose turn it is must stop starting windows.
+     *
+     * An equal split of what is left of the tick among the sweeps still to
+     * run — never less than a second, so a sweep always walks at least one
+     * window, and never past the tick's own deadline.
+     *
+     * @param int $now Epoch second.
+     * @param int $deadline The tick's deadline.
+     * @param int $left Sweeps still to run this tick, this one included.
+     * @return int Epoch second.
+     */
+    private static function share_deadline(int $now, int $deadline, int $left): int {
+        return min($deadline, $now + max(1, intdiv(max(0, $deadline - $now), max(1, $left))));
+    }
+
+    /**
+     * Walk one sweep's driving set in windows of `$batch` rows.
+     *
+     * `$window` fetches the next window: up to `$batch` driving rows after a
+     * cursor, keyed by their keyset id (the first column selected) and ordered
+     * by it. `$act` probes one window for the rows that need acting on, acts
+     * on them, and returns how many it found. The walk keeps going until the
+     * driving set is spent or the sweep's share of the tick is, and moves the
+     * cursor on from the WINDOW — the last driving row examined — never from
+     * what the probe returned.
+     *
+     * That last point is the whole reason this exists. The sweeps used to run
+     * one statement whose LIMIT sat over the probe's own predicate, so the
+     * batch bounded the rows RETURNED, not the rows examined: on a converged
+     * ledger — nothing to repair, the normal state — every tick walked the
+     * whole table to prove it, read the short result as "pass complete", and
+     * wrapped the cursor to 0 to do it all again next time. Measured on a
+     * synthetic 1.07 M-row ledger, the latest-drift statement took 24 s for
+     * 300 courses and returned nothing; the same probe over a 500-row window
+     * takes 8 ms. Bounding the window rather than the answer is what makes the
+     * cost of a tick proportional to the rows it examined.
+     *
+     * Exhaustion is a claim about the window, and only about it: a window
+     * shorter than `$batch` (or empty) means the driving set ran out. Stopping
+     * because the share of time ran out is NOT exhaustion — the cursor stays
+     * where the last window ended and the next tick resumes there. That is the
+     * distinction {@see self::advance_cursor()} asks every caller to make
+     * deliberately, and deriving it from the window count is what keeps it
+     * true now that an in-sweep deadline exists.
+     *
+     * @param string $key Sweep key.
+     * @param int $batch Window size.
+     * @param callable $window Takes the cursor (int), returns the next window (array).
+     * @param callable $act Takes one window (array), returns the rows acted on (int).
+     * @return int Rows acted on across every window walked.
+     */
+    private function walk(string $key, int $batch, callable $window, callable $act): int {
+        $cursor = $this->cursor($key);
+        $acted = 0;
+        $examined = 0;
+        $windows = 0;
+        $exhausted = false;
+        do {
+            $rows = $window($cursor);
+            if (empty($rows)) {
+                $exhausted = true;
+                break;
+            }
+            $windows++;
+            $examined += count($rows);
+            $cursor = (int) array_key_last($rows);
+            $acted += $act($rows);
+            if (count($rows) < $batch) {
+                $exhausted = true;
+                break;
+            }
+        } while (time() <= $this->sweepdeadline);
+        $this->examined[$key] = $examined;
+        $this->windows[$key] = $windows;
+        $this->advance_cursor($key, $cursor, $exhausted);
+        return $acted;
+    }
+
+    /**
+     * A window fetcher over the ledger.
+     *
+     * The predicates go here, on the driving set, rather than in the probe:
+     * the window is what fixes a sweep's scope, so a probe over it needs no
+     * course filter of its own and carries only the expensive half.
+     *
+     * @param string $where Extra predicates on the ledger row (aliased `l`), each starting with AND.
+     * @param array $params Their parameters.
+     * @param int $batch Window size.
+     * @return callable Takes the cursor (int), returns up to `$batch` ledger ids keyed by id.
+     */
+    private function ledger_window(string $where, array $params, int $batch): callable {
+        global $DB;
+        return fn(int $cursor): array => $DB->get_records_sql(
+            "SELECT l.id
+               FROM {block_feedback_tracker_sub} l
+              WHERE l.id > :cursor $where
+           ORDER BY l.id ASC",
+            $params + ['cursor' => $cursor],
+            0,
+            $batch
+        );
+    }
+
+    /**
+     * An act callback that probes one window and queues a repair for every row
+     * the probe returns.
+     *
+     * @param string $template Probe SQL with {@see self::WINDOW_TOKEN} where the `id IN (...)` predicate goes.
+     * @param array $params Probe parameters (never prefixed `w`, which the window uses).
+     * @return callable Takes one window (array), returns the rows queued for repair (int).
+     */
+    private function repair_probe(string $template, array $params): callable {
+        global $DB;
+        return function (array $window) use ($DB, $template, $params): int {
+            [$wsql, $wparams] = $DB->get_in_or_equal(array_keys($window), SQL_PARAMS_NAMED, 'w');
+            $rows = $DB->get_records_sql(str_replace(self::WINDOW_TOKEN, $wsql, $template), $wparams + $params);
+            $this->buffer_repairs($rows);
+            return count($rows);
+        };
+    }
+
+    /**
      * Submissions with no ledger row at all.
      *
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
@@ -312,7 +485,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * worse failure than the oscillation this predicate exists to end.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
@@ -320,47 +493,66 @@ class reconcile_ledger extends \core\task\scheduled_task {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $now = time();
-        $rows = $DB->get_records_sql(
-            "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
-                    s.userid, s.groupid, s.attemptnumber
-               FROM {assign_submission} s
-               JOIN {user} u ON u.id = s.userid AND u.deleted = 0
-               JOIN {assign} a ON a.id = s.assignment
-               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-          LEFT JOIN {block_feedback_tracker_sub} l
-                 ON l.cmid = cm.id
-                AND l.userid = s.userid
-                AND l.attemptnumber = s.attemptnumber
-              WHERE s.userid > 0
-                AND a.teamsubmission = 0
-                AND s.id > :cursor
-                AND cm.course $csql
-                AND l.id IS NULL
-                AND s.timemodified >= :retention
-                AND (cm.course = :siteid OR EXISTS (
-                    SELECT 1
-                      FROM {user_enrolments} ue
-                      JOIN {enrol} en ON en.id = ue.enrolid AND en.courseid = cm.course
-                     WHERE ue.userid = s.userid
-                       AND ue.status = 0
-                       AND en.status = 0
-                       AND (ue.timestart = 0 OR ue.timestart <= :nowstart)
-                       AND (ue.timeend = 0 OR ue.timeend > :nowend)
-                ))
-           ORDER BY s.id ASC",
-            $cparams + [
-                'modname' => 'assign',
-                'cursor' => $this->cursor($key),
-                'retention' => $this->retention_floor(),
-                'nowstart' => $now,
-                'nowend' => $now,
-                'siteid' => SITEID,
-            ],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            /* The driving set: a keyset range over {assign_submission} with
+             * point lookups on the activity, carrying every predicate the sweep
+             * applies to the source row itself. */
+            fn(int $cursor): array => $DB->get_records_sql(
+                "SELECT s.id
+                   FROM {assign_submission} s
+                   JOIN {assign} a ON a.id = s.assignment AND a.teamsubmission = 0
+                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                  WHERE s.userid > 0
+                    AND s.id > :cursor
+                    AND cm.course $csql
+                    AND s.timemodified >= :retention
+               ORDER BY s.id ASC",
+                $cparams + [
+                    'modname' => 'assign',
+                    'cursor' => $cursor,
+                    'retention' => $this->retention_floor(),
+                ],
+                0,
+                $batch
+            ),
+            $this->repair_probe(
+                "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
+                        s.userid, s.groupid, s.attemptnumber
+                   FROM {assign_submission} s
+                   JOIN {user} u ON u.id = s.userid AND u.deleted = 0
+                   JOIN {assign} a ON a.id = s.assignment
+                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              LEFT JOIN {block_feedback_tracker_sub} l
+                     ON l.cmid = cm.id
+                    AND l.userid = s.userid
+                    AND l.attemptnumber = s.attemptnumber
+                  WHERE s.id " . self::WINDOW_TOKEN . "
+                    AND l.id IS NULL
+                    AND (cm.course = :siteid OR EXISTS (
+                        SELECT 1
+                          FROM {user_enrolments} ue
+                          JOIN {enrol} en ON en.id = ue.enrolid AND en.courseid = cm.course
+                         WHERE ue.userid = s.userid
+                           AND ue.status = 0
+                           AND en.status = 0
+                           AND (ue.timestart = 0 OR ue.timestart <= :nowstart)
+                           AND (ue.timeend = 0 OR ue.timeend > :nowend)
+                    ))
+               ORDER BY s.id ASC",
+                [
+                    'modname' => 'assign',
+                    'nowstart' => $now,
+                    'nowend' => $now,
+                    'siteid' => SITEID,
+                ]
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'subid');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -370,39 +562,54 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * one row per member while the source stores one row per group.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
     private function sweep_missing_team_rows(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $rows = $DB->get_records_sql(
-            "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
-                    s.userid, s.groupid, s.attemptnumber
-               FROM {assign_submission} s
-               JOIN {assign} a ON a.id = s.assignment AND a.teamsubmission = 1
-               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-          LEFT JOIN {block_feedback_tracker_sub} l
-                 ON l.cmid = cm.id
-                AND l.teamgroupid = s.groupid
-                AND l.attemptnumber = s.attemptnumber
-              WHERE s.userid = 0
-                AND s.id > :cursor
-                AND cm.course $csql
-                AND l.id IS NULL
-                AND s.timemodified >= :retention
-           ORDER BY s.id ASC",
-            $cparams + [
-                'modname' => 'assign',
-                'cursor' => $this->cursor($key),
-                'retention' => $this->retention_floor(),
-            ],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            fn(int $cursor): array => $DB->get_records_sql(
+                "SELECT s.id
+                   FROM {assign_submission} s
+                   JOIN {assign} a ON a.id = s.assignment AND a.teamsubmission = 1
+                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                  WHERE s.userid = 0
+                    AND s.id > :cursor
+                    AND cm.course $csql
+                    AND s.timemodified >= :retention
+               ORDER BY s.id ASC",
+                $cparams + [
+                    'modname' => 'assign',
+                    'cursor' => $cursor,
+                    'retention' => $this->retention_floor(),
+                ],
+                0,
+                $batch
+            ),
+            $this->repair_probe(
+                "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
+                        s.userid, s.groupid, s.attemptnumber
+                   FROM {assign_submission} s
+                   JOIN {assign} a ON a.id = s.assignment
+                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              LEFT JOIN {block_feedback_tracker_sub} l
+                     ON l.cmid = cm.id
+                    AND l.teamgroupid = s.groupid
+                    AND l.attemptnumber = s.attemptnumber
+                  WHERE s.id " . self::WINDOW_TOKEN . "
+                    AND l.id IS NULL
+               ORDER BY s.id ASC",
+                ['modname' => 'assign']
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'subid');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -414,45 +621,47 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * disagrees with the writer would dispatch the same repair on every tick.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
     private function sweep_grade_divergence(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $rows = $DB->get_records_sql(
-            "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
-               FROM {block_feedback_tracker_sub} l
-               JOIN {course_modules} cm ON cm.id = l.cmid
-               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-               JOIN {assign} a ON a.id = cm.instance
-          LEFT JOIN {assign_grades} g
-                 ON g.assignment = a.id
-                AND g.userid = l.userid
-                AND g.attemptnumber = l.attemptnumber
-              WHERE l.id > :cursor
-                AND l.iscurrent = 1
-                AND l.courseid $csql
-                AND (
-                     (l.timemarked IS NULL
-                      AND g.id IS NOT NULL
-                      AND g.grade IS NOT NULL
-                      AND g.grade >= 0
-                      AND g.timemodified > l.timesubmitted)
-                  OR (l.timemarked IS NOT NULL
-                      AND (g.id IS NULL
-                           OR g.grade IS NULL
-                           OR g.grade < 0
-                           OR g.timemodified <= l.timesubmitted))
-                )
-           ORDER BY l.id ASC",
-            $cparams + ['modname' => 'assign', 'cursor' => $this->cursor($key)],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            $this->ledger_window("AND l.iscurrent = 1 AND l.courseid $csql", $cparams, $batch),
+            $this->repair_probe(
+                "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
+                        l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
+                   FROM {block_feedback_tracker_sub} l
+                   JOIN {course_modules} cm ON cm.id = l.cmid
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {assign} a ON a.id = cm.instance
+              LEFT JOIN {assign_grades} g
+                     ON g.assignment = a.id
+                    AND g.userid = l.userid
+                    AND g.attemptnumber = l.attemptnumber
+                  WHERE l.id " . self::WINDOW_TOKEN . "
+                    AND (
+                         (l.timemarked IS NULL
+                          AND g.id IS NOT NULL
+                          AND g.grade IS NOT NULL
+                          AND g.grade >= 0
+                          AND g.timemodified > l.timesubmitted)
+                      OR (l.timemarked IS NOT NULL
+                          AND (g.id IS NULL
+                               OR g.grade IS NULL
+                               OR g.grade < 0
+                               OR g.timemodified <= l.timesubmitted))
+                    )
+               ORDER BY l.id ASC",
+                ['modname' => 'assign']
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'subid');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -460,41 +669,67 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * The direct fingerprint of `add_attempt()`, which fires nothing at all.
      *
+     * The source row is reached through two equality-only joins, one per
+     * submission mode, rather than one join with an OR between the modes. The
+     * OR looked harmless and defeated every index: each of its arms mixes
+     * columns from three tables, so neither PostgreSQL nor MariaDB could use
+     * more than `assignment` of the unique key (assignment, userid, groupid,
+     * attemptnumber) and read every submission of the activity for every
+     * ledger row — cost proportional to rows × submissions per activity,
+     * quadratic in class size, and no index made it otherwise. With the arms
+     * split each is a point lookup. The arms are mutually exclusive on the live
+     * `teamsubmission` flag, so at most one matches and the COALESCE below
+     * reads whichever did; the individual arm deliberately leaves `groupid`
+     * unconstrained, exactly as the writer's own lookup in
+     * {@see submission_ledger} does, so selector and writer agree row for row.
+     *
+     * The activity is still resolved through the course module, as it was —
+     * the writer resolves it that way too, and reaching {assign} directly via
+     * `l.iteminstance` would select rows the writer cannot repair (a module
+     * row gone with the activity row surviving, a module of another type),
+     * dispatching the same no-op on every pass until the orphan sweep removes
+     * them.
+     *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
     private function sweep_latest_drift(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $rows = $DB->get_records_sql(
-            "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
-               FROM {block_feedback_tracker_sub} l
-               JOIN {course_modules} cm ON cm.id = l.cmid
-               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-               JOIN {assign} a ON a.id = cm.instance
-               JOIN {assign_submission} s
-                 ON s.assignment = a.id
-                AND s.attemptnumber = l.attemptnumber
-                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
-                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
-              WHERE l.id > :cursor
-                AND l.iscurrent = 1
-                AND l.courseid $csql
-                AND (l.islatest <> s.latest
-                     OR l.submissionstatus <> COALESCE(s.status, :statusnew))
-           ORDER BY l.id ASC",
-            $cparams + [
-                'modname' => 'assign',
-                'cursor' => $this->cursor($key),
-                'statusnew' => submission_status::NEW,
-            ],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            $this->ledger_window("AND l.iscurrent = 1 AND l.courseid $csql", $cparams, $batch),
+            $this->repair_probe(
+                "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
+                        l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
+                   FROM {block_feedback_tracker_sub} l
+                   JOIN {course_modules} cm ON cm.id = l.cmid
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {assign} a ON a.id = cm.instance
+              LEFT JOIN {assign_submission} si
+                     ON a.teamsubmission = 0
+                    AND si.assignment = a.id
+                    AND si.userid = l.userid
+                    AND si.attemptnumber = l.attemptnumber
+              LEFT JOIN {assign_submission} st
+                     ON a.teamsubmission = 1
+                    AND st.assignment = a.id
+                    AND st.userid = 0
+                    AND st.groupid = l.teamgroupid
+                    AND st.attemptnumber = l.attemptnumber
+                  WHERE l.id " . self::WINDOW_TOKEN . "
+                    AND COALESCE(si.id, st.id) IS NOT NULL
+                    AND (l.islatest <> COALESCE(si.latest, st.latest)
+                         OR l.submissionstatus <> COALESCE(si.status, st.status, :statusnew))
+               ORDER BY l.id ASC",
+                ['modname' => 'assign', 'statusnew' => submission_status::NEW]
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'subid');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -504,7 +739,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * `delete_records_select()`, and by default leaves the grades behind — so
      * the probe keys on the submission, not the grade. Acts directly: a repair
      * task would re-gate on processability and skip exactly the courses whose
-     * rows most need removing.
+     * rows most need removing. For the same reason the driving set carries no
+     * course filter at all: the whole ledger is walked, a window at a time.
      *
      * Team-aware, or the fan-out and this sweep would delete and recreate each
      * other's rows for ever — and the discriminator has to be the LIVE
@@ -518,55 +754,66 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * {@see self::sweep_missing_team_rows()} then recreates on the next tick —
      * one backfill dispatch plus one rollup recompute per round trip, for ever.
      *
-     * An activity whose {assign} row is gone leaves `a.teamsubmission` NULL, so
-     * neither branch matches and the row is deleted. That is the intended
-     * reading: no activity means no submission to measure.
+     * The two modes are two equality-only joins rather than one OR, for the
+     * reason {@see self::sweep_latest_drift()} gives: the OR could use no more
+     * than `assignment` of the unique key. An activity whose {assign} row is
+     * gone leaves `a.teamsubmission` NULL, so neither arm matches and the row
+     * is deleted. That is the intended reading: no activity means no
+     * submission to measure.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows deleted.
      */
     private function sweep_orphans(array $processable, int $batch, string $key): int {
         global $DB;
-        $rows = $DB->get_records_sql(
-            "SELECT l.id, l.courseid, l.groupid
-               FROM {block_feedback_tracker_sub} l
-          LEFT JOIN {course_modules} cm ON cm.id = l.cmid
-          LEFT JOIN {assign} a ON a.id = l.iteminstance
-          LEFT JOIN {assign_submission} s
-                 ON s.assignment = l.iteminstance
-                AND s.attemptnumber = l.attemptnumber
-                AND ((a.teamsubmission = 0 AND s.userid = l.userid)
-                     OR (a.teamsubmission = 1 AND s.userid = 0 AND s.groupid = l.teamgroupid))
-              WHERE l.id > :cursor
-                AND (cm.id IS NULL OR s.id IS NULL)
-           ORDER BY l.id ASC",
-            ['cursor' => $this->cursor($key)],
-            0,
-            $batch
+        return $this->walk(
+            $key,
+            $batch,
+            $this->ledger_window('', [], $batch),
+            function (array $window) use ($DB): int {
+                [$wsql, $wparams] = $DB->get_in_or_equal(array_keys($window), SQL_PARAMS_NAMED, 'w');
+                $rows = $DB->get_records_sql(
+                    "SELECT l.id, l.courseid, l.groupid
+                       FROM {block_feedback_tracker_sub} l
+                  LEFT JOIN {course_modules} cm ON cm.id = l.cmid
+                  LEFT JOIN {assign} a ON a.id = l.iteminstance
+                  LEFT JOIN {assign_submission} si
+                         ON a.teamsubmission = 0
+                        AND si.assignment = l.iteminstance
+                        AND si.userid = l.userid
+                        AND si.attemptnumber = l.attemptnumber
+                  LEFT JOIN {assign_submission} st
+                         ON a.teamsubmission = 1
+                        AND st.assignment = l.iteminstance
+                        AND st.userid = 0
+                        AND st.groupid = l.teamgroupid
+                        AND st.attemptnumber = l.attemptnumber
+                      WHERE l.id $wsql
+                        AND (cm.id IS NULL OR (si.id IS NULL AND st.id IS NULL))
+                   ORDER BY l.id ASC",
+                    $wparams
+                );
+                if (empty($rows)) {
+                    return 0;
+                }
+                $ids = [];
+                $tuples = [];
+                foreach ($rows as $r) {
+                    $ids[] = (int) $r->id;
+                    $tuples[(int) $r->courseid . ':' . (int) $r->groupid] = [
+                        (int) $r->courseid, (int) $r->groupid,
+                    ];
+                }
+                [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'd');
+                $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
+                foreach ($tuples as [$courseid, $groupid]) {
+                    dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
+                }
+                return count($rows);
+            }
         );
-        if (empty($rows)) {
-            $this->advance_cursor($key, 0, true);
-            return 0;
-        }
-        $ids = [];
-        $tuples = [];
-        $lastid = 0;
-        foreach ($rows as $r) {
-            $ids[] = (int) $r->id;
-            $lastid = (int) $r->id;
-            $tuples[(int) $r->courseid . ':' . (int) $r->groupid] = [
-                (int) $r->courseid, (int) $r->groupid,
-            ];
-        }
-        [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'd');
-        $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
-        foreach ($tuples as [$courseid, $groupid]) {
-            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
-        }
-        $this->advance_cursor($key, $lastid, count($rows) < $batch);
-        return count($rows);
     }
 
     /**
@@ -588,7 +835,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * lives.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
@@ -596,45 +843,51 @@ class reconcile_ledger extends \core\task\scheduled_task {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $now = time();
-        $rows = $DB->get_records_sql(
-            "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid,
-                    l.teamgroupid, a.teamsubmission AS isteam
-               FROM {block_feedback_tracker_sub} l
-               JOIN {assign} a ON a.id = l.iteminstance
-               JOIN {grade_items} gi
-                 ON gi.iteminstance = l.iteminstance
-                AND gi.itemtype = :itemtype
-                AND gi.itemmodule = :itemmodule
-                AND gi.itemnumber = 0
-               JOIN {grade_grades} gg ON gg.itemid = gi.id AND gg.userid = l.userid
-              WHERE l.timeclosed IS NULL
-                AND l.iscurrent = 1
-                /* islatest as well as iscurrent: {grade_grades} holds one grade
-                 * per user per item with no attempt dimension, so without this
-                 * a single gradebook response would close every unmarked
-                 * attempt of that user and be counted once per attempt in the
-                 * graded window. The observer avoids it by resolving through
-                 * latest_attempt_number(); the sweep has to say so. */
-                AND l.islatest = 1
-                AND l.timesubmitted > 0
-                AND gg.overridden > l.timesubmitted
-                AND l.id > :cursor
-                AND l.courseid $csql
-                AND gg.finalgrade IS NOT NULL
-                AND (gg.hidden = 0 OR (gg.hidden > 1 AND gg.hidden <= :nowgrade))
-                AND (gi.hidden = 0 OR (gi.hidden > 1 AND gi.hidden <= :nowitem))
-           ORDER BY l.id ASC",
-            $cparams + [
-                'itemtype' => 'mod',
-                'itemmodule' => 'assign',
-                'cursor' => $this->cursor($key),
-                'nowgrade' => $now,
-                'nowitem' => $now,
-            ],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            /* islatest as well as iscurrent: {grade_grades} holds one grade per
+             * user per item with no attempt dimension, so without this a single
+             * gradebook response would close every unmarked attempt of that
+             * user and be counted once per attempt in the graded window. The
+             * observer avoids it by resolving through latest_attempt_number();
+             * the sweep has to say so. */
+            $this->ledger_window(
+                "AND l.timeclosed IS NULL
+                 AND l.iscurrent = 1
+                 AND l.islatest = 1
+                 AND l.timesubmitted > 0
+                 AND l.courseid $csql",
+                $cparams,
+                $batch
+            ),
+            $this->repair_probe(
+                "SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber, l.groupid,
+                        l.teamgroupid, a.teamsubmission AS isteam
+                   FROM {block_feedback_tracker_sub} l
+                   JOIN {assign} a ON a.id = l.iteminstance
+                   JOIN {grade_items} gi
+                     ON gi.iteminstance = l.iteminstance
+                    AND gi.itemtype = :itemtype
+                    AND gi.itemmodule = :itemmodule
+                    AND gi.itemnumber = 0
+                   JOIN {grade_grades} gg ON gg.itemid = gi.id AND gg.userid = l.userid
+                  WHERE l.id " . self::WINDOW_TOKEN . "
+                    AND gg.overridden > l.timesubmitted
+                    AND gg.finalgrade IS NOT NULL
+                    AND (gg.hidden = 0 OR (gg.hidden > 1 AND gg.hidden <= :nowgrade))
+                    AND (gi.hidden = 0 OR (gi.hidden > 1 AND gi.hidden <= :nowitem))
+               ORDER BY l.id ASC",
+                [
+                    'itemtype' => 'mod',
+                    'itemmodule' => 'assign',
+                    'nowgrade' => $now,
+                    'nowitem' => $now,
+                ]
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'id');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -646,7 +899,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * on who counts. Acts directly, like the orphan sweep.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Row ceiling per course.
      * @param string $key Cursor key.
      * @return int Rows deleted.
      */
@@ -675,7 +928,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
              * blocked course's departed students keep counting in its pending
              * totals with nothing saying why. A course that fills its batch
              * simply sheds the rest on the next pass. */
-            if ($visited >= self::COURSES_PER_TICK || time() > $this->deadline) {
+            if ($visited >= self::COURSES_PER_TICK || time() > $this->sweepdeadline) {
                 break;
             }
             $visited++;
@@ -749,34 +1002,37 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * assignment's own due date.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows dispatched for repair.
      */
     private function sweep_rule_drift(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $rows = $DB->get_records_sql(
-            "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                    l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
-               FROM {block_feedback_tracker_sub} l
-               JOIN {assign} a ON a.id = l.iteminstance
-          LEFT JOIN {assign_user_flags} uf
-                 ON uf.assignment = l.iteminstance
-                AND uf.userid = l.userid
-              WHERE l.id > :cursor
-                AND l.courseid $csql
-                AND ((COALESCE(uf.extensionduedate, 0) > 0
-                      AND COALESCE(l.timecloses, 0) <> uf.extensionduedate)
-                  OR (COALESCE(uf.extensionduedate, 0) = 0
-                      AND l.hasrule = 1
-                      AND COALESCE(l.timecloses, 0) <> COALESCE(a.duedate, 0)))
-           ORDER BY l.id ASC",
-            $cparams + ['cursor' => $this->cursor($key)],
-            0,
-            $batch
+        $acted = $this->walk(
+            $key,
+            $batch,
+            $this->ledger_window("AND l.courseid $csql", $cparams, $batch),
+            $this->repair_probe(
+                "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
+                        l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
+                   FROM {block_feedback_tracker_sub} l
+                   JOIN {assign} a ON a.id = l.iteminstance
+              LEFT JOIN {assign_user_flags} uf
+                     ON uf.assignment = l.iteminstance
+                    AND uf.userid = l.userid
+                  WHERE l.id " . self::WINDOW_TOKEN . "
+                    AND ((COALESCE(uf.extensionduedate, 0) > 0
+                          AND COALESCE(l.timecloses, 0) <> uf.extensionduedate)
+                      OR (COALESCE(uf.extensionduedate, 0) = 0
+                          AND l.hasrule = 1
+                          AND COALESCE(l.timecloses, 0) <> COALESCE(a.duedate, 0)))
+               ORDER BY l.id ASC",
+                []
+            )
         );
-        return $this->dispatch_and_advance($rows, $key, $batch, 'subid');
+        $this->flush_repairs($key);
+        return $acted;
     }
 
     /**
@@ -796,7 +1052,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * two populations stay separable.
      *
      * @param array $processable Course ids in scope.
-     * @param int $batch Row ceiling for this sweep.
+     * @param int $batch Window size.
      * @param string $key Cursor key.
      * @return int Rows stamped.
      */
@@ -804,76 +1060,76 @@ class reconcile_ledger extends \core\task\scheduled_task {
         global $DB;
 
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $params = $cparams + ['cursor' => $this->cursor($key)];
 
         /* Moodle 5.2 moved allocation out of assign_user_flags into its own
          * table, so the join differs by core version. Both shapes select the
          * same thing: a ledger row whose activity has a marker allocated that
          * the ledger has never stamped. */
         if ($DB->get_manager()->table_exists('assign_allocated_marker')) {
-            $sql = "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                           l.teamgroupid, l.attemptnumber, MIN(am.marker) AS markerid
-                      FROM {block_feedback_tracker_sub} l
-                      JOIN {assign_allocated_marker} am
-                        ON am.assignment = l.iteminstance
-                       AND am.student = l.userid
-                       AND am.marker > 0
-                     WHERE l.id > :cursor
-                       AND l.timeallocated IS NULL
-                       AND l.courseid $csql
-                  GROUP BY l.id, l.cmid, l.courseid, l.userid, l.groupid,
-                           l.teamgroupid, l.attemptnumber
-                  ORDER BY l.id ASC";
+            $template = "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
+                                l.teamgroupid, l.attemptnumber, MIN(am.marker) AS markerid
+                           FROM {block_feedback_tracker_sub} l
+                           JOIN {assign_allocated_marker} am
+                             ON am.assignment = l.iteminstance
+                            AND am.student = l.userid
+                            AND am.marker > 0
+                          WHERE l.id " . self::WINDOW_TOKEN . "
+                       GROUP BY l.id, l.cmid, l.courseid, l.userid, l.groupid,
+                                l.teamgroupid, l.attemptnumber
+                       ORDER BY l.id ASC";
         } else {
-            $sql = "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                           l.teamgroupid, l.attemptnumber, uf.allocatedmarker AS markerid
-                      FROM {block_feedback_tracker_sub} l
-                      JOIN {assign_user_flags} uf
-                        ON uf.assignment = l.iteminstance
-                       AND uf.userid = l.userid
-                       AND uf.allocatedmarker > 0
-                     WHERE l.id > :cursor
-                       AND l.timeallocated IS NULL
-                       AND l.courseid $csql
-                  ORDER BY l.id ASC";
-        }
-        $rows = $DB->get_records_sql($sql, $params, 0, $batch);
-        if (empty($rows)) {
-            $this->advance_cursor($key, 0, true);
-            return 0;
+            $template = "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
+                                l.teamgroupid, l.attemptnumber, uf.allocatedmarker AS markerid
+                           FROM {block_feedback_tracker_sub} l
+                           JOIN {assign_user_flags} uf
+                             ON uf.assignment = l.iteminstance
+                            AND uf.userid = l.userid
+                            AND uf.allocatedmarker > 0
+                          WHERE l.id " . self::WINDOW_TOKEN . "
+                       ORDER BY l.id ASC";
         }
 
         $now = time();
-        $lastid = 0;
         $seen = [];
         $buffer = [];
-        foreach ($rows as $r) {
-            $lastid = (int) $r->subid;
-            /* One descriptor per (cmid, userid), not per ledger row.
-             * stamp_allocation_for_user() already walks every row of the pair —
-             * every attempt, every cycle — so a student with k unstamped rows on
-             * one activity used to cost k full passes over the same k rows. */
-            $dedupkey = (int) $r->cmid . ':' . (int) $r->userid;
-            if (isset($seen[$dedupkey])) {
-                continue;
+        $acted = $this->walk(
+            $key,
+            $batch,
+            $this->ledger_window("AND l.timeallocated IS NULL AND l.courseid $csql", $cparams, $batch),
+            function (array $window) use ($DB, $template, $now, &$seen, &$buffer): int {
+                [$wsql, $wparams] = $DB->get_in_or_equal(array_keys($window), SQL_PARAMS_NAMED, 'w');
+                $rows = $DB->get_records_sql(str_replace(self::WINDOW_TOKEN, $wsql, $template), $wparams);
+                foreach ($rows as $r) {
+                    /* One descriptor per (cmid, userid), not per ledger row.
+                     * stamp_allocation_for_user() already walks every row of the
+                     * pair — every attempt, every cycle — so a student with k
+                     * unstamped rows on one activity used to cost k full passes
+                     * over the same k rows. */
+                    $dedupkey = (int) $r->cmid . ':' . (int) $r->userid;
+                    if (isset($seen[$dedupkey])) {
+                        continue;
+                    }
+                    $seen[$dedupkey] = true;
+                    $buffer[] = [
+                        'cmid' => (int) $r->cmid,
+                        'userid' => (int) $r->userid,
+                        'courseid' => (int) $r->courseid,
+                        /* The moment of DISCOVERY, carried so the worker records
+                         * what this sweep saw rather than whatever the clock says
+                         * when cron gets to it. That is the difference between a
+                         * number accurate to the sweep period, which
+                         * ALLOC_SOURCE_RECONCILED declares, and one that also
+                         * encodes how far behind cron is running. */
+                        'when' => $now,
+                    ];
+                    if (count($buffer) >= self::REPAIR_CHUNK) {
+                        $this->queue_stamps($buffer);
+                        $buffer = [];
+                    }
+                }
+                return count($rows);
             }
-            $seen[$dedupkey] = true;
-            $buffer[] = [
-                'cmid' => (int) $r->cmid,
-                'userid' => (int) $r->userid,
-                'courseid' => (int) $r->courseid,
-                /* The moment of DISCOVERY, carried so the worker records what
-                 * this sweep saw rather than whatever the clock says when cron
-                 * gets to it. That is the difference between a number accurate
-                 * to the sweep period, which ALLOC_SOURCE_RECONCILED declares,
-                 * and one that also encodes how far behind cron is running. */
-                'when' => $now,
-            ];
-            if (count($buffer) >= self::REPAIR_CHUNK) {
-                $this->queue_stamps($buffer);
-                $buffer = [];
-            }
-        }
+        );
         if (!empty($buffer)) {
             $this->queue_stamps($buffer);
         }
@@ -881,8 +1137,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
          * does it for the tuples it actually touched, and it now runs on the
          * worker. Enqueuing here as well would mark tuples dirty before — or
          * without — the write that makes them so. */
-        $this->advance_cursor($key, $lastid, count($rows) < $batch);
-        return count($rows);
+        return $acted;
     }
 
     /**
@@ -912,11 +1167,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
-     * Queue adhoc repairs for a sweep's rows and move its cursor on.
-     *
-     * The cursor resets to 0 when the sweep returned fewer rows than the
-     * batch, so the next tick starts a fresh pass rather than stalling at the
-     * end of the table.
+     * Turn one window's probe result into repair descriptors, queued in
+     * batches of {@see self::REPAIR_CHUNK} as the buffer fills; the sweep
+     * flushes the remainder with {@see self::flush_repairs()} once its walk is
+     * over. Neither touches the cursor: that is the walk's business, and it is
+     * derived from the window, never from what a probe returned.
      *
      * A team activity's ledger rows are per MEMBER while the repair is
      * per GROUP: `upsert_for_cm_user_attempt()` re-routes any member of a team
@@ -928,25 +1183,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * {@see backfill_one_submission} already routes to
      * `upsert_for_team_attempt()`.
      *
-     * @param array $rows Sweep result, keyed by the cursor column.
-     * @param string $key Cursor key.
-     * @param int $batch Batch size used.
-     * @param string $cursorfield Field carrying the keyset value.
-     * @return int Rows examined (not descriptors emitted — the cursor and the
-     *             end-of-pass test both key on rows read from the driving set).
+     * @param array $rows Probe result for one window.
+     * @return void
      */
-    private function dispatch_and_advance(array $rows, string $key, int $batch, string $cursorfield): int {
-        if (empty($rows)) {
-            $this->advance_cursor($key, 0, true);
-            return 0;
-        }
-        $buffer = [];
-        $seen = [];
-        $lastid = 0;
-        $batches = 0;
-        $queued = 0;
+    private function buffer_repairs(array $rows): void {
         foreach ($rows as $r) {
-            $lastid = (int) $r->{$cursorfield};
             $cmid = (int) $r->cmid;
             $attempt = (int) $r->attemptnumber;
             $courseid = (int) $r->courseid;
@@ -978,32 +1219,53 @@ class reconcile_ledger extends \core\task\scheduled_task {
                     'courseid' => $courseid,
                 ];
             }
-            if (isset($seen[$dedupkey])) {
+            if (isset($this->repairseen[$dedupkey])) {
                 continue;
             }
-            $seen[$dedupkey] = true;
-            $buffer[] = $descriptor;
-            if (count($buffer) >= self::REPAIR_CHUNK) {
-                $queued += $this->queue_repair($buffer) ? 1 : 0;
-                $batches++;
-                $buffer = [];
+            $this->repairseen[$dedupkey] = true;
+            $this->repairbuffer[] = $descriptor;
+            if (count($this->repairbuffer) >= self::REPAIR_CHUNK) {
+                $this->queue_buffered_repairs();
             }
         }
-        if (!empty($buffer)) {
-            $queued += $this->queue_repair($buffer) ? 1 : 0;
-            $batches++;
+    }
+
+    /**
+     * Queue the buffered descriptors as one adhoc batch.
+     *
+     * @return void
+     */
+    private function queue_buffered_repairs(): void {
+        if (empty($this->repairbuffer)) {
+            return;
         }
-        if ($batches > $queued) {
+        $this->repairqueued += $this->queue_repair($this->repairbuffer) ? 1 : 0;
+        $this->repairbatches++;
+        $this->repairbuffer = [];
+    }
+
+    /**
+     * Queue whatever the sweep in flight left in the buffer, report the batches
+     * that were refused, and reset the buffer for the next sweep.
+     *
+     * @param string $key Sweep key, for the trace line.
+     * @return void
+     */
+    private function flush_repairs(string $key): void {
+        $this->queue_buffered_repairs();
+        if ($this->repairbatches > $this->repairqueued) {
             mtrace(sprintf(
                 'reconcile_ledger: %s had %d of %d repair batch(es) refused '
                 . '(already pending, or blocked by a retry-exhausted row).',
                 $key,
-                $batches - $queued,
-                $batches
+                $this->repairbatches - $this->repairqueued,
+                $this->repairbatches
             ));
         }
-        $this->advance_cursor($key, $lastid, count($rows) < $batch);
-        return count($rows);
+        $this->repairbuffer = [];
+        $this->repairseen = [];
+        $this->repairbatches = 0;
+        $this->repairqueued = 0;
     }
 
     /**
@@ -1042,17 +1304,19 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * `$exhausted` is a claim the caller has to make deliberately: it means the
      * driving set had no more rows to give, so the pass is complete and the
-     * next tick starts a fresh one. Every call site currently derives it from
-     * `count($rows) < $batch`, which is only the same statement while nothing
-     * can truncate a batch early — there is no in-sweep deadline today, so it
-     * holds.
+     * next tick starts a fresh one. {@see self::walk()} derives it from the
+     * size of the last WINDOW it fetched — shorter than the batch, or empty —
+     * and from nothing else. A walk that stopped because its share of the tick
+     * ran out passes false, and keeps its cursor where the last window ended.
      *
-     * The moment one exists, it stops holding, and the failure is silent: a
-     * sweep that stopped halfway would report a short batch, be read as
-     * complete, and wrap its cursor to 0 — losing the rest of the pass and
-     * rescanning the beginning for ever. Passing the claim in rather than
-     * re-deriving it here is what makes that a decision someone has to get
-     * right rather than an accident of arithmetic.
+     * The distinction is what makes an in-sweep deadline safe. Derived from
+     * the probe result instead, the way the sweeps once did with
+     * `count($rows) < $batch`, a full window with nothing to repair reads as
+     * "pass complete", the cursor wraps to 0, and the sweep rescans the head
+     * of the table for ever while never reaching its tail — silently, and
+     * indistinguishable from a converged ledger in every log. Passing the
+     * claim in rather than re-deriving it here is what makes that a decision
+     * someone has to get right rather than an accident of arithmetic.
      *
      * @param string $key Sweep key.
      * @param int $lastid Highest keyset value examined this pass.

@@ -1042,6 +1042,383 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A window with nothing to repair still moves the cursor on.
+     *
+     * The sweeps used to run one statement whose LIMIT sat over the drift
+     * predicate, so a converged ledger — the normal state — returned fewer rows
+     * than the batch on every tick, was read as "pass complete", and had its
+     * cursor wrapped to 0 after walking the whole table to prove it. The walk
+     * now bounds the rows EXAMINED and derives both the cursor and the
+     * end-of-pass claim from the window, never from what the probe returned.
+     *
+     * Driven one window at a time (a sweep deadline already in the past) so
+     * each call's cursor can be read. Mutating the walk to claim exhaustion
+     * whenever the probe returns nothing — the old behaviour — resets the
+     * cursor after the first call and this goes red.
+     *
+     * @return void
+     */
+    public function test_a_window_with_nothing_to_repair_still_moves_the_cursor(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment();
+        $ids = $this->seed_ledger_rows($cm, $assign, $course, 6);
+        // Only the LAST row drifts: three windows of two must be walked to reach it.
+        $lastuser = (int) $DB->get_field('block_feedback_tracker_sub', 'userid', ['id' => end($ids)]);
+        $DB->set_field('assign_submission', 'latest', 0, ['assignment' => $assign->id, 'userid' => $lastuser]);
+        $DB->delete_records('task_adhoc');
+
+        $task = new reconcile_ledger();
+        $sweep = new \ReflectionMethod($task, 'sweep_latest_drift');
+        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, 0);
+        $processable = [(int) $course->id];
+        $cursor = static fn(): int => (int) get_config('block_feedback_tracker', 'reconcile_cursor_latest');
+        $queued = static fn(): int => count(
+            \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission')
+        );
+
+        $sweep->invoke($task, $processable, 2, 'latest');
+        $this->assertSame($ids[1], $cursor(), 'The cursor moved to the end of a window that held nothing to repair.');
+        $this->assertSame(0, $queued(), 'Control: nothing in the first window needed repair.');
+        $this->assertFalse(
+            (new \ReflectionProperty($task, 'exhausted'))->getValue($task)['latest'],
+            'A full window is not the end of the pass, whatever the probe returned.'
+        );
+
+        $sweep->invoke($task, $processable, 2, 'latest');
+        $this->assertSame($ids[3], $cursor(), 'And on past the second window, without wrapping.');
+        $this->assertSame(0, $queued());
+
+        $sweep->invoke($task, $processable, 2, 'latest');
+        $this->assertSame($ids[5], $cursor(), 'A full third window: the pass is not over yet.');
+        $this->assertSame(1, $queued(), 'The drifted row sat in the third window, and was found there.');
+
+        $sweep->invoke($task, $processable, 2, 'latest');
+        $this->assertSame(0, $cursor(), 'An empty window is the end of the pass, so the next one starts over.');
+    }
+
+    /**
+     * Drift past the first window is found within the tick.
+     *
+     * One window per tick would make the fix above a new starvation: a pass
+     * over a large ledger would take one tick per window. A sweep keeps
+     * walking windows until its driving set or its share of the time cap is
+     * spent, and the audit row says how far it got.
+     *
+     * @return void
+     */
+    public function test_drift_beyond_the_first_window_is_repaired_in_one_tick(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment();
+        $ids = $this->seed_ledger_rows($cm, $assign, $course, 6);
+        $lastuser = (int) $DB->get_field('block_feedback_tracker_sub', 'userid', ['id' => end($ids)]);
+        $DB->set_field('assign_submission', 'latest', 0, ['assignment' => $assign->id, 'userid' => $lastuser]);
+        set_config('reconcile_batch_size', '2', 'block_feedback_tracker');
+        $DB->delete_records('block_feedback_tracker_log');
+
+        $this->run_reconciler();
+
+        $this->assertSame(
+            0,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'islatest', ['id' => end($ids)]),
+            'Three windows in, the drift was still reached within the tick.'
+        );
+        $this->assertSame(
+            1,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'islatest', ['id' => $ids[0]]),
+            'Control: a row that did not drift is left alone.'
+        );
+        $details = json_decode(
+            (string) $DB->get_field('block_feedback_tracker_log', 'details', ['reason' => 'reconcile']),
+            true
+        );
+        $this->assertSame(6, (int) $details['sweeps']['latest']['examined'], 'Every ledger row was examined.');
+        $this->assertSame(3, (int) $details['sweeps']['latest']['windows'], 'In three windows of two.');
+        $this->assertSame(1, (int) $details['sweeps']['latest']['rows'], 'And one of them needed repair.');
+        $this->assertTrue($details['sweeps']['latest']['exhausted'], 'The pass completed within the tick.');
+    }
+
+    /**
+     * A ledger row whose course module is gone is the orphan sweep's to remove,
+     * not the drift sweep's to repair.
+     *
+     * The drift probe resolves the activity through the course module, exactly
+     * as the repair writer does. Reaching {assign} directly through the stored
+     * `iteminstance` is a few milliseconds cheaper and selects rows the writer
+     * cannot repair — a module row deleted with its activity row surviving —
+     * dispatching the same no-op on every pass. The module-present case is the
+     * control: the same drift, with the module in place, is dispatched.
+     *
+     * @return void
+     */
+    public function test_a_row_whose_module_is_gone_is_left_to_the_orphan_sweep(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment();
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $DB->set_field('assign_submission', 'latest', 0, ['assignment' => $assign->id, 'userid' => $student->id]);
+        $DB->delete_records('task_adhoc');
+
+        $task = new reconcile_ledger();
+        $sweep = new \ReflectionMethod($task, 'sweep_latest_drift');
+        $processable = [(int) $course->id];
+        $queued = static fn(): int => count(
+            \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission')
+        );
+
+        $sweep->invoke($task, $processable, 500, 'latest');
+        $this->assertSame(1, $queued(), 'Control: with the module in place the drift is dispatched.');
+
+        $DB->delete_records('task_adhoc');
+        // The module row goes while the activity row survives: the state the orphan sweep owns.
+        $DB->delete_records('course_modules', ['id' => $cm->id]);
+        $sweep->invoke($task, $processable, 500, 'latest');
+        $this->assertSame(0, $queued(), 'No module, no repair the writer could perform, so nothing is dispatched.');
+    }
+
+    /**
+     * The missing-rows sweep pages over {assign_submission} the same way.
+     *
+     * Its window is built inline rather than through the shared ledger helper,
+     * so the latest-drift tests prove nothing about it. Six submissions with no
+     * ledger row, windows of two, one window per call: each call must repair
+     * exactly its window and leave the cursor at the window's end.
+     *
+     * @return void
+     */
+    public function test_the_missing_rows_sweep_pages_over_the_source_table(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment();
+        $this->seed_submissions($assign, $course, 6);
+        $subids = array_map('intval', $DB->get_fieldset_sql(
+            'SELECT id FROM {assign_submission} WHERE assignment = :assignment ORDER BY id ASC',
+            ['assignment' => $assign->id]
+        ));
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
+        $DB->delete_records('task_adhoc');
+
+        $task = new reconcile_ledger();
+        $sweep = new \ReflectionMethod($task, 'sweep_missing_rows');
+        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, 0);
+        $processable = [(int) $course->id];
+        $cursor = static fn(): int => (int) get_config('block_feedback_tracker', 'reconcile_cursor_missing');
+        $queued = static fn(): int => count(
+            \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission')
+        );
+
+        $sweep->invoke($task, $processable, 2, 'missing');
+        $this->assertSame($subids[1], $cursor(), 'The cursor is the last SOURCE row of the window.');
+        $this->assertSame(1, $queued(), 'One repair batch for the two rows of the window.');
+
+        $sweep->invoke($task, $processable, 2, 'missing');
+        $this->assertSame($subids[3], $cursor());
+        $this->assertSame(2, $queued());
+
+        $sweep->invoke($task, $processable, 2, 'missing');
+        $this->assertSame($subids[5], $cursor(), 'A full third window: the pass is not over yet.');
+        $this->assertSame(3, $queued());
+
+        $sweep->invoke($task, $processable, 2, 'missing');
+        $this->assertSame(0, $cursor(), 'An empty window ends the pass.');
+
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame(
+            6,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'Every window\'s repairs were real: six rows, none repaired twice.'
+        );
+    }
+
+    /**
+     * The orphan sweep deletes across windows without wrapping its cursor.
+     *
+     * It acts inside each window rather than dispatching, and its driving set
+     * is the whole ledger with no course filter, so it is the third shape a
+     * paging regression could hide in. The surviving row is the control.
+     *
+     * @return void
+     */
+    public function test_the_orphan_sweep_deletes_across_windows(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment();
+        $ids = $this->seed_ledger_rows($cm, $assign, $course, 6);
+        // Every source row but the third one's is gone, as after a course reset.
+        $keeper = (int) $DB->get_field('block_feedback_tracker_sub', 'userid', ['id' => $ids[2]]);
+        $DB->delete_records_select(
+            'assign_submission',
+            'assignment = :assignment AND userid <> :keeper',
+            ['assignment' => $assign->id, 'keeper' => $keeper]
+        );
+
+        $task = new reconcile_ledger();
+        $sweep = new \ReflectionMethod($task, 'sweep_orphans');
+        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, 0);
+        $processable = [(int) $course->id];
+        $cursor = static fn(): int => (int) get_config('block_feedback_tracker', 'reconcile_cursor_orphan');
+        $left = fn(): array => $this->ledger_ids((int) $cm->id);
+
+        $sweep->invoke($task, $processable, 2, 'orphan');
+        $this->assertSame([$ids[2], $ids[3], $ids[4], $ids[5]], $left(), 'The first window\'s two orphans are gone.');
+        $this->assertSame($ids[1], $cursor());
+
+        $sweep->invoke($task, $processable, 2, 'orphan');
+        $this->assertSame([$ids[2], $ids[4], $ids[5]], $left(), 'The second window held one orphan and the keeper.');
+        $this->assertSame($ids[3], $cursor(), 'The cursor moved past the keeper too: it was examined, not skipped.');
+
+        $sweep->invoke($task, $processable, 2, 'orphan');
+        $this->assertSame([$ids[2]], $left(), 'Control: the row whose source survives is left alone.');
+        $this->assertSame($ids[5], $cursor());
+
+        $sweep->invoke($task, $processable, 2, 'orphan');
+        $this->assertSame(0, $cursor(), 'An empty window ends the pass.');
+    }
+
+    /**
+     * Team members split across two windows still produce one descriptor.
+     *
+     * The dedup that collapses a team's member rows into one container
+     * descriptor spans the whole sweep, not one window: reset per window, a
+     * three-member team whose rows straddle a window boundary would fan out
+     * twice — the exact amplification the collapse exists to stop.
+     *
+     * @return void
+     */
+    public function test_a_team_split_across_windows_is_still_dispatched_once(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, , $assign, $course] = $this->build_environment(['teamsubmission' => 1]);
+
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $members = [];
+        while (count($members) < 3) {
+            $member = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->getDataGenerator()->create_group_member(['groupid' => $group->id, 'userid' => $member->id]);
+            $members[] = $member;
+        }
+        group_resolver::reset_memo();
+        $submitted = time() - 4 * 86400;
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id, 'userid' => 0, 'attemptnumber' => 0,
+            'timecreated' => $submitted, 'timemodified' => $submitted,
+            'status' => submission_status::SUBMITTED, 'groupid' => $group->id, 'latest' => 1,
+        ]);
+        $this->run_reconciler();
+        $this->assertSame(3, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]), 'Sanity: one row per member.');
+
+        // Windows of two over three member rows: the boundary falls inside the team.
+        $DB->set_field('block_feedback_tracker_sub', 'islatest', 0, ['cmid' => $cm->id]);
+        set_config('reconcile_batch_size', '2', 'block_feedback_tracker');
+        $DB->delete_records('task_adhoc');
+        $DB->delete_records('block_feedback_tracker_log');
+        (new reconcile_ledger())->execute();
+
+        $descriptors = 0;
+        foreach (\core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission') as $task) {
+            foreach ((array) (((array) $task->get_custom_data())['rows'] ?? []) as $descriptor) {
+                if ((int) ((array) $descriptor)['cmid'] === (int) $cm->id) {
+                    $descriptors++;
+                }
+            }
+        }
+        $details = json_decode(
+            (string) $DB->get_field('block_feedback_tracker_log', 'details', ['reason' => 'reconcile']),
+            true
+        );
+        $this->assertSame(2, (int) $details['sweeps']['latest']['windows'], 'Control: the team really straddled two windows.');
+        $this->assertSame(1, $descriptors, 'One container descriptor for the group, whatever window each member fell in.');
+    }
+
+    /**
+     * A sweep's share of the tick is an equal split of what is left, floored
+     * at a second and capped at the tick's own deadline.
+     *
+     * Pure arithmetic, pinned as a table because the failure it guards against
+     * — a sweep granted the whole tick, or none of it — only shows on a site
+     * whose passes take longer than a tick, which no fixture here does.
+     *
+     * @return void
+     */
+    public function test_each_sweep_gets_an_equal_share_of_what_is_left(): void {
+        $share = new \ReflectionMethod(reconcile_ledger::class, 'share_deadline');
+        $cases = [
+            'nine sweeps left, 50 s left: a fifth of a tenth each' => [1000, 1050, 9, 1005],
+            'the last sweep gets everything that is left' => [1000, 1050, 1, 1050],
+            'a share under a second is rounded up to one' => [1000, 1003, 9, 1001],
+            'but never past the deadline' => [1000, 1000, 9, 1000],
+            'nor before it when the deadline has already gone' => [1000, 990, 9, 990],
+        ];
+        foreach ($cases as $label => [$now, $deadline, $left, $expected]) {
+            $this->assertSame($expected, $share->invoke(null, $now, $deadline, $left), $label);
+        }
+    }
+
+    /**
+     * Seed one submitted attempt per newly enrolled student, with no ledger row.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $course The course.
+     * @param int $count Students to create and enrol.
+     * @return \stdClass[] The students, in creation order.
+     */
+    private function seed_submissions(\stdClass $assign, \stdClass $course, int $count): array {
+        $students = [];
+        $tsubmit = time() - 4 * 86400;
+        while (count($students) < $count) {
+            $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+            $this->insert_submission((int) $assign->id, (int) $student->id, $tsubmit, 0);
+            $students[] = $student;
+        }
+        return $students;
+    }
+
+    /**
+     * Seed one submitted attempt per student, each with its ledger row.
+     *
+     * @param \stdClass $cm The course module.
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $course The course.
+     * @param int $count Students to create and enrol.
+     * @return int[] The ledger row ids, ascending.
+     */
+    private function seed_ledger_rows(\stdClass $cm, \stdClass $assign, \stdClass $course, int $count): array {
+        foreach ($this->seed_submissions($assign, $course, $count) as $student) {
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        }
+        $ids = $this->ledger_ids((int) $cm->id);
+        $this->assertCount($count, $ids, 'Sanity: one ledger row per seeded student.');
+        return $ids;
+    }
+
+    /**
+     * The ledger row ids of one activity, ascending.
+     *
+     * Ordered in SQL on purpose: `get_fieldset_select()` takes no sort
+     * argument, and without one PostgreSQL returns heap order, which the
+     * upsert's follow-up UPDATE reshuffles — the first draft of these tests
+     * flaked one run in three on exactly that.
+     *
+     * @param int $cmid
+     * @return int[]
+     */
+    private function ledger_ids(int $cmid): array {
+        global $DB;
+        return array_map('intval', $DB->get_fieldset_sql(
+            'SELECT id FROM {block_feedback_tracker_sub} WHERE cmid = :cmid ORDER BY id ASC',
+            ['cmid' => $cmid]
+        ));
+    }
+
+    /**
      * Fetch the plugin generator.
      *
      * @return \block_feedback_tracker_generator

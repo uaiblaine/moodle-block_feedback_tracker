@@ -21,6 +21,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list that is rarely empty — the deferred repairs spread across the nine
   sweeps instead of pinning to the same names every tick.
 
+### Fixed
+- **The reconciler no longer walks the whole ledger to find out it has nothing
+  to do.** Every sweep ran one statement whose `LIMIT` sat over its own repair
+  predicate, so the batch bounded the rows *returned*, not the rows examined.
+  Drift is rare by design — the observers repair the common paths — so on a
+  converged ledger, the normal state, each sweep returned fewer rows than the
+  batch, read that as "pass complete", and reset its cursor to 0 after
+  scanning every row in every tracked course. Every tick, for ever. The
+  latest-drift statement made it worse with an `OR` between the individual and
+  team join conditions, which no index on either PostgreSQL or MariaDB could
+  serve past the `assignment` column: for every ledger row it read every
+  submission of the activity, a cost quadratic in class size. A DBA reported it
+  as a query that never finished.
+
+  Measured on a synthetic 1.07 million-row ledger with 300 tracked courses and
+  nothing to repair: the statement took 24.5 s and returned nothing; the same
+  probe now takes 8 ms per window. Each sweep walks its driving table in
+  windows of `reconcile_batch_size` rows (the setting keeps its name and its
+  default; its meaning is now the window), probes only that window, and moves
+  its cursor to the end of the window whether or not it held anything. The
+  end of a pass is a window shorter than the batch and nothing else — a sweep
+  stopped by the time cap keeps its place and resumes next tick. The `OR` in
+  the latest-drift and orphan sweeps is two equality joins, one per submission
+  mode, each a point lookup on the unique key.
+
+  Behaviour that changes with it: a sweep keeps walking windows until its share
+  of the time cap is spent, so on a large site a full pass now takes a few
+  ticks instead of one unbounded query, and a single tick can no longer run
+  past the cap inside one sweep. Each sweep's share is an equal split of what
+  is left of the tick when its turn comes, so a cheap sweep hands its unused
+  time on. The audit row records rows `examined` and `windows` walked per
+  sweep beside the rows repaired. The window is capped at 10 000 rows whatever
+  the setting says, because it becomes a placeholder list in the probe and
+  PostgreSQL refuses a statement with more than 65 535 of them. The cursors'
+  meaning is unchanged; nothing needs resetting on upgrade.
+
 ### Changed
 - **The academic-time engine no longer runs inside the reconciler's tick.** The
   allocation sweep called `stamp_allocation_for_user()` inline, which invokes
