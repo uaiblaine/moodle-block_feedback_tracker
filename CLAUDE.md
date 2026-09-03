@@ -518,6 +518,52 @@ $this->getDataGenerator()->create_block('feedback_tracker', [
 course_access::reset_memo();  // flush memo for recycled courseids
 ```
 
+## Reconciliation sweeps (`classes/task/reconcile_ledger.php`)
+
+Every sweep goes through `walk()`: a cheap **window** query fetches up to
+`reconcile_batch_size` driving ids after the cursor, a **probe** runs only
+over those ids, and the cursor moves to the end of the window whether or not
+the probe returned anything. Three rules follow, each of which was a live
+defect once:
+
+- **The batch bounds the rows examined, never the rows returned.** A `LIMIT`
+  over a predicate that is false for almost every row (drift, orphans, missing
+  rows — all rare by design) does not page: the engine walks to the end of the
+  driving set to prove there are fewer than `$batch` matches, and
+  `count($rows) < $batch` then reads as "pass complete". Measured before the
+  window: 24.5 s and 66.7 M rows discarded to return nothing, every tick. Put
+  every predicate on the *driving* row into the window query and only the
+  expensive half into the probe.
+- **Exhaustion is a claim about the window** — shorter than the batch, or
+  empty — and only `walk()` makes it. A sweep stopped by its time share keeps
+  its cursor; deriving the claim from the probe result wraps the cursor to 0
+  on every drift-free window and the sweep rescans the head of the table for
+  ever, indistinguishable from a converged ledger in every log.
+- **Never join `{assign_submission}` with an `OR` between the individual and
+  team conditions.** Each arm mixes columns of three tables, so neither
+  PostgreSQL nor MariaDB can use more than `assignment` of the unique key
+  `(assignment, userid, groupid, attemptnumber)` and reads every submission of
+  the activity per ledger row; no index fixes it. Two `LEFT JOIN`s, one per
+  mode, gated on the live `teamsubmission` flag and read through `COALESCE`,
+  are each a point lookup. The individual arm leaves `groupid` unconstrained
+  because the writer's lookup in `submission_ledger` does; selector and writer
+  must agree row for row or a repair is dispatched on every pass.
+
+Resolve the activity through `{course_modules}` → `{modules}` → `{assign}` in
+the probes, as the writer does. Joining `{assign}` straight from
+`l.iteminstance` is faster and selects rows the writer cannot repair (module
+row gone, activity row alive). `idx_course_id (courseid, id)` serves a
+single-course equality only; with the processable-course `IN` list the planner
+walks the primary key and filters, which is fine at the window size but is
+why a per-course cursor (the `bfcursor` table `backfill_history` already
+uses) is the structural next step, not a bigger window.
+
+Testing a sweep's paging: call the private sweep through `ReflectionMethod`
+with `sweepdeadline` set to 0 (one window per call) and a batch smaller than
+the fixture, and read `reconcile_cursor_<key>` between calls. Every fixture
+in the test file is smaller than the default batch, so a paging regression is
+invisible to a test that only runs `execute()`.
+
 ## Submission-status scope (submitted-only)
 
 Only `assign_submission.status = 'submitted'` counts toward the SLA. `draft`

@@ -705,5 +705,13 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026081102, 'feedback_tracker');
     }
 
+    /* The reconciler pages by window now (CHANGELOG 1.1.0, "Fixed"): no schema
+     * change, and the cursors keep their meaning, so there is nothing to
+     * migrate. The savepoint marks the behaviour change and refreshes the
+     * cached descriptions of the two settings whose meaning moved with it. */
+    if ($oldversion < 2026090300) {
+        upgrade_block_savepoint(true, 2026090300, 'feedback_tracker');
+    }
+
     return true;
 }
