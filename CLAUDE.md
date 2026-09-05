@@ -13,6 +13,38 @@ per supported Moodle branch in `.github/workflows/ci.yml` (5.02 full
 PHP × DB matrix; 5.01/5.00/4.05 PostgreSQL-only) — **update those calls
 when `supported` changes**. Development happens on 5.1.
 
+## Agent orchestration budget (fleet rule, repeated here on purpose)
+
+This is section 6 of `~/dev/CLAUDE.md`, mirrored into every repo of the fleet.
+It is the one fleet rule these files are allowed to duplicate: a session opened
+inside a plugin directory does not always carry the fleet file in context, and
+the cost of missing this rule is paid immediately, in tokens, before anyone
+notices it was missing.
+
+**Every `Agent` call and every `agent()` inside a Workflow sets `model`
+explicitly.** An omitted `model` runs that subagent on the session model — the
+most expensive one — and is a defect, not a default:
+
+- `sonnet` — readers, graders, refuters, verifiers, measurers, stale-reference
+  sweeps, mechanical renames, test files written against a stated contract.
+- `opus` — implementers of non-trivial code, ADR and documentation drafters,
+  consolidators, critics, estimators.
+- the session model — only for work done inline in the main loop, never for a
+  subagent.
+
+Multi-agent workflows stay opt-in and lean whatever mode is on: size the fan-out
+to the question (roughly 10 to 25 agents), one refuter per finding and only for
+blocking findings, no open-ended "investigate every gap" rounds. Stop and resume
+with `resumeFromRunId` rather than relaunching, so completed agents stay cached.
+State which model each role got when reporting a launch.
+
+Measured 2026-09-02 on the hub category-context gap analysis: 7 lenses x 2
+refuters x 2 measurers plus a critic round, every one of them on the session
+model, had to be interrupted for cost — 36 agents with the refuters on Sonnet
+produced the same verified result. The rule has been restated three times
+(2026-09-01, 2026-09-02, 2026-09-04), the last time over implementers launched
+without `model` while the reviewers around them were correctly downgraded.
+
 ## Commands
 
 Run from the plugin repo (`~/dev/moodle-block_feedback_tracker`). It is
