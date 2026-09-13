@@ -1044,8 +1044,11 @@ amd/build/...` is a valid way to restore it.
 
 ### Dev loop
 
-- The stacks already serve `amd/src/*.js` directly, so an edit is live on
-  reload — rebuild only before committing.
+- The stacks serve `amd/build/*.min.js`, not `amd/src`, even with
+  `cachejs = false`: Moodle reads `amd/src` only when the `.map` beside the build
+  is missing. An edit is therefore live only after
+  `mdl grunt m501 blocks/feedback_tracker`, and a mutation test that skips the
+  rebuild silently tests the old build.
 - Visit `/blocks/feedback_tracker/pages/spike_react.php` as site admin
   (e.g. http://localhost:8501/…) for the canonical smoke test: it mounts
   every shared component.
