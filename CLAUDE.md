@@ -28,9 +28,20 @@ most expensive one — and is a defect, not a default:
 - `sonnet` — readers, graders, refuters, verifiers, measurers, stale-reference
   sweeps, mechanical renames, test files written against a stated contract.
 - `opus` — implementers of non-trivial code, ADR and documentation drafters,
-  consolidators, critics, estimators.
+  consolidators, critics, estimators. The alias means the **newest Opus**: since
+  2026-09-22 that is Claude Opus 5.5 (`claude-opus-5-5`), measured by asking a
+  subagent launched with `model: 'opus'` which model it runs on. Never pin
+  `claude-opus-5` or any older Opus id. The `Agent` tool accepts aliases only
+  (`sonnet`, `opus`, `haiku`, `fable`); `agent()` in a Workflow accepts an explicit
+  id as well, but the alias is what to write — it follows the newest Opus without
+  an edit here.
 - the session model — only for work done inline in the main loop, never for a
   subagent.
+- `effort` is set beside `model` on every call, never inherited: `high` for
+  verifiers, readers and refuters, `xhigh` for implementers and fixers (the
+  owner's rule of 2026-09-17). An omitted effort inherits the session's, and on
+  Opus 5.5 an explicit one matters twice over — that model's own default is
+  `medium`, one level below Opus 5.
 
 Multi-agent workflows stay opt-in and lean whatever mode is on: size the fan-out
 to the question (roughly 10 to 25 agents), one refuter per finding and only for
