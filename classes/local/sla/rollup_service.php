@@ -26,9 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
-use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\calendar\day_counter;
-use block_feedback_tracker\local\calendar\pause_lookup;
 use block_feedback_tracker\local\score\responsiveness_calculator;
 
 /**
@@ -42,9 +40,6 @@ use block_feedback_tracker\local\score\responsiveness_calculator;
  * - Graded stats over the trend_window_days window (medians / p90 / max /
  *   compliance) — historical responsiveness, used by the score formula.
  * - Trend (rolling 7d vs prior 7d median) — week-over-week direction of travel.
- *
- * Plus the `nextpause_*` / `lastpause_*` columns, precomputed so the read path
- * can show the next and last pause without recomputing them.
  */
 class rollup_service {
     /**
@@ -121,39 +116,52 @@ class rollup_service {
         $slagoal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
         $thresholds = bucket::parse_thresholds_eff();
         $criticalmin = $thresholds[2];
-        // Day-ruler bounds for the display-only critical_days/overgoal_days
-        // counts; the score reads the hour-based critical count.
-        $daythresholds = bucket::parse_thresholds_days();
-        $daygoal = $daythresholds[0];
-        $daycrit = $daythresholds[2];
-        // Business-days SLA goal for the display-only compliance_pct_days;
-        // the score reads the hour-based compliance_pct.
+        /* Business-days SLA goal: the day-ruler twin of sla_goal_hours, and
+         * like it the bound of both the over-goal count and compliance. The
+         * critical cutoff is the third day threshold, as the hour one is the
+         * third hour threshold. All of these day figures are display-only; the
+         * score reads the hour-based counts and compliance. */
         $slagoaldays = (float) (get_config('block_feedback_tracker', 'sla_goal_days') ?: 2);
+        $daycrit = bucket::parse_thresholds_days()[2];
 
-        // 1. Pending counts, submitted work only (see submission_status).
-        $pendingrows = $DB->get_records_select(
-            'block_feedback_tracker_sub',
-            'courseid = :courseid AND groupid = :groupid AND timegraded IS NULL'
-                . ' AND submissionstatus = :substatus'
-                . ' AND islatest = 1 AND iscurrent = 1',
+        /* 1. Pending counts, submitted work only (see submission_status). The
+         * activity is resolved as the ledger writer resolves it, and LEFT
+         * joined so a row whose activity is gone still counts as pending. */
+        $pendingrows = $DB->get_records_sql(
+            "SELECT sub.id, sub.effectivehours, sub.waitinghours, sub.timesubmitted, sub.timeallocated,
+                    a.markingworkflow, a.markingallocation
+               FROM {block_feedback_tracker_sub} sub
+          LEFT JOIN {course_modules} cm ON cm.id = sub.cmid
+          LEFT JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+          LEFT JOIN {assign} a ON a.id = cm.instance AND m.id IS NOT NULL
+              WHERE sub.courseid = :courseid AND sub.groupid = :groupid AND sub.timegraded IS NULL
+                AND sub.submissionstatus = :substatus
+                AND sub.islatest = 1 AND sub.iscurrent = 1",
             [
+                'modname' => 'assign',
                 'courseid' => $courseid,
                 'groupid' => $groupid,
                 'substatus' => submission_status::SUBMITTED,
-            ],
-            '',
-            'id, effectivehours, waitinghours, timesubmitted, timeallocated'
+            ]
         );
         $pending = count($pendingrows);
         $critical = 0;
         $overgoal = 0;
         $criticaldays = 0;
         $overgoaldays = 0;
-        // Pending work nobody has been made responsible for yet.
+        /* Pending work nobody has been made responsible for yet. Only an
+         * activity that allocates markers can leave work unallocated, so the
+         * count covers those activities alone, and stays null when no pending
+         * row belongs to one. Allocation needs marking workflow as well, as in
+         * mod_assign, which clears markingallocation when workflow is off. */
         $unallocated = 0;
+        $allocating = false;
         foreach ($pendingrows as $r) {
-            if ($r->timeallocated === null) {
-                $unallocated++;
+            if ((int) $r->markingworkflow === 1 && (int) $r->markingallocation === 1) {
+                $allocating = true;
+                if ($r->timeallocated === null) {
+                    $unallocated++;
+                }
             }
             $eff = (float) ($r->effectivehours ?? 0.0);
             // Date-based elapsed days (pending elapses up to now).
@@ -163,7 +171,7 @@ class rollup_service {
             // goal..crit | within-goal the remainder.
             if ($days['business'] > $daycrit) {
                 $criticaldays++;
-            } else if ($days['business'] > $daygoal) {
+            } else if ($days['business'] > $slagoaldays) {
                 $overgoaldays++;
             }
             // Mutually-exclusive bands that partition $pending: critical (eff >=
@@ -284,11 +292,7 @@ class rollup_service {
             'trend_pct_30d'  => $trendpct,
         ]);
 
-        // 5. Next + last pause indicators.
-        [$nextts, $nextreason, $nextnote] = self::next_pause_indicator($courseid, $groupid, $now);
-        [$lastendts, $lastreason] = self::last_pause_indicator($courseid, $groupid, $now);
-
-        // 6. Upsert.
+        // 5. Upsert.
         $existing = $DB->get_record(
             'block_feedback_tracker_group',
             ['courseid' => $courseid, 'groupid' => $groupid],
@@ -324,12 +328,7 @@ class rollup_service {
             'comp_pending'         => $components['pending'] ?? null,
             'comp_trend'           => $components['trend'] ?? null,
             'trend_pct_30d'        => $trendpct,
-            'nextpause_ts'         => $nextts,
-            'nextpause_reason'     => $nextreason,
-            'nextpause_note'       => $nextnote,
-            'lastpause_endts'      => $lastendts,
-            'lastpause_reason'     => $lastreason,
-            'unallocated'          => $unallocated,
+            'unallocated'          => $allocating ? $unallocated : null,
             'median_queue_h'       => $medianqueue,
             'median_alloc_h'       => $medianalloc,
             'alloc_coverage_pct'   => $alloccoverage,
@@ -457,165 +456,5 @@ class rollup_service {
             return [null, false];
         }
         return [$lock, true];
-    }
-
-    /**
-     * Find the next pause that starts after now and within 30 days for this
-     * (course, group): site calendar days (holiday / recess / closed /
-     * optional) and cpause windows. A pause already in progress is not "next".
-     *
-     * @param int $courseid
-     * @param int $groupid
-     * @param int $now
-     * @return array{0:?int, 1:?string, 2:?string} [ts, reason, note]
-     */
-    private static function next_pause_indicator(int $courseid, int $groupid, int $now): array {
-        global $DB;
-        $horizon = $now + 30 * 86400;
-
-        $tz = calendar::timezone();
-        $todayymd = (int) (new \DateTimeImmutable('@' . $now))->setTimezone($tz)->format('Ymd');
-        $horizonymd = (int) (new \DateTimeImmutable('@' . $horizon))->setTimezone($tz)->format('Ymd');
-
-        $candidates = [];
-
-        $cdays = $DB->get_records_select(
-            'block_feedback_tracker_cday',
-            'daydate >= :today AND daydate <= :horizon AND daytype IN (:t1, :t2, :t3, :t4)',
-            [
-                'today'   => $todayymd,
-                'horizon' => $horizonymd,
-                't1' => calendar::DAYTYPE_HOLIDAY,
-                't2' => calendar::DAYTYPE_RECESS,
-                't3' => calendar::DAYTYPE_CLOSED,
-                // Optional days count as pauses too; a sub-day event starts
-                // starttime minutes after that day's midnight.
-                't4' => calendar::DAYTYPE_OPTIONAL,
-            ],
-            'daydate ASC',
-            'id, daydate, daytype, starttime, endtime, note',
-            0,
-            10
-        );
-        foreach ($cdays as $row) {
-            $daystart = self::ymd_to_ts((int) $row->daydate, $tz);
-            $issubday = (string) $row->daytype === calendar::DAYTYPE_OPTIONAL
-                && $row->starttime !== null;
-            $ts = $issubday ? $daystart + ((int) $row->starttime) * 60 : $daystart;
-            if ($ts > $now) {
-                $candidates[] = [$ts, (string) $row->daytype, $row->note !== null ? (string) $row->note : null];
-            }
-        }
-
-        $pauses = pause_lookup::for_course_group($courseid, $groupid, $now, $horizon);
-        foreach ($pauses as $p) {
-            $start = (int) $p->timestart;
-            if ($start > $now) {
-                $reason = self::cpause_reason((string) $p->scopelevel);
-                $note = $p->note !== null ? (string) $p->note : null;
-                $candidates[] = [$start, $reason, $note];
-            }
-        }
-
-        if (empty($candidates)) {
-            return [null, null, null];
-        }
-        usort($candidates, static fn($a, $b) => $a[0] <=> $b[0]);
-        return $candidates[0];
-    }
-
-    /**
-     * Find the most recent pause that ended at or before now (within last 7 days).
-     *
-     * @param int $courseid
-     * @param int $groupid
-     * @param int $now
-     * @return array{0:?int, 1:?string} [endts, reason]
-     */
-    private static function last_pause_indicator(int $courseid, int $groupid, int $now): array {
-        global $DB;
-        $lookback = $now - 7 * 86400;
-
-        $tz = calendar::timezone();
-        $todayymd = (int) (new \DateTimeImmutable('@' . $now))->setTimezone($tz)->format('Ymd');
-        $lookbackymd = (int) (new \DateTimeImmutable('@' . $lookback))->setTimezone($tz)->format('Ymd');
-
-        $candidates = [];
-
-        $cdays = $DB->get_records_select(
-            'block_feedback_tracker_cday',
-            'daydate >= :lookback AND daydate <= :today AND daytype IN (:t1, :t2, :t3, :t4)',
-            [
-                'lookback' => $lookbackymd,
-                'today'    => $todayymd,
-                't1' => calendar::DAYTYPE_HOLIDAY,
-                't2' => calendar::DAYTYPE_RECESS,
-                't3' => calendar::DAYTYPE_CLOSED,
-                // Optional days count as pauses too.
-                't4' => calendar::DAYTYPE_OPTIONAL,
-            ],
-            'daydate DESC',
-            'id, daydate, daytype, starttime, endtime',
-            0,
-            10
-        );
-        foreach ($cdays as $row) {
-            $daystart = self::ymd_to_ts((int) $row->daydate, $tz);
-            $issubday = (string) $row->daytype === calendar::DAYTYPE_OPTIONAL
-                && $row->starttime !== null && $row->endtime !== null;
-            $endts = $issubday
-                ? $daystart + ((int) $row->endtime) * 60
-                : $daystart + 86400;
-            if ($endts <= $now) {
-                $candidates[] = [$endts, (string) $row->daytype];
-            }
-        }
-
-        $pauses = pause_lookup::for_course_group($courseid, $groupid, $lookback, $now);
-        foreach ($pauses as $p) {
-            if ($p->timeend !== null && (int) $p->timeend <= $now && (int) $p->timeend >= $lookback) {
-                $candidates[] = [(int) $p->timeend, self::cpause_reason((string) $p->scopelevel)];
-            }
-        }
-
-        if (empty($candidates)) {
-            return [null, null];
-        }
-        usort($candidates, static fn($a, $b) => $b[0] <=> $a[0]);
-        return $candidates[0];
-    }
-
-    /**
-     * Convert a YYYYMMDD int to a unix timestamp at midnight in a timezone.
-     *
-     * @param int $ymd
-     * @param \DateTimeZone $tz
-     * @return int
-     */
-    private static function ymd_to_ts(int $ymd, \DateTimeZone $tz): int {
-        $year = (int) substr((string) $ymd, 0, 4);
-        $month = (int) substr((string) $ymd, 4, 2);
-        $day = (int) substr((string) $ymd, 6, 2);
-        return (new \DateTimeImmutable(sprintf('%04d-%02d-%02d 00:00:00', $year, $month, $day), $tz))
-            ->getTimestamp();
-    }
-
-    /**
-     * Translate a cpause scopelevel to a stable reason slug. Mirrored by
-     * {@see \block_feedback_tracker\local\calendar\upcoming_pauses::scope_reason()}; keep in step.
-     *
-     * @param string $scopelevel
-     * @return string
-     */
-    private static function cpause_reason(string $scopelevel): string {
-        switch ($scopelevel) {
-            case 'course':
-                return 'coursepaused';
-            case 'group':
-                return 'grouppaused';
-            case 'site':
-            default:
-                return 'sitepaused';
-        }
     }
 }

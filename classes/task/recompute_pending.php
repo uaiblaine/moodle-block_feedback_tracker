@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\pending_recomputer;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Hourly pass to move pending submissions between SLA buckets as their
@@ -59,6 +60,7 @@ class recompute_pending extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $started = time();
         $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
         $batchsize = (int) (get_config('block_feedback_tracker', 'pending_batch_size') ?: self::DEFAULT_BATCH_SIZE);

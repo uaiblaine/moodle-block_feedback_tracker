@@ -37,6 +37,28 @@ use block_feedback_tracker\local\sla\dirty_queue;
  * @covers \block_feedback_tracker\task\drain_queue
  */
 final class drain_queue_test extends \advanced_testcase {
+    /**
+     * Buffer the task's mtrace() output, which Moodle's PHPUnit configuration
+     * (beStrictAboutOutputDuringTests) reports as a risky test.
+     * test_a_refused_dispatch_is_not_counted_as_dispatched() reads it.
+     *
+     * @return void
+     */
+    protected function setUp(): void {
+        parent::setUp();
+        ob_start();
+    }
+
+    /**
+     * Tear down the per-test output buffer.
+     *
+     * @return void
+     */
+    protected function tearDown(): void {
+        ob_end_clean();
+        parent::tearDown();
+    }
+
     public function test_empty_queue_is_noop(): void {
         $this->resetAfterTest();
         $this->seed_config();
@@ -135,6 +157,36 @@ final class drain_queue_test extends \advanced_testcase {
         (new drain_queue())->execute();
 
         $this->assertCount(1, \core\task\manager::get_adhoc_tasks(recompute_one::class));
+    }
+
+    /**
+     * A tuple whose recompute core refuses to queue is reported as refused,
+     * not counted as dispatched: the audit row's count is what actually went
+     * out.
+     *
+     * @return void
+     */
+    public function test_a_refused_dispatch_is_not_counted_as_dispatched(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_config();
+
+        // A recompute already pending for (42, 99): core refuses the duplicate.
+        $existing = new recompute_one();
+        $existing->set_custom_data(['courseid' => 42, 'groupid' => 99]);
+        \core\task\manager::queue_adhoc_task($existing, true);
+        dirty_queue::enqueue(42, 99, dirty_queue::REASON_GRADE);
+        // Control: a tuple with nothing pending is dispatched.
+        dirty_queue::enqueue(43, 1, dirty_queue::REASON_GRADE);
+
+        (new drain_queue())->execute();
+
+        $this->assertCount(2, \core\task\manager::get_adhoc_tasks(recompute_one::class));
+        $log = $DB->get_record('block_feedback_tracker_log', ['reason' => 'drain'], '*', MUST_EXIST);
+        $this->assertSame(1, (int) $log->affectedrows, 'Only the tuple actually queued counts as dispatched.');
+        $details = json_decode($log->details, true);
+        $this->assertSame(1, $details['refused']);
+        $this->assertStringContainsString('1 of 2 tuple(s) were not queued', ob_get_contents());
     }
 
     /**

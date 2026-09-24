@@ -16,10 +16,9 @@
 /**
  * Row of label / value counts.
  *
- * Stateless. Items have the shape of the `counts` array built by
- * classes/output/responsiveness_card.php (Waiting / Attention / Priority).
- * Values are rendered as given, so any number formatting is the caller's
- * job (the PHP builder passes strings from numfmt::count()).
+ * Stateless. Items are `{label, value}` pairs (e.g. Waiting / Attention /
+ * Priority). Values are rendered as given, so any number formatting is the
+ * caller's job (formatCount() for a submission count).
  *
  * @module    block_feedback_tracker/components/Counts
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

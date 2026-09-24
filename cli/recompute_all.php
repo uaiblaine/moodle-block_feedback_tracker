@@ -64,6 +64,9 @@ Options:
   -c, --courseid=ID   Limit to one course (0 / omitted = every course).
   --dryrun            List the tuples that would be recomputed, change nothing.
 
+Exits with status 1 when another process held the lock of any rollup, which
+is then left as it was; run the script again for those.
+
 Examples:
   php blocks/feedback_tracker/cli/recompute_all.php
   php blocks/feedback_tracker/cli/recompute_all.php --courseid=42
@@ -98,6 +101,7 @@ mtrace(sprintf(
 ));
 
 $done = 0;
+$locked = [];
 foreach ($rollups as $r) {
     $cid = (int) $r->courseid;
     $gid = (int) $r->groupid;
@@ -105,7 +109,10 @@ foreach ($rollups as $r) {
         mtrace("  courseid=$cid groupid=$gid");
         continue;
     }
-    \block_feedback_tracker\local\sla\rollup_service::recompute_group($cid, $gid);
+    if (!\block_feedback_tracker\local\sla\rollup_service::recompute_group($cid, $gid)) {
+        $locked[] = "courseid=$cid groupid=$gid";
+        continue;
+    }
     $done++;
     if ($done % 100 === 0) {
         mtrace("  ... $done / $total");
@@ -114,7 +121,14 @@ foreach ($rollups as $r) {
 
 if ($dryrun) {
     mtrace('Dry run complete — nothing changed.');
-} else {
-    mtrace("Done — recomputed $done / $total rollup row(s).");
-    mtrace('Now run "php admin/cli/purge_caches.php" so the dashboard reads the fresh values.');
+    exit(0);
 }
+mtrace("Done — recomputed $done / $total rollup row(s).");
+if (!empty($locked)) {
+    mtrace(count($locked) . ' rollup row(s) not recomputed: another process held their lock.');
+    foreach ($locked as $tuple) {
+        mtrace("  $tuple");
+    }
+}
+mtrace('Now run "php admin/cli/purge_caches.php" so the dashboard reads the fresh values.');
+exit(empty($locked) ? 0 : 1);

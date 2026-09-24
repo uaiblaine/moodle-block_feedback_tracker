@@ -97,6 +97,10 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
         ? (i18n.sparkline_zone_label || 'Desired speed: 0 to {$a}')
             .replace('{$a}', String(Math.round(Number(goal))))
         : '';
+    // The Effective column sorts on the figure it shows. In the business-days
+    // unit that is the date-based day count, which ignores the time of day
+    // and so need not order like the hours median.
+    const effectivekey = usesDays(config) ? 'cur_median_eff_days' : 'cur_median_eff_h';
     // Column labels, shared by the header row and each cell's data-label.
     const cols = {
         course: i18n.dashboard_col_course || 'Course',
@@ -104,7 +108,7 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
         pending: i18n.dashboard_col_pending || 'Pending',
         critical: i18n.dashboard_col_critical || 'Priority',
         effective: i18n.hero_effective_eyebrow || 'Effective',
-        trend: i18n.trend_window_label || '30 days',
+        trend: i18n.trend_window_label,
     };
 
     return html`
@@ -125,7 +129,7 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
                         sortKey="critical" currentKey=${sortKey} currentOrder=${sortOrder}
                         onClick=${onSort} i18n=${i18n} />
                     <${SortHeader} label=${cols.effective}
-                        sortKey="cur_median_eff_h" currentKey=${sortKey} currentOrder=${sortOrder}
+                        sortKey=${effectivekey} currentKey=${sortKey} currentOrder=${sortOrder}
                         onClick=${onSort} i18n=${i18n} />
                     <th scope="col">${cols.trend}</th>
                     <th scope="col">
@@ -185,7 +189,8 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
                                               width=${72}
                                               height=${20}
                                               color=${trendColour}
-                                              zonelabel=${zonelabel} />`
+                                              zonelabel=${zonelabel}
+                                              arialabel=${i18n.sparkline_aria} />`
                                     : html`<span class="bft-courses-dim">—</span>`}
                             </td>
                             <td class="bft-courses-cta">

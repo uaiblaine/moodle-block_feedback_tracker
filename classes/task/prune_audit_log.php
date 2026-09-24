@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Daily 04:30 — drops {block_feedback_tracker_log} rows older than 90 days.
@@ -50,6 +51,7 @@ class prune_audit_log extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $cutoff = time() - self::DEFAULT_RETENTION_DAYS * 86400;
         recompute_log::prune_older_than($cutoff);
     }

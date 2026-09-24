@@ -85,6 +85,8 @@ class tool_page_viewed extends \core\event\base {
                 return new \moodle_url('/blocks/feedback_tracker/pages/audit_log.php');
             case 'reset':
                 return new \moodle_url('/blocks/feedback_tracker/pages/reset.php');
+            case 'bulkremove':
+                return new \moodle_url('/blocks/feedback_tracker/pages/bulk_remove.php');
             default:
                 return new \moodle_url(
                     '/admin/settings.php',

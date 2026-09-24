@@ -46,106 +46,13 @@ import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
 import {getDashboard, getGraderPriorityList, getInsights}
     from 'block_feedback_tracker/lib/api';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
+import {aggregate, perceivedLabel} from 'block_feedback_tracker/lib/aggregate';
 import {usesDays, formatDays, formatCount} from 'block_feedback_tracker/lib/format';
 import {setUserPreference} from 'core_user/repository';
 import Notification from 'core/notification';
 
 /** Moodle user-preference name persisting the hero+insights collapse state. */
 const PREF_DASHBOARD_COLLAPSED = 'block_feedback_tracker_dashboard_collapsed';
-
-/**
- * Aggregate per-course rows into a single hero score + total counters.
- *
- * The score is weighted by pending count (minimum 1); the medians, compliance
- * and trend are plain means of the per-course values. Reads get_dashboard's
- * per-course keys one by one, so a key the WS stops returning silently reads
- * as null.
- *
- * @param {Array<object>} courses
- * @returns {{pending: number, critical: number, overgoal: number,
- *            avgscore: number|null, effective: number|null,
- *            perceived: number|null, effectivedays: number|null,
- *            perceiveddays: number|null, compliance: number|null,
- *            compliancedays: number|null, trendpct: number|null}}
- */
-const aggregate = (courses) => {
-    let pending = 0;
-    let critical = 0;
-    let overgoal = 0;
-    let scoreSum = 0;
-    let scoreWeight = 0;
-    let effSum = 0;
-    let effCount = 0;
-    let percSum = 0;
-    let percCount = 0;
-    let effDaysSum = 0;
-    let effDaysCount = 0;
-    let percDaysSum = 0;
-    let percDaysCount = 0;
-    let compSum = 0;
-    let compCount = 0;
-    let compDaysSum = 0;
-    let compDaysCount = 0;
-    let trendSum = 0;
-    let trendCount = 0;
-    // Branch count over the lint cap is acknowledged debt (refactor pass pending).
-    // eslint-disable-next-line complexity
-    (courses || []).forEach((c) => {
-        pending += Number(c.pending) || 0;
-        critical += Number(c.critical) || 0;
-        overgoal += Number(c.overgoal) || 0;
-        if (c.avgscore !== null && c.avgscore !== undefined) {
-            const weight = Math.max(1, Number(c.pending) || 0);
-            scoreSum += Number(c.avgscore) * weight;
-            scoreWeight += weight;
-        }
-        // Headline "effective / perceived" use the include-pending medians
-        // (cur_median_*) so the backlog shows through instead of reading ~0.
-        if (c.cur_median_eff_h !== null && c.cur_median_eff_h !== undefined) {
-            effSum += Number(c.cur_median_eff_h);
-            effCount += 1;
-        }
-        if (c.cur_median_raw_h !== null && c.cur_median_raw_h !== undefined) {
-            percSum += Number(c.cur_median_raw_h);
-            percCount += 1;
-        }
-        // Date-based day medians — the headline pair for the business-days unit.
-        if (c.cur_median_eff_days !== null && c.cur_median_eff_days !== undefined) {
-            effDaysSum += Number(c.cur_median_eff_days);
-            effDaysCount += 1;
-        }
-        if (c.cur_median_perc_days !== null && c.cur_median_perc_days !== undefined) {
-            percDaysSum += Number(c.cur_median_perc_days);
-            percDaysCount += 1;
-        }
-        if (c.compliance_pct !== null && c.compliance_pct !== undefined) {
-            compSum += Number(c.compliance_pct);
-            compCount += 1;
-        }
-        // Day-ruler compliance twin — chosen at display when the unit is days.
-        if (c.compliance_pct_days !== null && c.compliance_pct_days !== undefined) {
-            compDaysSum += Number(c.compliance_pct_days);
-            compDaysCount += 1;
-        }
-        if (c.trend_pct_30d !== null && c.trend_pct_30d !== undefined) {
-            trendSum += Number(c.trend_pct_30d);
-            trendCount += 1;
-        }
-    });
-    return {
-        pending,
-        critical,
-        overgoal,
-        avgscore:   scoreWeight > 0 ? scoreSum / scoreWeight : null,
-        effective:  effCount > 0 ? effSum / effCount : null,
-        perceived:  percCount > 0 ? percSum / percCount : null,
-        effectivedays: effDaysCount > 0 ? effDaysSum / effDaysCount : null,
-        perceiveddays: percDaysCount > 0 ? percDaysSum / percDaysCount : null,
-        compliance: compCount > 0 ? compSum / compCount : null,
-        compliancedays: compDaysCount > 0 ? compDaysSum / compDaysCount : null,
-        trendpct:   trendCount > 0 ? trendSum / trendCount : null,
-    };
-};
 
 /**
  * Pure client-side sort for the courses table.
@@ -160,7 +67,7 @@ const sortCourses = (rows, sortKey, sortOrder) => {
         return rows;
     }
     const dir = sortOrder === 'asc' ? 1 : -1;
-    const numeric = ['pending', 'critical', 'overgoal', 'avgscore', 'cur_median_eff_h'];
+    const numeric = ['pending', 'critical', 'overgoal', 'avgscore', 'cur_median_eff_h', 'cur_median_eff_days'];
     const numkey = numeric.indexOf(sortKey) !== -1;
     const copy = rows.slice();
     copy.sort((a, b) => {
@@ -188,23 +95,6 @@ const greetingKey = () => {
         return 'dashboard_greeting_afternoon';
     }
     return 'dashboard_greeting_evening';
-};
-
-/**
- * Perceived calendar-days from the raw (wall-clock) median wait. The raw
- * median already includes weekends and holidays, so it converts straight to
- * calendar days with no inflation factor. Returns e.g. "4d" (never below
- * "1d"), or "—" when there is nothing to show.
- *
- * @param {number|null|undefined} rawhours  Median raw (wall-clock) hours.
- * @returns {string}
- */
-const perceivedLabel = (rawhours) => {
-    const n = Number(rawhours);
-    if (!Number.isFinite(n) || n <= 0) {
-        return '—';
-    }
-    return Math.max(1, Math.round(n / 24)) + 'd';
 };
 
 /**
@@ -301,8 +191,8 @@ export default function DashboardView({initial}) {
     const [collapsed, setCollapsed] = useState(Boolean(initial.dashboard_collapsed));
 
     const sorted = useMemo(() => sortCourses(courses, sortKey, sortOrder), [courses, sortKey, sortOrder]);
-    const totals = useMemo(() => aggregate(courses), [courses]);
-    const heroBand = bandForScore(totals.avgscore, scoreThresholds);
+    const totals = useMemo(() => aggregate(courses, 'avgscore'), [courses]);
+    const heroBand = bandForScore(totals.score, scoreThresholds);
     const heroBandLabel = (i18n.bands || {})[heroBand] || '';
 
     // Local-clock greeting, recomputed every render (cheap).
@@ -433,7 +323,7 @@ export default function DashboardView({initial}) {
 
     // Build the hero props once so both the full and slim variants get the same shape.
     const heroprops = {
-        score: totals.avgscore,
+        score: totals.score,
         band: heroBand,
         bandlabel: heroBandLabel,
         effectivehours: totals.effective,

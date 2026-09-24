@@ -122,17 +122,92 @@ final class peer_stats_test extends \advanced_testcase {
      */
     public function test_excluded_group_does_not_shape_its_own_benchmark(): void {
         $this->resetAfterTest();
-        // Six peers at 50 plus one outlier; excluding the outlier must move
-        // the median off it.
-        $ids = $this->seed_groups([50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 100.0]);
+        // Median of all four is 25; without the outlier it is 20.
+        $ids = $this->seed_groups([10.0, 20.0, 30.0, 100.0]);
         $outlier = end($ids);
 
         $withall = peer_stats::for_exclusion(0);
         peer_stats::reset_memo();
         $without = peer_stats::for_exclusion($outlier);
 
-        $this->assertSame(50.0, $without['department_score']);
-        $this->assertNotNull($withall['department_score']);
+        $this->assertSame(25.0, $withall['department_score']);
+        $this->assertSame(20.0, $without['department_score']);
+    }
+
+    /**
+     * Group id 0 is the ungrouped card of every course, so the exclusion is by
+     * (course, group): a course's own ungrouped row leaves its benchmark, other
+     * courses' ungrouped rows and the course's real groups stay in it.
+     *
+     * @return void
+     */
+    public function test_ungrouped_card_is_excluded_from_its_own_benchmark(): void {
+        $this->resetAfterTest();
+        peer_stats::reset_memo();
+        $rows = [
+            [7400, 0, 100.0],
+            [7401, 0, 10.0],
+            [7402, 0, 20.0],
+            [7403, 0, 30.0],
+            [7400, 810, 40.0],
+        ];
+        foreach ($rows as [$courseid, $groupid, $score]) {
+            $this->generator()->create_rollup_row([
+                'courseid' => $courseid,
+                'groupid' => $groupid,
+                'responsiveness_score' => $score,
+                'median_eff_h' => 10.0,
+            ]);
+        }
+        peer_stats::reset_memo();
+
+        // Course 7400's ungrouped card is compared with 10, 20, 30 and 40.
+        $own = peer_stats::for_exclusion(0, 7400);
+        // Control, from the same memo: course 7401's ungrouped card is compared
+        // with 100, 20, 30 and 40, so course 7400's row is still in its pool.
+        $other = peer_stats::for_exclusion(0, 7401);
+
+        $this->assertSame(25.0, $own['department_score']);
+        $this->assertSame(35.0, $other['department_score']);
+    }
+
+    /**
+     * The hours benchmarks need the minimum sample on their own. A card with
+     * pending work and nothing graded has a score but no median wait, so three
+     * scored peers can carry fewer than three medians, and one peer's median
+     * must not be published as the department norm.
+     *
+     * @return void
+     */
+    public function test_hours_benchmarks_need_the_minimum_sample_of_medians(): void {
+        $this->resetAfterTest();
+        peer_stats::reset_memo();
+        foreach ([[820, 5.0], [821, 15.0], [822, null]] as $i => [$groupid, $hours]) {
+            $this->generator()->create_rollup_row([
+                'courseid' => 7500 + $i,
+                'groupid' => $groupid,
+                'responsiveness_score' => 50.0,
+                'median_eff_h' => $hours,
+            ]);
+        }
+        peer_stats::reset_memo();
+
+        $result = peer_stats::for_exclusion(0);
+
+        // The score sample is large enough, so the score benchmarks are published.
+        $this->assertSame(50.0, $result['department_score']);
+        $this->assertNull($result['department_hours']);
+        $this->assertNull($result['top10_hours']);
+
+        // Control: a third median brings the hours benchmarks back.
+        $this->generator()->create_rollup_row([
+            'courseid' => 7503,
+            'groupid' => 823,
+            'responsiveness_score' => 50.0,
+            'median_eff_h' => 25.0,
+        ]);
+        peer_stats::reset_memo();
+        $this->assertSame(15.0, peer_stats::for_exclusion(0)['department_hours']);
     }
 
     /**

@@ -4,6 +4,8 @@
 
 **Revision note.** Three adversarial reviews were applied. The single decisive correction: rev. 1's replacement predicate **deleted** the `grade.timemodified >= submission.timemodified` comparison, which caused a freshly-opened resubmission cycle to be born *graded* with a fabricated 0-hour turnaround — strictly worse than the bug it replaced. The comparison is not the defect; applying it to a **single mutable row** is. Rev. 2 scopes it **per cycle**, where the reference (`timesubmitted`) is immutable once a cycle closes. Every other accepted correction is folded in; disagreements are recorded in **Disputed** notes and were re-verified against the checkouts before being rejected.
 
+**Status.** "Plugin today" in the scenario families below describes the plugin as it was audited. The remediations have since landed, some in a different form from the sketches in §3 and §4; where a sketch and the shipped code differ on something a reader would build on, the passage carries an **Implemented** note naming the code.
+
 ---
 
 ## 0. Ground truth (re-verified, quoted verbatim)
@@ -275,7 +277,7 @@ Plugin today: `timesubmitted` overwritten T1 → T2 (`submission_ledger.php:107`
 - **Core displays:** submission-status table (student *and* teacher) → **Graded** (§0.1). Grading table → **"Graded - resubmitted"** (`gradingtable.php:1283-1286`; the badge is suppressed entirely under marking workflow). Mark and marked-date columns still render (`:999-1040`, `:1065-1077`). "Needs grading" counter and *Requires grading* filter → **+1 again** (§0.2).
 - **Events:** `assessable_uploaded` → `\assignsubmission_onlinetext\event\submission_updated` (**not registered**) → `assessable_submitted` (registered).
 - **Plugin today:** `observer::submission_changed` → `upsert_for_cm_user_attempt(cmid, userid, 0)`. At `submission_ledger.php:119`, `$grade->timemodified (T2) >= $timesubmitted (T3)` is **false** → `$timegraded` keeps its line-108 `null`. Line 152 writes NULL over T2; line 151 writes T3 over T1; `$upperbound = $now` (`:127`) so `waitinghours ≈ 0`, `effectivehours ≈ 0`, `effectivedays ≈ 0`, `slabucket = 'excellent'` (`:164`); enqueued as `REASON_SUBMISSION` (`:181-185`, the `timegraded === null` arm).
-- **Consequences on every read surface** (all key off `timegraded IS NULL AND submissionstatus = 'submitted'`): `rollup_service.php:137-138` pending +1; `submission_browser.php:261-268` the row enters the Pending tab and vanishes from the Graded tab; `get_grader_priority_list.php:125` it joins the cross-course urgent list; `get_dashboard` totals move; `responsiveness_card` / `GroupCard.js` Aguardando increments; `pending_recomputer.php:68-69` re-ages it hourly forever.
+- **Consequences on every read surface** (all key off `timegraded IS NULL AND submissionstatus = 'submitted'`): `rollup_service.php:137-138` pending +1; `submission_browser.php:261-268` the row enters the Pending tab and vanishes from the Graded tab; `get_grader_priority_list.php:125` it joins the cross-course urgent list; `get_dashboard` totals move; `GroupCard.js` Aguardando increments (and so did the server no-JS card, `responsiveness_card`, which has since been removed); `pending_recomputer.php:68-69` re-ages it hourly forever.
 - **Historical destruction:** `rollup_service.php:188-189` (`timegraded IS NOT NULL AND timegraded >= :cutoff`) loses the data point → `numgraded30d`, `compliance_pct`, `median_eff_h`, `p90_eff_h`, `max_eff_h`, `median_raw_h`, `p90_raw_h`, `max_raw_h` recomputed without it; `rollup_service.php:346-348` → `trend_pct_30d` swings or nulls; `responsiveness_calculator.php:242-244` loses a momentum point; `get_academic_days.php:251-253` loses the day's point; `site_stats_service.php:50-51` and `trend_service.php:52-53` lose it for future days only.
 - **Perverse headline:** `rollup_service.php:240-248` merges pending rows into `cur_median_eff_h` / `cur_median_raw_h` / `cur_median_eff_days` / `cur_median_perc_days`, so a real 24 h value is replaced by a ~0 h one — displayed turnaround gets **faster** exactly when the backlog gets worse. `responsiveness_calculator.php:118-124` forces compliance and median terms to 1.0 when `numgraded30d` hits 0, so the score can **rise**.
 - **Sparkline / school comparison never heal:** `{block_feedback_tracker_trend}` and `{block_feedback_tracker_site}` are only ever written for *yesterday*, so a materialised day keeps counting a grading the live rollup has discarded. Two panels of one card disagree permanently.
@@ -410,9 +412,15 @@ Core folds it in two places, and they are **not** the same rule:
 
 Plugin today: not registered **and** `rule_resolver::resolve_rule()` (`classes/local/sla/rule_resolver.php:47-80`) consults only `{assign}` and `{assign_overrides}` — `{assign_user_flags}` is never read anywhere in the plugin. **MISSED-no-event + structurally blind. FIX-6.8 + FIX-10.**
 
+**Implemented:** `extension_granted` is registered (`observer::user_rule_changed`, which re-resolves that student through `submission_ledger::re_resolve_rules_for_assign_user()`), and `rule_resolver` reads `{assign_user_flags}.extensionduedate` with both of core's rules (§3.7).
+
 **F3/F4 — user override created / updated / deleted.** `\mod_assign\event\user_override_created|_updated` (`overrideedit.php:231`, `:197`; 5.3 `classes/override_manager.php:737`, `:761`) and `_deleted` (`locallib.php:962`; 5.3 `override_manager.php:713`). None registered; `re_resolve_rules_for_assign_group()` handles `(assignid, groupid)` only. **MISSED-no-event → STALE-row. FIX-6.4.**
 
+**Implemented:** the three user-override events are registered to `observer::user_rule_changed` (with `extension_granted`).
+
 **F5 — group override created / updated / deleted.** Registered (`db/events.php:57-69`), but `re_resolve_rules_for_assign_group()` selects rows by the **plugin's own** `groupid` attribution (`group_resolver`'s "most recently joined group"), not by `{groups_members}`. Also `rule_resolver.php:54-57` uses `$DB->get_record()` for the user override with no limit — two override rows for one user yields a debugging notice and `false`. **OK-but-mis-targeted. FIX-6.4 note.**
+
+**Implemented:** `re_resolve_rules_for_assign_group()` selects the overridden group's members through `{groups_members}`, and resolves each of them against all of their groups. `rule_resolver` chooses the governing group override as core does (`assign::override_exists()`, `mod_assign_cm_info_dynamic()`): the lowest `sortorder` among every group the student belongs to, a tie going to the lowest id, hidden groups included. The dates fall through field by field (user override, then group override, then the activity), and in an override NULL means "inherit" while 0 removes the date. Every override lookup takes the lowest id rather than `get_record()`, so duplicate rows cannot raise a notice. The resolution depends on the student alone, never on the group the ledger attributes the row to, so every write path stores the same dates.
 
 **F6 — assign due date / cutoff changed on the settings form.** Only `\core\event\course_module_updated`; `{assign}.timemodified` bumps. Not registered. **MISSED-no-event → STALE-row. FIX-6.10 + R6.**
 
@@ -473,6 +481,8 @@ Plugin today: `observer.php:62-69` reads `userid = 0` off the group row and call
 **I1 — `g.timemodified == s.timemodified`.** The plugin's `>=` at `submission_ledger.php:119` is the mirror image of core's `s.timemodified >= g.timemodified`: on a tie the plugin says *graded* while core's counter says *needs grading*. Core deliberately manufactures this tie for auto-created rows (§0.4); the plugin is saved only by `grade >= 0`. **After FIX-2 the tie is resolved the same way, but scoped to a cycle whose `timesubmitted` is immutable, so it can no longer destroy anything.** Documented divergence, deliberate.
 
 **I2 — the submitter holds `mod/assign:grade`.** `should_skip_submitter()` (`:338-353`) skips them, gated by `exclude_grader_submissions` (default ON). Hazard: `self::$skipsubmittermemo` (`:325`) and `group_resolver::$memo` are process-lifetime statics, so a long backfill/drain run caches capability and group answers for the whole run. A reset helper already exists (`submission_ledger.php:355-360`). **FIX-9 must call it per batch.**
+
+**Implemented:** every scheduled and adhoc task starts with `local\sla\process_memos::reset()`, which drops every static memo of the plugin, these two included. The setting is read with the default-ON rule: an unset key counts as on, and only a stored `'0'` turns the filter off.
 
 **I3 — concurrent writers.** `dirty_queue::enqueue()` (`dirty_queue.php:60-82`) and the ledger upsert (`submission_ledger.php:137-175`) both do `get_record()` → `insert_record()` against UNIQUE indexes (`db/install.xml:36`, `:143`) with no transaction and no catch. **Corrected severity:** the resulting `dml_write_exception` is caught by the event manager (§0.6), so the request is not aborted by the throw itself; the real damage is on PostgreSQL when the observer runs inside an open transaction, where the failed INSERT poisons the connection and every later statement fails. **Latent fatal on PG-in-transaction, noisy elsewhere. FIX-13.**
 
@@ -1150,6 +1160,8 @@ Two pre-existing inconsistencies worth folding into the same pass, since they li
 
 `merge_override()` (the batch path used by `activity_schedule`) needs the same treatment via a pre-loaded flags map.
 
+**Implemented differently.** The per-student resolution runs in SQL: `rule_resolver::joins_sql()` adds the student's override, the governing group override and the flags row, and `rule_resolver::date_sql()` gives each effective date, applying the extension with the two rules above. The ledger writer (`resolve_rule()`) and the reconciler's rule-drift probe splice in the same expressions, so they cannot disagree about a row. `merge_override()` takes no extension on purpose: `activity_schedule` resolves a group's schedule, and an extension belongs to one student.
+
 **Disputed.** Rev. 1 (M9) asserted "a null cutoff means the due date IS the final date"; `locallib.php:6310-6314` shows the opposite — with no cutoff, `$dateopen` only checks `allowsubmissionsfromdate`. Rev. 3 (C14) called raising `$timecutoff` only when non-null "the opposite of core"; core does exactly that (`if ($finaldate) { … }`, `:6301`). Both cutoff halves of rev. 1's original code were already right; only the *justification* for the `$timecloses` line needed a real citation, supplied above.
 
 ### 3.8 FIX-12 — grade type "None" / non-gradable activities
@@ -1433,6 +1445,8 @@ SELECT l.id, l.cmid, l.courseid, l.userid, l.attemptnumber
 ```
 
 The third branch is the revoke probe: once `extensionduedate` returns to 0 the stored `timecloses` no longer matches the assign's own due date, which is the only evidence left.
+
+**Implemented differently.** The sketch compares the stored dates with the raw extension and the raw `a.duedate`, and so flags every row with an override or an extension on every pass, for ever, while the repair writes the same values back. The shipped `sweep_rule_drift()` compares each of `timeopens`, `timecloses` and `timecutoff` with the writer's own expression (`rule_resolver::date_sql()` over `rule_resolver::joins_sql()`), so a row is dispatched only when a repair would change it, revoked extensions included.
 
 **Cursor + budget.** Store one cursor per query in plugin config (the `backfill_effectivedays` pattern); process a bounded batch per tick under a soft time cap; when `reconcile_full_sweep_pending` is set (armed by the upgrade), sweep every query from id 0 once and clear the flag.
 

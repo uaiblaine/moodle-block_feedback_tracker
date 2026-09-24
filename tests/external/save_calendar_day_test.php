@@ -55,6 +55,39 @@ final class save_calendar_day_test extends \advanced_testcase {
     }
 
     /**
+     * Removing a date that has no row changes nothing, so it must not trigger
+     * the site-wide recompute that cal_day_updated causes. Removing a date that
+     * does have a row is the control: it re-enqueues the seeded rollup and
+     * bumps calver, which proves the event path is live in this test.
+     *
+     * @return void
+     */
+    public function test_removing_a_day_without_a_row_requeues_nothing(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $course = $generator->create_tracked_course();
+        $generator->create_rollup_row(['courseid' => (int) $course->id]);
+        $DB->delete_records('block_feedback_tracker_queue');
+        $calver = \block_feedback_tracker\local\calendar\calendar::current_version();
+
+        $result = save_calendar_day::execute(20260525, save_calendar_day::ACTION_REMOVE, '');
+
+        $this->assertTrue($result['success']);
+        $this->assertSame(0, $result['id']);
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_queue'));
+        $this->assertSame($calver, \block_feedback_tracker\local\calendar\calendar::current_version());
+
+        $generator->create_calendar_day(20260526, 'holiday');
+        save_calendar_day::execute(20260526, save_calendar_day::ACTION_REMOVE, '');
+
+        $this->assertFalse($DB->record_exists('block_feedback_tracker_cday', ['daydate' => 20260526]));
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_queue', ['courseid' => (int) $course->id]));
+        $this->assertNotSame($calver, \block_feedback_tracker\local\calendar\calendar::current_version());
+    }
+
+    /**
      * Test that unauthorised user is rejected.
      */
     public function test_unauthorised_user_rejected(): void {

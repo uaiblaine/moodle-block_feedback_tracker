@@ -191,8 +191,6 @@ class responsiveness_calculator {
      * @return float|null
      */
     public static function momentum_pct(int $courseid, int $groupid, ?int $now = null): ?float {
-        global $DB;
-
         $now = $now ?? time();
         $weeksec = 7 * 86400;
         $recentstart = $now - $weeksec;
@@ -307,8 +305,10 @@ class responsiveness_calculator {
      * float array [excellent_min, good_min, regular_min].
      *
      * Each missing or non-numeric element falls back to its own default
-     * (90, 70, 40). The values are neither clamped nor sorted, so
-     * {@see self::band_for()} assumes the admin typed them in descending order.
+     * (90, 70, 40). The values are neither clamped nor sorted: the admin
+     * setting rejects a value out of descending order or outside 0-100
+     * ({@see \block_feedback_tracker\local\admin\thresholds_setting}), and a
+     * value stored before that check is read as it was typed.
      *
      * @return array{0:float, 1:float, 2:float}
      */

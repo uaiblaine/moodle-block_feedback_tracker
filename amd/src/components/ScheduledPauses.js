@@ -26,7 +26,8 @@
  * `typelabel` strings are localised in the platform timezone by
  * upcoming_pauses::for_display()), so this component only lays them out.
  * Renders nothing when there are no visible pauses. The `bft-rh-tone-regular`
- * class gives it the dashboard hero's amber "attention" tone.
+ * class supplies the regular band's amber tone, which the `.bft-scheduled`
+ * rules in styles.css paint with.
  *
  * @module    block_feedback_tracker/components/ScheduledPauses
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

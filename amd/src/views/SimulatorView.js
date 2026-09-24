@@ -30,6 +30,7 @@ import ScoreGauge from 'block_feedback_tracker/components/ScoreGauge';
 import Badge from 'block_feedback_tracker/components/Badge';
 import {computeScore, TERMS} from 'block_feedback_tracker/lib/score';
 import {classifySpeed, speedLabel} from 'block_feedback_tracker/lib/trend';
+import {formatDecimal} from 'block_feedback_tracker/lib/format';
 
 /** Built-in scenarios — each sets the hypothetical group's metrics. */
 const SCENARIOS = [
@@ -151,7 +152,7 @@ export default function SimulatorView({initial}) {
     });
 
     const termName = (k) => (i18n['sim_term_' + k] || k);
-    const fmt = (n, d = 2) => (n === null || n === undefined ? '—' : Number(n).toFixed(d));
+    const fmt = (n, d = 2) => (n === null || n === undefined ? '—' : formatDecimal(n, d));
 
     return html`
         <div class="bft-sim">

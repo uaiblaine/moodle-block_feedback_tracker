@@ -38,7 +38,10 @@ use core_privacy\local\request\writer;
  * Declares the plugin's personal data and exports / deletes it.
  *
  *  - {block_feedback_tracker_sub}, the per-submission ledger, holds the
- *    student (userid); it is exported and deleted per course context.
+ *    student (userid); it is exported and deleted per course context. It also
+ *    names the teacher currently allocated to mark each submission
+ *    (allocmarkerid): that teacher's allocations are exported as theirs, and
+ *    erasing them clears the id while the student's row stays.
  *  - The calendar tables (cday / chours / cpause) record who last edited a
  *    row (`usermodified`) and the audit log who triggered a recompute
  *    (`triggeredby`). They live at system context; erasure clears the
@@ -99,6 +102,7 @@ class provider implements
                 'gradestate'       => 'privacy:metadata:sub:gradestate',
                 'timeallocated'    => 'privacy:metadata:sub:timeallocated',
                 'allocmarkerid'    => 'privacy:metadata:sub:allocmarkerid',
+                'timeallocmarker'  => 'privacy:metadata:sub:timeallocmarker',
                 'queuehours'       => 'privacy:metadata:sub:queuehours',
                 'allochours'       => 'privacy:metadata:sub:allochours',
                 'waitinghours'     => 'privacy:metadata:sub:waitinghours',
@@ -182,9 +186,9 @@ class provider implements
     }
 
     /**
-     * Course contexts where the user has ledger rows; system context when
-     * they appear as `usermodified` on any calendar/pause table or
-     * `triggeredby` on the audit log.
+     * Course contexts where the user has ledger rows or is the allocated
+     * marker of one; system context when they appear as `usermodified` on any
+     * calendar/pause table or `triggeredby` on the audit log.
      *
      * @param int $userid
      * @return contextlist
@@ -199,6 +203,16 @@ class provider implements
         $contextlist->add_from_sql(
             $sql,
             ['userid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
+        );
+
+        // A separate query rather than an OR, so each column is matched on its own.
+        $sql = "SELECT ctx.id
+                  FROM {block_feedback_tracker_sub} s
+                  JOIN {context} ctx ON ctx.contextlevel = :coursectxlevel AND ctx.instanceid = s.courseid
+                 WHERE s.allocmarkerid = :markerid";
+        $contextlist->add_from_sql(
+            $sql,
+            ['markerid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
         );
 
         // Select ctx.id from {context} rather than a bare :placeholder:
@@ -223,8 +237,8 @@ class provider implements
     }
 
     /**
-     * Users with ledger rows in a course context, or who modified any
-     * calendar / audit row at system context.
+     * Users with ledger rows in a course context or allocated to mark one, or
+     * who modified any calendar / audit row at system context.
      *
      * @param userlist $userlist
      * @return void
@@ -236,6 +250,11 @@ class provider implements
             $userlist->add_from_sql(
                 'userid',
                 'SELECT userid FROM {block_feedback_tracker_sub} WHERE courseid = :courseid',
+                ['courseid' => $context->instanceid]
+            );
+            $userlist->add_from_sql(
+                'allocmarkerid',
+                'SELECT allocmarkerid FROM {block_feedback_tracker_sub} WHERE courseid = :courseid AND allocmarkerid > 0',
                 ['courseid' => $context->instanceid]
             );
             return;
@@ -266,8 +285,9 @@ class provider implements
     }
 
     /**
-     * Export the user's ledger rows per course context, and the
-     * site-configuration rows they are attributed on at system context.
+     * Export the user's ledger rows and the submissions they are allocated to
+     * mark, per course context, and the site-configuration rows they are
+     * attributed on at system context.
      *
      * @param approved_contextlist $contextlist
      * @return void
@@ -284,6 +304,8 @@ class provider implements
             if (!($context instanceof \context_course)) {
                 continue;
             }
+
+            self::export_marker_allocations($context, (int) $userid);
 
             $rows = $DB->get_records('block_feedback_tracker_sub', [
                 'courseid' => $context->instanceid,
@@ -312,6 +334,7 @@ class provider implements
                     'gradestate'     => $r->gradestate !== null ? (string) $r->gradestate : null,
                     'timeallocated'  => $r->timeallocated !== null ? transform::datetime((int) $r->timeallocated) : null,
                     'allocmarkerid'  => (int) $r->allocmarkerid,
+                    'timeallocmarker' => $r->timeallocmarker !== null ? transform::datetime((int) $r->timeallocmarker) : null,
                     'queuehours'     => $r->queuehours !== null ? (float) $r->queuehours : null,
                     'allochours'     => $r->allochours !== null ? (float) $r->allochours : null,
                     'waitinghours'   => $r->waitinghours !== null ? (float) $r->waitinghours : null,
@@ -392,6 +415,49 @@ class provider implements
     }
 
     /**
+     * Export the submissions one user is currently allocated to mark in a
+     * course.
+     *
+     * The allocation is the marker's data: which activity and attempt, since
+     * when, and how long they took once allocated. The student's identity is
+     * the student's data and is left out.
+     *
+     * @param \context_course $context
+     * @param int $userid The marker.
+     * @return void
+     */
+    private static function export_marker_allocations(\context_course $context, int $userid): void {
+        global $DB;
+
+        $rows = $DB->get_records(
+            'block_feedback_tracker_sub',
+            ['courseid' => $context->instanceid, 'allocmarkerid' => $userid],
+            'cmid ASC, id ASC',
+            'id, cmid, attemptnumber, cycle, timeallocmarker, allochours'
+        );
+        if (empty($rows)) {
+            return;
+        }
+
+        $allocations = [];
+        foreach ($rows as $r) {
+            $allocations[] = [
+                'cmid' => (int) $r->cmid,
+                'attemptnumber' => (int) $r->attemptnumber,
+                'cycle' => (int) $r->cycle,
+                'timeallocmarker' => $r->timeallocmarker !== null ? transform::datetime((int) $r->timeallocmarker) : null,
+                'allochours' => $r->allochours !== null ? (float) $r->allochours : null,
+            ];
+        }
+
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:allocations', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['allocations' => $allocations]);
+    }
+
+    /**
      * Export the site-configuration rows one user is attributed on.
      *
      * These rows are site configuration rather than the user's own content,
@@ -462,6 +528,10 @@ class provider implements
      * the affected (course, group) tuples so the rollup re-runs without the
      * deleted contributions.
      *
+     * For one user, the submissions they are only allocated to mark belong to
+     * their students and stay: the marker's id is cleared from them instead.
+     * No rollup reads that id, so nothing is re-enqueued for it.
+     *
      * @param int $courseid
      * @param int|null $userid Restrict to one user, or null to drop the whole course.
      * @return void
@@ -471,6 +541,13 @@ class provider implements
         $params = ['courseid' => $courseid];
         $where = 'courseid = :courseid';
         if ($userid !== null) {
+            $DB->set_field_select(
+                'block_feedback_tracker_sub',
+                'allocmarkerid',
+                0,
+                'courseid = :courseid AND allocmarkerid = :markerid',
+                ['courseid' => $courseid, 'markerid' => $userid]
+            );
             $params['userid'] = $userid;
             $where .= ' AND userid = :userid';
         }

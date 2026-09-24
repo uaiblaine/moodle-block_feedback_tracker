@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Every five minutes, reads up to `recompute_batch_size` tuples from
@@ -39,7 +40,11 @@ use block_feedback_tracker\local\sla\dirty_queue;
  * `queue_adhoc_task($task, true)` collapses a pending task with the same
  * component, class and custom data, so a burst of grading on one
  * (courseid, groupid) tuple, including the task the submission_graded
- * observer queues, yields a single recompute.
+ * observer queues, yields a single recompute. Such a refusal is counted apart
+ * from the dispatches, because the same refusal also comes from a
+ * retry-exhausted task on the versions
+ * {@see reconcile_ledger::queue_repair()} lists, and then nothing will
+ * recompute the tuple while the dead row is kept.
  *
  * The queue row is not removed here: `recompute_one::execute()` deletes it
  * after a successful `rollup_service::recompute_group()`, so a recompute that
@@ -68,6 +73,7 @@ class drain_queue extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $started = time();
         $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
         $batchsize = (int) (get_config('block_feedback_tracker', 'recompute_batch_size') ?: self::DEFAULT_BATCH_SIZE);
@@ -79,6 +85,7 @@ class drain_queue extends \core\task\scheduled_task {
         }
 
         $ok = 0;
+        $refused = 0;
         $fail = 0;
         foreach ($batch as $row) {
             if (time() > $deadline) {
@@ -96,8 +103,11 @@ class drain_queue extends \core\task\scheduled_task {
                     'courseid' => (int) $row->courseid,
                     'groupid'  => (int) $row->groupid,
                 ]);
-                \core\task\manager::queue_adhoc_task($task, true);
-                $ok++;
+                if (\core\task\manager::queue_adhoc_task($task, true) !== false) {
+                    $ok++;
+                } else {
+                    $refused++;
+                }
             } catch (\Throwable $e) {
                 debugging(sprintf(
                     'drain_queue dispatch failed for courseid=%d groupid=%d: %s',
@@ -109,12 +119,22 @@ class drain_queue extends \core\task\scheduled_task {
             }
         }
 
-        if ($ok > 0 || $fail > 0) {
+        if ($refused > 0) {
+            mtrace(sprintf(
+                'drain_queue: %d of %d tuple(s) were not queued '
+                . '(a recompute already pending, or blocked by a retry-exhausted task).',
+                $refused,
+                $ok + $refused + $fail
+            ));
+        }
+
+        if ($ok > 0 || $refused > 0 || $fail > 0) {
             recompute_log::record(
                 recompute_log::REASON_DRAIN,
                 $ok,
                 null,
                 [
+                    'refused'  => $refused,
                     'failures' => $fail,
                     'took_ms'  => (time() - $started) * 1000,
                     'mode'     => 'dispatch',

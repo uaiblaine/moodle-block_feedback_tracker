@@ -116,6 +116,29 @@ class pause_lookup {
     }
 
     /**
+     * The pause-reason slug of a manual pause, from its scope level.
+     *
+     * The single mapping for every consumer: the effective-time audit
+     * ({@see academic_time}) and the upcoming-pause notice
+     * ({@see upcoming_pauses}). Each slug has a pause_reason_* string.
+     *
+     * @param string $scopelevel One of site / course / group.
+     * @return string 'coursepaused', 'grouppaused' or 'sitepaused'; any other
+     *                level reads as 'sitepaused'.
+     */
+    public static function reason_for_scope(string $scopelevel): string {
+        switch ($scopelevel) {
+            case 'course':
+                return 'coursepaused';
+            case 'group':
+                return 'grouppaused';
+            case 'site':
+            default:
+                return 'sitepaused';
+        }
+    }
+
+    /**
      * Drop the per-request memo. {@see academic_time::reset_memos()}
      *
      * @return void

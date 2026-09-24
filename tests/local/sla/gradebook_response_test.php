@@ -591,13 +591,16 @@ final class gradebook_response_test extends \advanced_testcase {
      *
      * `seed_calendar()` switches business hours on without inserting any rows,
      * so the width of a working day would come from the db/install.php defaults
-     * rather than from the test. Needed by any test that asserts on hours or on
-     * a band derived from them.
+     * rather than from the test. The installed rows are deleted first: the
+     * engine unions every row of a day, so rows added beside them could only
+     * widen the day, never set it. Needed by any test that asserts on hours or
+     * on a band derived from them.
      *
      * @return void
      */
     private function seed_business_hours(): void {
         global $DB;
+        $DB->delete_records('block_feedback_tracker_chours');
         $now = time();
         for ($dow = 0; $dow <= 4; $dow++) {
             $DB->insert_record('block_feedback_tracker_chours', (object) [

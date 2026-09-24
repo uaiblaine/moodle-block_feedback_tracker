@@ -53,9 +53,6 @@ const cellKey = (cell) => {
 const compareKeys = (a, b) => {
     const an = parseFloat(a);
     const bn = parseFloat(b);
-    if (!Number.isNaN(an) && !Number.isNaN(bn) && String(an) === a && String(bn) === b) {
-        return an - bn;
-    }
     if (!Number.isNaN(an) && !Number.isNaN(bn)) {
         return an - bn;
     }

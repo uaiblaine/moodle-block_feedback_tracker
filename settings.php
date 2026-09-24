@@ -74,35 +74,28 @@ if ($ADMIN->fulltree) {
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
 
-    $s = new admin_setting_configtext(
+    // Hour-ruler band cutoffs, in increasing order: bucket::for_effective()
+    // tests them from the lowest up.
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/bucket_thresholds_eff',
         get_string('settings_bucket_thresholds_eff', $plugin),
         get_string('settings_bucket_thresholds_eff_desc', $plugin),
         '24,48,120',
-        PARAM_TEXT
+        \block_feedback_tracker\local\admin\thresholds_setting::ASCENDING
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
-    $settings->add($s);
-
-    $s = new admin_setting_configtext(
-        $plugin . '/bucket_thresholds_raw',
-        get_string('settings_bucket_thresholds_raw', $plugin),
-        get_string('settings_bucket_thresholds_raw_desc', $plugin),
-        '24,48,120',
-        PARAM_TEXT
-    );
     $settings->add($s);
 
     // Day-ruler band cutoffs, used instead of the hour thresholds when the
     // display unit (Views section) is business days. Bounds are inclusive
     // (see bucket::for_effective_days()). Feeds the rollup's
     // critical_days/overgoal_days twins, hence the invalidate callback.
-    $s = new admin_setting_configtext(
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/bucket_thresholds_days',
         get_string('settings_bucket_thresholds_days', $plugin),
         get_string('settings_bucket_thresholds_days_desc', $plugin),
         '2,5,10',
-        PARAM_TEXT
+        \block_feedback_tracker\local\admin\thresholds_setting::ASCENDING
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
@@ -113,9 +106,10 @@ if ($ADMIN->fulltree) {
         'business_days'
     );
 
-    // SLA goal in business days, the day-mode twin of sla_goal_hours. It feeds
-    // only the display-only compliance_pct_days; the score keeps sla_goal_hours,
-    // so switching the display unit never moves the score.
+    // SLA goal in business days, the day-mode twin of sla_goal_hours. It bounds
+    // the display-only day figures (compliance_pct_days, overgoal_days and the
+    // report's business-days pending band); the score keeps sla_goal_hours, so
+    // switching the display unit never moves the score.
     $s = new admin_setting_configtext(
         $plugin . '/sla_goal_days',
         get_string('settings_sla_goal_days', $plugin),
@@ -133,15 +127,16 @@ if ($ADMIN->fulltree) {
     );
 
     // Score-band thresholds: three CSV cutoffs that map a 0-100 score to one
-    // of the four bands. Parsed by responsiveness_calculator::parse_thresholds_band():
-    // a missing or non-numeric cutoff falls back to its default, but the values
-    // are neither clamped nor sorted, so they must be entered in descending order.
-    $s = new admin_setting_configtext(
+    // of the four bands, in decreasing order because
+    // responsiveness_calculator::band_for() tests them from the highest down.
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/score_thresholds_band',
         get_string('settings_score_thresholds_band', $plugin),
         get_string('settings_score_thresholds_band_desc', $plugin),
         '90,70,40',
-        PARAM_TEXT
+        \block_feedback_tracker\local\admin\thresholds_setting::DESCENDING,
+        0.0,
+        100.0
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
@@ -290,7 +285,6 @@ if ($ADMIN->fulltree) {
     // it is applied when a ledger row is written, so flipping it is not retroactive.
     $viewbools = [
         'enable_admin_view_all'       => 0,
-        'enable_school_comparison'    => 1,
         'enable_teacher_simulator'    => 0,
         'show_perceived_time'         => 1,
         'show_paused_today_indicator' => 1,

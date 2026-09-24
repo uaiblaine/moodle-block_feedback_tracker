@@ -70,6 +70,28 @@ final class upcoming_pauses_test extends \advanced_testcase {
     }
 
     /**
+     * A sub-day event's minutes are wall-clock time on a DST day: in London on
+     * 2026-03-29 the clocks go forward at 01:00, so 08:00-10:00 local is
+     * 07:00-09:00 UTC, while eight elapsed hours after midnight would be 09:00
+     * local.
+     *
+     * @return void
+     */
+    public function test_subday_event_is_wall_clock_on_a_dst_day(): void {
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        set_config('timezone', 'Europe/London', 'block_feedback_tracker');
+        $this->add_cday(20260329, 'optional', 8 * 60, 10 * 60, 'Open day');
+
+        $result = upcoming_pauses::for_course_group(0, 0, $this->ts('2026-03-27 12:00:00'));
+
+        $this->assertCount(1, $result);
+        $this->assertTrue($result[0]['subday']);
+        $this->assertSame($this->ts('2026-03-29 07:00:00'), $result[0]['start']);
+        $this->assertSame($this->ts('2026-03-29 09:00:00'), $result[0]['end']);
+    }
+
+    /**
      * A single full-day holiday stays visible on its own day and is removed
      * the day after.
      *
@@ -204,6 +226,36 @@ final class upcoming_pauses_test extends \advanced_testcase {
         pause_lookup::reset_memo();
         $display = array_column(upcoming_pauses::for_display(42, 0, $now, 10), 'label', 'type');
         $this->assertSame('A & B', $display['optional']);
+    }
+
+    /**
+     * A holiday or a recess that counts as working time is not announced as a
+     * pause; a closed day and a full-day optional day always are.
+     *
+     * @return void
+     */
+    public function test_days_counted_as_working_time_are_not_announced(): void {
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $this->add_cday(20260629, 'holiday', null, null, 'H');
+        $this->add_cday(20260630, 'recess', null, null, 'R');
+        $this->add_cday(20260701, 'closed', null, null, 'C');
+        $this->add_cday(20260702, 'optional', null, null, 'O');
+        $now = $this->ts('2026-06-29 09:00:00');
+
+        // Control: with both exclusions on, all four days are announced.
+        set_config('excludeholidays', '1', 'block_feedback_tracker');
+        set_config('excluderecesses', '1', 'block_feedback_tracker');
+        $types = array_column(upcoming_pauses::for_course_group(0, 0, $now, 10), 'type');
+        $this->assertSame(['holiday', 'recess', 'closed', 'optional'], $types);
+
+        set_config('excludeholidays', '0', 'block_feedback_tracker');
+        $types = array_column(upcoming_pauses::for_course_group(0, 0, $now, 10), 'type');
+        $this->assertSame(['recess', 'closed', 'optional'], $types);
+
+        set_config('excluderecesses', '0', 'block_feedback_tracker');
+        $types = array_column(upcoming_pauses::for_course_group(0, 0, $now, 10), 'type');
+        $this->assertSame(['closed', 'optional'], $types);
     }
 
     /**

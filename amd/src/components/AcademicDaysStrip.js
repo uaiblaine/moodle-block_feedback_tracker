@@ -29,7 +29,7 @@
  */
 
 import {html} from 'block_feedback_tracker/lib/preact';
-import {usesDays} from 'block_feedback_tracker/lib/format';
+import {usesDays, formatDays} from 'block_feedback_tracker/lib/format';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 
 /**
@@ -122,8 +122,7 @@ const cellTitle = (day, i18n, config) => {
         if (day.eff_days === null || day.eff_days === undefined) {
             return date;
         }
-        const v = Number(day.eff_days);
-        return date + ' · ' + (Number.isInteger(v) ? v : v.toFixed(1)) + ' d';
+        return date + ' · ' + formatDays(day.eff_days);
     }
     if (day.eff_h === null || day.eff_h === undefined) {
         return date;

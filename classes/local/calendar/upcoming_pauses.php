@@ -244,7 +244,9 @@ class upcoming_pauses {
      * Day-type candidates from {block_feedback_tracker_cday}. Sub-day optional
      * rows become timed events; every other holiday / recess / closed /
      * optional row becomes a full-day span (consecutive same-type/same-note
-     * days collapsed). The exclude* settings are not consulted.
+     * days collapsed). Holidays are skipped while excludeholidays is off, and
+     * recesses while excluderecesses is off: those days then count as working
+     * time ({@see calendar::is_active_day()}), so they pause nothing.
      *
      * @param \DateTimeZone $tz Platform timezone.
      * @param int $now Reference timestamp.
@@ -260,17 +262,19 @@ class upcoming_pauses {
         $fromymd = (int) $from->format('Ymd');
         $toymd = (int) $to->format('Ymd');
 
+        $types = [calendar::DAYTYPE_CLOSED, calendar::DAYTYPE_OPTIONAL];
+        if (calendar::excludeholidays()) {
+            $types[] = calendar::DAYTYPE_HOLIDAY;
+        }
+        if (calendar::excluderecesses()) {
+            $types[] = calendar::DAYTYPE_RECESS;
+        }
+        [$typesql, $typeparams] = $DB->get_in_or_equal($types, SQL_PARAMS_NAMED, 'dtype');
+
         $rows = $DB->get_records_select(
             'block_feedback_tracker_cday',
-            'daydate >= :fromymd AND daydate <= :toymd AND daytype IN (:t1, :t2, :t3, :t4)',
-            [
-                'fromymd' => $fromymd,
-                'toymd' => $toymd,
-                't1' => calendar::DAYTYPE_HOLIDAY,
-                't2' => calendar::DAYTYPE_RECESS,
-                't3' => calendar::DAYTYPE_CLOSED,
-                't4' => calendar::DAYTYPE_OPTIONAL,
-            ],
+            "daydate >= :fromymd AND daydate <= :toymd AND daytype $typesql",
+            ['fromymd' => $fromymd, 'toymd' => $toymd] + $typeparams,
             'daydate ASC',
             'id, daydate, daytype, starttime, endtime, note'
         );
@@ -281,10 +285,10 @@ class upcoming_pauses {
             $issubday = (string) $r->daytype === calendar::DAYTYPE_OPTIONAL
                 && $r->starttime !== null && $r->endtime !== null;
             if ($issubday) {
-                $daystart = self::ymd_to_ts((int) $r->daydate, $tz);
+                $midnight = self::ymd_midnight((int) $r->daydate, $tz);
                 $events[] = [
-                    'start' => $daystart + ((int) $r->starttime) * 60,
-                    'end' => $daystart + ((int) $r->endtime) * 60,
+                    'start' => self::wall_clock_ts($midnight, (int) $r->starttime),
+                    'end' => self::wall_clock_ts($midnight, (int) $r->endtime),
                     'type' => (string) $r->daytype,
                     'label' => self::clean_note($r->note),
                     'subday' => true,
@@ -358,32 +362,12 @@ class upcoming_pauses {
             $out[] = [
                 'start' => (int) $p->timestart,
                 'end' => $p->timeend !== null ? (int) $p->timeend : null,
-                'type' => self::scope_reason((string) $p->scopelevel),
+                'type' => pause_lookup::reason_for_scope((string) $p->scopelevel),
                 'label' => self::clean_note($p->note),
                 'subday' => false,
             ];
         }
         return $out;
-    }
-
-    /**
-     * Translate a cpause scopelevel to a stable reason slug. Mirrors
-     * {@see \block_feedback_tracker\local\sla\rollup_service::cpause_reason()} and
-     * {@see academic_time::pause_reason_for_scope()}; keep the three in step.
-     *
-     * @param string $scopelevel One of site / course / group.
-     * @return string
-     */
-    private static function scope_reason(string $scopelevel): string {
-        switch ($scopelevel) {
-            case 'course':
-                return 'coursepaused';
-            case 'group':
-                return 'grouppaused';
-            case 'site':
-            default:
-                return 'sitepaused';
-        }
     }
 
     /**
@@ -421,12 +405,38 @@ class upcoming_pauses {
      * @return int
      */
     private static function ymd_to_ts(int $ymd, \DateTimeZone $tz): int {
+        return self::ymd_midnight($ymd, $tz)->getTimestamp();
+    }
+
+    /**
+     * Midnight of a YYYYMMDD day in the platform timezone.
+     *
+     * @param int $ymd Date as YYYYMMDD.
+     * @param \DateTimeZone $tz Platform timezone.
+     * @return \DateTimeImmutable
+     */
+    private static function ymd_midnight(int $ymd, \DateTimeZone $tz): \DateTimeImmutable {
         $datestr = sprintf(
             '%04d-%02d-%02d 00:00:00',
             intdiv($ymd, 10000),
             intdiv($ymd, 100) % 100,
             $ymd % 100
         );
-        return (new \DateTimeImmutable($datestr, $tz))->getTimestamp();
+        return new \DateTimeImmutable($datestr, $tz);
+    }
+
+    /**
+     * The instant a stored minutes-since-midnight value names on a day.
+     *
+     * The minutes are wall-clock time, as for business hours: on a day with a
+     * DST transition, 480 is 08:00 local rather than eight elapsed hours after
+     * midnight. Same construction as academic_time::business_hours_absolute().
+     *
+     * @param \DateTimeImmutable $midnight Midnight of the day, platform timezone.
+     * @param int $minutes Minutes since midnight.
+     * @return int Unix timestamp.
+     */
+    private static function wall_clock_ts(\DateTimeImmutable $midnight, int $minutes): int {
+        return $midnight->modify('+' . $minutes . ' minutes')->getTimestamp();
     }
 }

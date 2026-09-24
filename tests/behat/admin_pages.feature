@@ -47,6 +47,8 @@ Feature: The plugin's admin and drill-down pages render for authorised users
     Given I log in as "manager1"
     When I am on the "block_feedback_tracker > Reset" page
     Then I should see "Feedback Flow"
+    And I should see "This will permanently delete every ledger, rollup, trend, site-stats and queue row."
+    And I should see "the recompute audit log are kept"
 
   # The simulator lets a non-admin in only with a full-site grant, or with the
   # enable_teacher_simulator switch on AND a non-empty teaching scope. A

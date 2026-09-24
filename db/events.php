@@ -117,9 +117,8 @@ $observers = [
         'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
     ],
     /* User-level overrides and extensions move the dates one student is judged
-     * against. The reconciler's rule-drift sweep compares only against
-     * {assign_user_flags} and the activity's own dates, so it cannot see an
-     * {assign_overrides} row. */
+     * against, and no other event carries them. The reconciler's rule-drift
+     * sweep repairs a row whose event was lost, but only on its next pass. */
     [
         'eventname' => '\mod_assign\event\user_override_created',
         'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',

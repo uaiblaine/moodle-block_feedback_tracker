@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\backfill_cursor;
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Inactive unless `backfill_active` is 1. Walks every block-enabled course
@@ -72,6 +73,7 @@ class backfill_history extends \core\task\scheduled_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
         $active = (int) (get_config('block_feedback_tracker', 'backfill_active') ?: 0);
         if ($active !== 1) {
             return;

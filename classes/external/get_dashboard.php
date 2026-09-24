@@ -39,7 +39,7 @@ use core_external\external_value;
  * group count, the mean of the groups' medians and scores, and a band derived
  * from that mean score.
  *
- * amd/src/views/DashboardView.js aggregate() reads the per-course shape key by
+ * aggregate() in amd/src/lib/aggregate.js reads the per-course shape key by
  * key; a key it reads that is missing here is silently treated as no data.
  */
 class get_dashboard extends external_api {
@@ -52,7 +52,7 @@ class get_dashboard extends external_api {
      * so entries cached by an earlier plugin version stop matching without a
      * purge.
      */
-    public const CACHE_KEY_VERSION = 8;
+    public const CACHE_KEY_VERSION = 9;
 
     /**
      * Parameters.
@@ -164,7 +164,7 @@ class get_dashboard extends external_api {
 
         $courses = [];
         $courseids = array_map(static fn ($r) => (int) $r->courseid, $rows);
-        $trendseries = self::trend_series_for_courses($courseids);
+        $trendseries = self::trend_series_for_courses($userid, $courseids);
         self::preload_course_contexts($courseids);
         // Counts follow the banding ruler: business-days mode serves the
         // day-ruler twins, falling back to the hour counts while the rollup
@@ -252,27 +252,41 @@ class get_dashboard extends external_api {
 
     /**
      * Trend-series fetcher for the courses-table sparkline. Averages the
-     * groups' effective-hours medians per course and day over the last 14
-     * days, one entry per YYYYMMDD in the window (value null on days with
-     * no data).
+     * effective-hours medians of the groups the user can see, per course and
+     * day over the last 14 days, one entry per YYYYMMDD in the window (value
+     * null on days with no data). The (course, group) filter is the one
+     * execute() applies to the aggregates beside it, so a teacher in separate
+     * groups mode sees no trend of a group they cannot see.
      *
+     * @param int $userid The dashboard viewer.
      * @param int[] $courseids
      * @return array<int, array<int, array{day:int, value:float|null}>>
      */
-    private static function trend_series_for_courses(array $courseids): array {
+    private static function trend_series_for_courses(int $userid, array $courseids): array {
         global $DB;
         if (empty($courseids)) {
+            return [];
+        }
+        [$visibility, $params] = \block_feedback_tracker\local\sla\dashboard_scope::sql_visibility(
+            $userid,
+            'courseid',
+            'groupid',
+            'tv'
+        );
+        if ($visibility === \block_feedback_tracker\local\sla\dashboard_scope::MATCH_NONE) {
             return [];
         }
         // 14-day (two-week) sparkline window — matches the in-course block.
         $window = self::trend_window(14);
 
-        [$insql, $params] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'tc');
+        [$insql, $inparams] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'tc');
+        $params += $inparams;
         $params['oldest'] = (int) $window[0];
         $sql = "SELECT id, courseid, day, medianh_eff
                   FROM {block_feedback_tracker_trend}
                  WHERE courseid $insql
-                   AND day >= :oldest";
+                   AND day >= :oldest
+                   AND $visibility";
         $rows = $DB->get_records_sql($sql, $params);
 
         // Group rows by (courseid, day) — multiple groupids per course

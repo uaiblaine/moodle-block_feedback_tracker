@@ -280,6 +280,41 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
+     * Removing the block again after putting it back moves the pending discard
+     * to the latest removal's deadline: the grace period runs from the removal
+     * that actually stuck, not from the first one.
+     *
+     * @return void
+     */
+    public function test_a_second_removal_moves_the_deadline(): void {
+        global $DB;
+        $this->resetAfterTest();
+        set_config('removal_cleanup_active', '1', 'block_feedback_tracker');
+        [$course, $coursectx] = $this->build_course_with_data();
+        $classname = '\\block_feedback_tracker\\task\\discard_course_data';
+
+        $this->remove_block_instances((int) $course->id);
+        $first = $DB->get_record('task_adhoc', ['classname' => $classname], '*', MUST_EXIST);
+        /* Back-date the pending run as if the first removal had happened most
+         * of a grace period ago; the clock cannot be moved for real. */
+        $early = time() + 300;
+        $DB->set_field('task_adhoc', 'nextruntime', $early, ['id' => $first->id]);
+
+        $this->getDataGenerator()->create_block('feedback_tracker', ['parentcontextid' => $coursectx->id]);
+        $this->remove_block_instances((int) $course->id);
+
+        $rows = $DB->get_records('task_adhoc', ['classname' => $classname]);
+        $this->assertCount(1, $rows, 'Both removals share one pending discard.');
+        $row = reset($rows);
+        $this->assertGreaterThan(
+            time() + removal_grace::seconds() - 5,
+            (int) $row->nextruntime,
+            'The discard must wait a whole grace period after the latest removal.'
+        );
+        $this->assertGreaterThan($early, (int) $row->nextruntime);
+    }
+
+    /**
      * With the feature off, removing the block queues nothing; the course's
      * data simply stops being processed.
      *

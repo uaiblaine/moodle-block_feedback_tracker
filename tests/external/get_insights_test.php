@@ -227,6 +227,118 @@ final class get_insights_test extends \advanced_testcase {
     }
 
     /**
+     * Two groups share the top score: the one with more graded submissions in
+     * the rollup window is the bright spot. The smaller one is inserted first,
+     * so an order-only pick would name it.
+     *
+     * @return void
+     */
+    public function test_bright_spot_tie_goes_to_more_graded(): void {
+        $this->resetAfterTest();
+        set_config('enable_admin_view_all', 1, 'block_feedback_tracker');
+        $this->setAdminUser();
+
+        $course = $this->generator()->create_tracked_course();
+        $fewer = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $more = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $fewer->id,
+            'numgraded30d' => 3,
+            'responsiveness_score' => 80.0,
+            'score_band' => 'good',
+        ]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $more->id,
+            'numgraded30d' => 9,
+            'responsiveness_score' => 80.0,
+            'score_band' => 'good',
+        ]);
+
+        $result = $this->call();
+
+        $this->assertSame((int) $more->id, $result['bright_spot']['groupid']);
+    }
+
+    /**
+     * The gentle watch counts with the banding ruler, like the courses table:
+     * hours mode reads critical, business-days mode critical_days. Switching
+     * the unit between two calls also shows the ruler is part of the cache key.
+     *
+     * @return void
+     */
+    public function test_gentle_watch_follows_the_display_unit(): void {
+        $this->resetAfterTest();
+        set_config('enable_admin_view_all', 1, 'block_feedback_tracker');
+        $this->setAdminUser();
+
+        $course = $this->generator()->create_tracked_course();
+        $hourly = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $daily = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $hourly->id,
+            'pending' => 5,
+            'critical' => 5,
+            'critical_days' => 1,
+        ]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $daily->id,
+            'pending' => 5,
+            'critical' => 2,
+            'critical_days' => 4,
+        ]);
+
+        $hours = $this->call();
+        $this->assertSame((int) $hourly->id, $hours['gentle_watch']['groupid']);
+        $this->assertSame('5', $hours['gentle_watch']['metric_value']);
+
+        $this->generator()->set_display_unit('business_days');
+        $days = $this->call();
+        $this->assertSame((int) $daily->id, $days['gentle_watch']['groupid']);
+        $this->assertSame('4', $days['gentle_watch']['metric_value']);
+    }
+
+    /**
+     * In business-days mode a row whose critical_days is still null (rollup
+     * not recomputed since the column arrived) counts with its hour-based
+     * critical, the fallback get_dashboard and get_report_scopes use.
+     *
+     * @return void
+     */
+    public function test_gentle_watch_falls_back_to_hours_without_day_counts(): void {
+        $this->resetAfterTest();
+        set_config('enable_admin_view_all', 1, 'block_feedback_tracker');
+        $this->setAdminUser();
+        $this->generator()->set_display_unit('business_days');
+
+        $course = $this->generator()->create_tracked_course();
+        $stale = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $fresh = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $stale->id,
+            'pending' => 5,
+            'critical' => 5,
+            'critical_days' => null,
+        ]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $fresh->id,
+            'pending' => 5,
+            'critical' => 2,
+            'critical_days' => 4,
+        ]);
+
+        $result = $this->call();
+
+        $this->assertSame((int) $stale->id, $result['gentle_watch']['groupid']);
+        $this->assertSame('5', $result['gentle_watch']['metric_value']);
+    }
+
+    /**
      * The payload is cached per user with the language in the key, so two
      * consecutive calls agree.
      *

@@ -31,7 +31,8 @@ namespace block_feedback_tracker\external;
  *   - the class exists,
  *   - it extends \core_external\external_api,
  *   - execute_parameters() / execute() / execute_returns() are defined,
- *   - the listed capability exists in db/access.php (or is a core capability),
+ *   - the listed capability exists: in db/access.php for the plugin's own
+ *     namespace, in the installed capabilities table for any other,
  *   - a test file exists for it and claims coverage of the class,
  *   - and, when the function is capability-gated, that test file exercises a
  *     refusal.
@@ -96,11 +97,27 @@ final class services_coverage_test extends \advanced_testcase {
                     continue;
                 }
                 $this->assertTrue(
-                    isset($declaredcaps[$cap]) || self::is_core_capability($cap),
+                    self::capability_exists($cap, $declaredcaps),
                     "WS function `{$name}` references unknown capability `{$cap}`"
                 );
             }
         }
+    }
+
+    /**
+     * The existence check tells real capabilities from misspelt ones on both
+     * sides of the plugin namespace. db/services.php lists no capability from
+     * outside the plugin today, so this is what shows that branch works.
+     *
+     * @return void
+     */
+    public function test_capability_check_rejects_unknown_names(): void {
+        $declaredcaps = self::load_capabilities();
+
+        $this->assertTrue(self::capability_exists('block/feedback_tracker:viewresponsiveness', $declaredcaps));
+        $this->assertFalse(self::capability_exists('block/feedback_tracker:nosuchcapability', $declaredcaps));
+        $this->assertTrue(self::capability_exists('moodle/site:config', $declaredcaps));
+        $this->assertFalse(self::capability_exists('moodle/site:nosuchcapability', $declaredcaps));
     }
 
     /**
@@ -222,15 +239,18 @@ final class services_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Whether a capability lies outside the plugin's own namespace (core or
-     * another plugin), so a web service may list it without this test
-     * failing. Such capabilities are not checked for existence.
+     * Whether a capability a web service lists exists. The plugin's own
+     * block/feedback_tracker:* names must be declared in db/access.php; any
+     * other name (core or another plugin) must be installed on the site.
      *
      * @param string $cap
+     * @param array $declaredcaps The plugin's db/access.php capabilities, keyed by name.
      * @return bool
      */
-    private static function is_core_capability(string $cap): bool {
-        // The plugin owns the block/feedback_tracker:* namespace.
-        return strpos($cap, 'block/feedback_tracker:') !== 0;
+    private static function capability_exists(string $cap, array $declaredcaps): bool {
+        if (strpos($cap, 'block/feedback_tracker:') === 0) {
+            return isset($declaredcaps[$cap]);
+        }
+        return get_capability_info($cap) !== null;
     }
 }

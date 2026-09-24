@@ -810,7 +810,9 @@ class submission_ledger {
      * For a real group that is its membership; for the default group (0) it is
      * every participant who is not in exactly one group of the activity's
      * grouping, which is the same rule core applies in
-     * `assign::get_submission_group_members()`.
+     * `assign::get_submission_group_members()`. Each participant is resolved
+     * as {@see self::team_group_for_user()} resolves one, from memberships
+     * loaded once for the whole course.
      *
      * @param \stdClass $assign The {assign} row.
      * @param int $courseid
@@ -831,13 +833,79 @@ class submission_ledger {
             return [];
         }
 
+        $groupsof = self::team_groups_by_user($assign, $context, $esql, $params);
+        $defaultgroup = empty($assign->preventsubmissionnotingroup) ? 0 : null;
         $out = [];
         foreach ($enrolled as $userid) {
             $userid = (int) $userid;
-            if (self::team_group_for_user($assign, $courseid, $userid) === $groupid) {
+            $groups = $groupsof[$userid] ?? [];
+            $team = count($groups) === 1 ? $groups[0] : $defaultgroup;
+            if ($team === $groupid) {
                 $out[] = $userid;
             }
         }
+        return $out;
+    }
+
+    /**
+     * The groups of the activity's grouping each enrolled participant belongs
+     * to, in one query.
+     *
+     * The bulk form of the per-user lookup in {@see self::team_group_for_user()},
+     * and it must return the same groups: those `groups_get_all_groups()`
+     * returns for one user with the grouping and participation-only
+     * arguments, including its rule that a viewer without
+     * `moodle/course:viewhiddengroups` is not shown a group whose membership
+     * is hidden from everyone.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param \context_course $context
+     * @param string $esql The enrolled-users query from get_enrolled_sql().
+     * @param array $eparams Its parameters.
+     * @return array Group ids keyed by user id; a user in no such group is absent.
+     */
+    private static function team_groups_by_user(
+        \stdClass $assign,
+        \context_course $context,
+        string $esql,
+        array $eparams
+    ): array {
+        global $DB;
+
+        $params = $eparams + ['bftcourseid' => (int) $context->instanceid];
+        $groupingjoin = '';
+        $groupingid = (int) ($assign->teamsubmissiongroupingid ?? 0);
+        if ($groupingid > 0) {
+            $groupingjoin = 'JOIN {groupings_groups} gg ON gg.groupid = g.id AND gg.groupingid = :bftgroupingid';
+            $params['bftgroupingid'] = $groupingid;
+        }
+        $visibility = '';
+        if (!has_capability('moodle/course:viewhiddengroups', $context)) {
+            [$vsql, $vparams] = $DB->get_in_or_equal(
+                [GROUPS_VISIBILITY_ALL, GROUPS_VISIBILITY_MEMBERS, GROUPS_VISIBILITY_OWN],
+                SQL_PARAMS_NAMED,
+                'bftvis'
+            );
+            $visibility = "AND g.visibility $vsql";
+            $params += $vparams;
+        }
+
+        $rs = $DB->get_recordset_sql(
+            "SELECT gm.id, gm.userid, gm.groupid
+               FROM {groups_members} gm
+               JOIN {groups} g ON g.id = gm.groupid
+               $groupingjoin
+               JOIN ($esql) e ON e.id = gm.userid
+              WHERE g.courseid = :bftcourseid
+                AND g.participation = 1
+                $visibility",
+            $params
+        );
+        $out = [];
+        foreach ($rs as $r) {
+            $out[(int) $r->userid][] = (int) $r->groupid;
+        }
+        $rs->close();
         return $out;
     }
 
@@ -1322,8 +1390,10 @@ class submission_ledger {
      * Delete one user's ledger rows across every course.
      *
      * For a deleted account. Rows where the deleted user is only the
-     * allocated marker (`allocmarkerid`) are kept with that id: scrubbing it
-     * belongs to the privacy provider, which does not handle markers yet.
+     * allocated marker (`allocmarkerid`) are the students' and keep that id,
+     * as core keeps `assign_user_flags.allocatedmarker` when it deletes an
+     * account. An erasure request clears it through
+     * {@see \block_feedback_tracker\privacy\provider::delete_data_for_user()}.
      *
      * @param int $userid
      * @param string $reason A dirty_queue REASON_* constant.
@@ -1388,7 +1458,7 @@ class submission_ledger {
         $DB->delete_records('block_feedback_tracker_group', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_trend', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_queue', ['courseid' => $courseid]);
-        $DB->delete_records('block_feedback_tracker_bfcursor', ['courseid' => $courseid]);
+        backfill_cursor::delete($courseid);
     }
 
     /**

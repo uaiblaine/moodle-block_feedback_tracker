@@ -29,7 +29,7 @@
 
 import {render, html} from 'block_feedback_tracker/lib/preact';
 import BlockView from 'block_feedback_tracker/views/BlockView';
-import {setGroupingSeparator} from 'block_feedback_tracker/lib/format';
+import {setGroupingSeparator, setDecimalSeparator, setDateContext} from 'block_feedback_tracker/lib/format';
 
 /**
  * Pull the JSON payload embedded inside a mount-point root.
@@ -65,7 +65,10 @@ export const init = () => {
         if (!initial) {
             return;
         }
-        setGroupingSeparator(initial.config && initial.config.thousandssep);
+        const config = initial.config || {};
+        setGroupingSeparator(config.thousandssep);
+        setDecimalSeparator(config.decsep);
+        setDateContext(config.locale, config.timezone);
         render(html`<${BlockView} initial=${initial} />`, root);
     });
 };

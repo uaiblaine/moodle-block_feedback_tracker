@@ -67,7 +67,7 @@ $PAGE->set_pagelayout('incourse');
 global $USER;
 
 // Shared block-level labels (band names, card_*, breakdown_*) plus the
-// page-specific ones (pendingreport_*, modal_*, pause_reason_*). Both come
+// report's own (pendingreport_*, drilldown_col_*, hero_*, pause_reason_*). Both come
 // from the autoloaded bootstrap helper, so the page need not require the
 // block class.
 $i18n = array_merge(

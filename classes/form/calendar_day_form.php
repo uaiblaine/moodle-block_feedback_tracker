@@ -110,10 +110,12 @@ class calendar_day_form extends \moodleform {
         );
         $mform->setType('note', PARAM_TEXT);
 
-        // Keep moodleform's default "Save changes" label: it is the only button
-        // with that label on the calendar editor (the other forms there say
-        // "Save" or "Import"), and Behat presses it by label.
-        $this->add_action_buttons(false);
+        // A named submit, as on every form of the calendar editor, so the page's
+        // forms do not all post "submitbutton". The "Save changes" label is the
+        // only one on that page (the other forms say "Save" or "Import"), and
+        // Behat presses it by label.
+        $mform->addElement('submit', 'savedaybutton', get_string('savechanges'));
+        $mform->closeHeaderBefore('savedaybutton');
     }
 
     /**

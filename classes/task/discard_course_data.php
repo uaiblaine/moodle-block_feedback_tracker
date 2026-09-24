@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
@@ -65,6 +66,7 @@ class discard_course_data extends \core\task\adhoc_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
 
         $data = (array) $this->get_custom_data();
         $courseid = (int) ($data['courseid'] ?? 0);

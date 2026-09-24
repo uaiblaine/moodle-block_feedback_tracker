@@ -27,6 +27,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
 
 /**
@@ -34,7 +35,8 @@ use block_feedback_tracker\local\sla\dirty_queue;
  * been waiting, so the observer has to bump the calendar version and re-enqueue
  * the affected rollups. Its scoping is the interesting part: a site pause
  * touches everything, a course pause only that course, a group pause a single
- * tuple.
+ * tuple. Every edit also leaves one audit row and purges the calver-keyed
+ * caches the bump made unreachable.
  *
  * @covers \block_feedback_tracker\local\calendar\observer
  */
@@ -245,6 +247,154 @@ final class observer_test extends \advanced_testcase {
         $this->assertSame(3, $DB->count_records('block_feedback_tracker_queue', [
             'reason' => dirty_queue::REASON_PAUSE,
         ]));
+    }
+
+    /**
+     * The single audit row the observer writes, decoded.
+     *
+     * @return \stdClass The row, with details decoded to an array.
+     */
+    private function only_audit_row(): \stdClass {
+        global $DB;
+        $rows = $DB->get_records('block_feedback_tracker_log');
+        $this->assertCount(1, $rows, 'One calendar edit writes exactly one audit row.');
+        $row = reset($rows);
+        $row->details = json_decode((string) $row->details, true);
+        return $row;
+    }
+
+    /**
+     * A calendar-day save is logged with the number of tuples it re-queued and
+     * the user who made it.
+     *
+     * @return void
+     */
+    public function test_day_save_leaves_an_audit_row(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_rollups();
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_log'));
+
+        observer::day_updated($this->event(
+            \block_feedback_tracker\event\cal_day_updated::class,
+            ['daydate' => 20260601, 'daytype' => 'holiday', 'rowid' => 5]
+        ));
+
+        $row = $this->only_audit_row();
+        $this->assertSame(recompute_log::REASON_CALENDAR_SAVE, $row->reason);
+        $this->assertSame(3, (int) $row->affectedrows);
+        $this->assertSame($this->queued(), (int) $row->affectedrows);
+        $this->assertSame((int) $user->id, (int) $row->triggeredby);
+        $this->assertSame(20260601, $row->details['daydate']);
+        $this->assertSame(calendar::current_version(), $row->details['calver']);
+    }
+
+    /**
+     * A CSV import fires one event for the whole import, and it is logged as a
+     * bulk import rather than as a single-day save.
+     *
+     * @return void
+     */
+    public function test_bulk_import_is_logged_as_bulk_import(): void {
+        $this->resetAfterTest();
+        $this->seed_rollups();
+
+        observer::day_updated($this->event(
+            \block_feedback_tracker\event\cal_day_updated::class,
+            ['daydate' => 0, 'daytype' => 'bulk_import', 'saved' => 4]
+        ));
+
+        $row = $this->only_audit_row();
+        $this->assertSame(recompute_log::REASON_BULK_IMPORT, $row->reason);
+        $this->assertSame(3, (int) $row->affectedrows);
+        $this->assertSame(4, $row->details['saved']);
+    }
+
+    /**
+     * A business-hours save is logged under its own reason.
+     *
+     * @return void
+     */
+    public function test_hours_save_leaves_an_audit_row(): void {
+        $this->resetAfterTest();
+        $this->seed_rollups();
+
+        observer::hours_updated($this->event(
+            \block_feedback_tracker\event\cal_hours_updated::class,
+            ['dayofweek' => 2, 'slots' => 1]
+        ));
+
+        $row = $this->only_audit_row();
+        $this->assertSame(recompute_log::REASON_BUSINESS_HOURS_SAVE, $row->reason);
+        $this->assertSame(3, (int) $row->affectedrows);
+        $this->assertNull($row->triggeredby, 'An edit with no logged-in user is attributed to nobody.');
+    }
+
+    /**
+     * A pause edit is logged with the count of its own scope: a course pause
+     * re-queues that course's tuples only, and a pause on a group that no
+     * longer exists re-queues nothing.
+     *
+     * @return void
+     */
+    public function test_pause_save_logs_the_tuples_of_its_scope(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_rollups();
+
+        observer::pause_updated($this->event(
+            \block_feedback_tracker\event\cal_pause_updated::class,
+            ['scopelevel' => 'course', 'scopeid' => 8001, 'rowid' => 9]
+        ));
+        $row = $this->only_audit_row();
+        $this->assertSame(recompute_log::REASON_PAUSE_SAVE, $row->reason);
+        $this->assertSame(2, (int) $row->affectedrows);
+        $this->assertSame('course', $row->details['scopelevel']);
+
+        $DB->delete_records('block_feedback_tracker_log');
+        observer::pause_updated($this->event(
+            \block_feedback_tracker\event\cal_pause_updated::class,
+            ['scopelevel' => 'group', 'scopeid' => 999999, 'rowid' => 10]
+        ));
+        $this->assertSame(0, (int) $this->only_audit_row()->affectedrows);
+    }
+
+    /**
+     * Every calendar edit purges the two calver-keyed caches, which have no
+     * ttl: the bump alone only makes their entries unreachable.
+     *
+     * @return void
+     */
+    public function test_calendar_edits_purge_the_calver_keyed_caches(): void {
+        $this->resetAfterTest();
+        $this->seed_rollups();
+        $daycache = \cache::make('block_feedback_tracker', 'calendar_effective_day');
+        $pausecache = \cache::make('block_feedback_tracker', 'pause_windows_by_course');
+
+        $events = [
+            'day' => fn() => observer::day_updated($this->event(\block_feedback_tracker\event\cal_day_updated::class)),
+            'hours' => fn() => observer::hours_updated($this->event(\block_feedback_tracker\event\cal_hours_updated::class)),
+            'pause' => fn() => observer::pause_updated($this->event(
+                \block_feedback_tracker\event\cal_pause_updated::class,
+                ['scopelevel' => 'course', 'scopeid' => 8001]
+            )),
+        ];
+        foreach ($events as $label => $fire) {
+            $daykey = calendar::current_version() . '_20260601';
+            $pausekey = calendar::current_version() . '_8001';
+            $daycache->set($daykey, ['type' => 'implicit']);
+            $pausecache->set($pausekey, [(object) ['id' => 1]]);
+            // Precondition: the entries are there to be purged.
+            $this->assertSame(['type' => 'implicit'], $daycache->get($daykey), $label);
+            $this->assertCount(1, $pausecache->get($pausekey), $label);
+
+            $fire();
+
+            $this->assertFalse($daycache->get($daykey), $label . ': day cache');
+            $this->assertFalse($pausecache->get($pausekey), $label . ': pause cache');
+        }
     }
 
     /**

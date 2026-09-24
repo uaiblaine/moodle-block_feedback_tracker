@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
@@ -72,6 +73,7 @@ class stamp_allocations extends \core\task\adhoc_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $data = (array) $this->get_custom_data();
         $rows = isset($data['rows']) && is_array($data['rows']) ? $data['rows'] : [];
         foreach ($rows as $row) {

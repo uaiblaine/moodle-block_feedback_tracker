@@ -36,7 +36,8 @@ use core_external\external_value;
 /**
  * Returns one card per group the caller can see in this course: score,
  * band, pending/critical/overgoal counts, raw + effective medians/p90/max,
- * compliance %, trend %, and the next/last pause indicators.
+ * compliance %, trend %, the upcoming-pause notice, peer benchmarks and the
+ * group's activity schedule.
  *
  * The actual payload assembly lives in {@see responsiveness_payload::
  * for_course()} so it can be reused from the block's get_content()
@@ -154,7 +155,6 @@ class get_responsiveness extends external_api {
             'median_raw_h'         => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'p90_raw_h'            => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'max_raw_h'            => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'perceived_median_hours' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_eff_h'     => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_raw_h'     => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_eff_days'  => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
@@ -204,11 +204,6 @@ class get_responsiveness extends external_api {
                 VALUE_DEFAULT,
                 []
             ),
-            'nextpause_ts'         => new external_value(PARAM_INT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'nextpause_reason'     => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'nextpause_note'       => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'lastpause_endts'      => new external_value(PARAM_INT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'lastpause_reason'     => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             /* Scheduled-pause notice ("Upcoming pause"): up to 3 upcoming pauses. */
             'upcoming_pauses' => new external_multiple_structure(
                 new external_single_structure([
@@ -217,24 +212,6 @@ class get_responsiveness extends external_api {
                     'label'     => new external_value(PARAM_RAW, 'Pause note as plain text: tags stripped, not HTML-escaped'),
                     'when'      => new external_value(PARAM_TEXT, 'Localised date / time window'),
                     'typelabel' => new external_value(PARAM_TEXT, 'Localised pause-type label'),
-                ]),
-                '',
-                VALUE_DEFAULT,
-                []
-            ),
-            'paused_days_30d'      => new external_value(PARAM_INT, '', VALUE_DEFAULT, 0),
-            'paused_breakdown_30d' => new external_single_structure([
-                'weekend' => new external_value(PARAM_INT, ''),
-                'holiday' => new external_value(PARAM_INT, ''),
-                'recess'  => new external_value(PARAM_INT, ''),
-            ]),
-            /* Sub-day optional events in the same 30-day window. */
-            'paused_events_30d' => new external_multiple_structure(
-                new external_single_structure([
-                    'date'      => new external_value(PARAM_INT, 'YYYYMMDD'),
-                    'starttime' => new external_value(PARAM_INT, 'Minutes since midnight'),
-                    'endtime'   => new external_value(PARAM_INT, 'Minutes since midnight'),
-                    'label'     => new external_value(PARAM_RAW, 'Event note as plain text: tags stripped, not HTML-escaped'),
                 ]),
                 '',
                 VALUE_DEFAULT,

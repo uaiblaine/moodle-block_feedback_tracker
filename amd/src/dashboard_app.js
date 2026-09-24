@@ -24,7 +24,7 @@
 
 import {render, html} from 'block_feedback_tracker/lib/preact';
 import DashboardView from 'block_feedback_tracker/views/DashboardView';
-import {setGroupingSeparator} from 'block_feedback_tracker/lib/format';
+import {setGroupingSeparator, setDecimalSeparator, setDateContext} from 'block_feedback_tracker/lib/format';
 
 /**
  * Pull the JSON payload embedded inside the mount-point root.
@@ -60,7 +60,10 @@ export const init = () => {
         if (!initial) {
             return;
         }
-        setGroupingSeparator(initial.config && initial.config.thousandssep);
+        const config = initial.config || {};
+        setGroupingSeparator(config.thousandssep);
+        setDecimalSeparator(config.decsep);
+        setDateContext(config.locale, config.timezone);
         render(html`<${DashboardView} initial=${initial} />`, root);
     });
 };

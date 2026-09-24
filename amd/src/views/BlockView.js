@@ -41,6 +41,7 @@ import Skeleton from 'block_feedback_tracker/components/Skeleton';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
 import {getResponsiveness} from 'block_feedback_tracker/lib/api';
+import {formatDateTime} from 'block_feedback_tracker/lib/format';
 
 /** Client cache: how long a stored page set stays fresh (matches responsiveness_payload::CACHE_TTL). */
 const CACHE_TTL_SECONDS = 900;
@@ -149,23 +150,6 @@ const overallScore = (groups, thresholds) => {
     }
     const score = totalv / totalw;
     return {score, band: bandForScore(score, thresholds)};
-};
-
-/**
- * Format a Unix timestamp (seconds) as "DD/MM/YYYY HH:MM" in local time.
- *
- * @param {number} ts
- * @returns {string}
- */
-const fmtTimestamp = (ts) => {
-    const n = Number(ts) || 0;
-    if (n <= 0) {
-        return '';
-    }
-    const d = new Date(n * 1000);
-    const pad = (x) => String(x).padStart(2, '0');
-    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
-        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 };
 
 /**
@@ -501,7 +485,7 @@ export default function BlockView({initial}) {
         .replace('{shown}', String(groups.length))
         .replace('{total}', String(total));
     const synctext = (lastsynced
-        ? (i18n.card_footer_sync || 'Last synced {$a}').replace('{$a}', fmtTimestamp(lastsynced)) + ' · '
+        ? (i18n.card_footer_sync || 'Last synced {$a}').replace('{$a}', formatDateTime(lastsynced)) + ' · '
         : '') + (i18n.card_footer_cache || 'Updates automatically every 15 minutes.');
 
     let blockbody;

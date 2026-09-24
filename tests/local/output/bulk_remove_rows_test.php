@@ -86,6 +86,30 @@ final class bulk_remove_rows_test extends \advanced_testcase {
     }
 
     /**
+     * The checkbox column header names the column's action with the plugin's
+     * own visually-hidden class, not Bootstrap 4's sr-only (deprecated on 5.x),
+     * and does not repeat the Course header beside it.
+     *
+     * @return void
+     */
+    public function test_checkbox_column_header_is_a_hidden_select_label(): void {
+        global $OUTPUT;
+        $this->resetAfterTest();
+        $this->course_with_block();
+
+        $html = $OUTPUT->render_from_template('block_feedback_tracker/bulk_remove', [
+            'filtered' => true,
+            'hasrows' => true,
+            'rows' => bulk_remove_rows::for_template(course_finder::candidates([])),
+            'str' => ['colselect' => 'Select', 'colcourse' => 'Course'],
+        ]);
+
+        $this->assertSame(1, preg_match('~<thead>\s*<tr>\s*(<th\b.*?</th>)~s', $html, $matches), 'The table has a header row.');
+        $this->assertSame('<th scope="col"><span class="bft-sr-only">Select</span></th>', $matches[1]);
+        $this->assertNotEmpty(get_string('bulk_col_select', 'block_feedback_tracker'));
+    }
+
+    /**
      * Course names are formatted in the course context and category names in
      * the category context: a filter switched off for the course leaves the
      * course name unfiltered, while the category name is still filtered.

@@ -116,15 +116,18 @@ function block_feedback_tracker_invalidate_rollups(): void {
 }
 
 /**
- * Full data reset: drop every ledger / rollup / trend / site / queue /
- * audit row and bump the calendar version. The platform calendar
- * configuration (cday / chours / cpause) is preserved. Optionally re-enables
- * the backfill task so historic submissions are re-ingested.
+ * Full data reset: drop every ledger / rollup / trend / site / queue row and
+ * bump the calendar version. The platform calendar configuration (cday /
+ * chours / cpause) is preserved, and so is the recompute audit log: the reset
+ * records itself there, and a log it wiped would hold nothing but that entry.
+ * Optionally re-enables the backfill task so historic submissions are
+ * re-ingested.
  *
  * Caller must hold `block/feedback_tracker:resetdata` (system).
  *
  * @param bool $reenablebackfill Activate the backfill task afterwards.
- * @return array{ledger:int, rollups:int, trends:int, sites:int, queue:int, audits:int}
+ * @return array{ledger:int, rollups:int, trends:int, sites:int, queue:int} Rows
+ *         deleted from each table.
  */
 function block_feedback_tracker_reset_data(bool $reenablebackfill = false): array {
     global $DB;
@@ -132,7 +135,7 @@ function block_feedback_tracker_reset_data(bool $reenablebackfill = false): arra
     if (block_feedback_tracker_is_bootstrapping()) {
         return [
             'ledger' => 0, 'rollups' => 0, 'trends' => 0,
-            'sites' => 0, 'queue' => 0, 'audits' => 0,
+            'sites' => 0, 'queue' => 0,
         ];
     }
 
@@ -142,7 +145,6 @@ function block_feedback_tracker_reset_data(bool $reenablebackfill = false): arra
         'trends'  => (int) $DB->count_records('block_feedback_tracker_trend'),
         'sites'   => (int) $DB->count_records('block_feedback_tracker_site'),
         'queue'   => (int) $DB->count_records('block_feedback_tracker_queue'),
-        'audits'  => (int) $DB->count_records('block_feedback_tracker_log'),
     ];
 
     $DB->delete_records('block_feedback_tracker_sub');

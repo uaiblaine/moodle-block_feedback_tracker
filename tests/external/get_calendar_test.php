@@ -139,4 +139,46 @@ final class get_calendar_test extends \advanced_testcase {
         $this->expectException(\required_capability_exception::class);
         get_calendar::execute(20260601, 20260630);
     }
+
+    /**
+     * A whole leap year is exactly MAX_SPAN_DAYS days and is served.
+     *
+     * @return void
+     */
+    public function test_a_leap_year_is_the_longest_range_served(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $result = get_calendar::execute(20240101, 20241231);
+
+        $this->assertSame(366, get_calendar::MAX_SPAN_DAYS);
+        $this->assertTrue($result['success']);
+        $this->assertSame(20241231, $result['endymd']);
+    }
+
+    /**
+     * One day more than MAX_SPAN_DAYS is refused before any row is read.
+     *
+     * @return void
+     */
+    public function test_a_range_longer_than_the_maximum_is_rejected(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $this->expectException(\invalid_parameter_exception::class);
+        get_calendar::execute(20240101, 20250101);
+    }
+
+    /**
+     * A value that is not a real date cannot be measured, so it is refused.
+     *
+     * @return void
+     */
+    public function test_a_range_ending_on_an_impossible_date_is_rejected(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $this->expectException(\invalid_parameter_exception::class);
+        get_calendar::execute(20260201, 20260230);
+    }
 }

@@ -81,20 +81,29 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * At system context, where pages/reset.php checks it, a course editing
-     * teacher does not hold resetdata and a system manager does.
+     * At system context, where pages/reset.php checks it, the editing teacher
+     * role does not hold resetdata and the manager role does.
+     *
+     * The teacher's role is assigned at system context: a course enrolment
+     * grants nothing there, so a teacher enrolled in a course would pass the
+     * negative half whatever the editingteacher role allowed.
      *
      * @return void
      */
     public function test_only_managers_can_reset(): void {
+        global $DB;
         $this->resetAfterTest();
 
-        $course = $this->getDataGenerator()->create_course();
         $context = \context_system::instance();
-        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $teacher = $this->getDataGenerator()->create_user();
+        role_assign(
+            (int) $DB->get_field('role', 'id', ['shortname' => 'editingteacher'], MUST_EXIST),
+            $teacher->id,
+            $context->id
+        );
         $manager = $this->getDataGenerator()->create_user();
         role_assign(
-            (int) $this->getDataGenerator()->create_role(['archetype' => 'manager']),
+            (int) $DB->get_field('role', 'id', ['shortname' => 'manager'], MUST_EXIST),
             $manager->id,
             $context->id
         );
@@ -102,9 +111,27 @@ final class access_test extends \advanced_testcase {
 
         $this->assertFalse(
             has_capability('block/feedback_tracker:resetdata', $context, $teacher),
-            'An editing teacher must not be able to wipe the plugin data.'
+            'The editing teacher role must not be able to wipe the plugin data.'
         );
         $this->assertTrue(has_capability('block/feedback_tracker:resetdata', $context, $manager));
+    }
+
+    /**
+     * The bulk block-removal capability removes the block from many courses at
+     * once and can discard their history on the spot, so it is declared like
+     * resetdata: system context, the manager archetype alone, and the
+     * data-loss risk.
+     *
+     * @return void
+     */
+    public function test_bulkmanageblocks_is_a_manager_only_data_loss_capability(): void {
+        $caps = $this->capabilities();
+        $bulk = $caps['block/feedback_tracker:bulkmanageblocks'] ?? null;
+
+        $this->assertNotNull($bulk, 'block/feedback_tracker:bulkmanageblocks must stay declared.');
+        $this->assertSame(CONTEXT_SYSTEM, $bulk['contextlevel']);
+        $this->assertSame(['manager'], array_keys($bulk['archetypes'] ?? []));
+        $this->assertSame(RISK_DATALOSS, (int) ($bulk['riskbitmask'] ?? 0) & RISK_DATALOSS);
     }
 
     /**

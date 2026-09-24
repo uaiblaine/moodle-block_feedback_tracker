@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Drift detector for constants duplicated between PHP and the AMD bundle.
+ * Drift detector for values shared between PHP and the AMD bundle.
  *
  * @package    block_feedback_tracker
  * @category   test
@@ -29,12 +29,13 @@ namespace block_feedback_tracker\lockstep;
 
 use block_feedback_tracker\local\output\bootstrap;
 use block_feedback_tracker\local\score\responsiveness_calculator;
-use block_feedback_tracker\output\score_gauge;
 
 /**
- * Several values exist twice, once in PHP and once in amd/src. Duplicated
- * constants drift silently — a colour changed on one side alone shows up as a
- * block and a dashboard disagreeing, with nothing failing.
+ * Several values live on both sides, once in PHP and once in amd/src: the
+ * default score thresholds, the keys the band classifier reads from the
+ * config bundle, and the band slugs. Shared values drift silently — a slug
+ * added on one side alone shows up as a card with no colour or no label,
+ * with nothing failing.
  *
  * The JS is read from disk rather than mirrored into an expected array here:
  * a mirrored copy would be a third copy, free to drift like the other two.
@@ -55,35 +56,22 @@ final class js_php_lockstep_test extends \advanced_testcase {
     }
 
     /**
-     * The six band colours must be identical on both sides.
+     * The band slugs keyed in amd/src/lib/bands.js BAND_COLOURS, sorted.
      *
-     * @return void
+     * @return string[]
      */
-    public function test_band_colours_match_bands_js(): void {
+    private function js_band_slugs(): array {
         $js = $this->amd_source('lib/bands.js');
-
         $this->assertSame(
             1,
             preg_match('/BAND_COLOURS\s*=\s*\{(.*?)\}/s', $js, $block),
             'Could not find BAND_COLOURS in amd/src/lib/bands.js'
         );
-
-        preg_match_all("/(\w+)\s*:\s*'(#[0-9a-fA-F]{3,8})'/", $block[1], $pairs, PREG_SET_ORDER);
-        $jscolours = [];
-        foreach ($pairs as $pair) {
-            $jscolours[$pair[1]] = strtolower($pair[2]);
-        }
-        $this->assertNotEmpty($jscolours, 'No colours parsed out of bands.js');
-
-        $phpcolours = array_map('strtolower', score_gauge::BAND_COLOURS);
-
-        ksort($jscolours);
-        ksort($phpcolours);
-        $this->assertSame(
-            $phpcolours,
-            $jscolours,
-            'score_gauge::BAND_COLOURS and amd/src/lib/bands.js::BAND_COLOURS have drifted apart.'
-        );
+        preg_match_all("/(\w+)\s*:\s*'#/", $block[1], $slugs);
+        $jsslugs = $slugs[1];
+        sort($jsslugs);
+        $this->assertNotEmpty($jsslugs, 'No band slugs parsed out of bands.js');
+        return $jsslugs;
     }
 
     /**
@@ -138,22 +126,54 @@ final class js_php_lockstep_test extends \advanced_testcase {
     }
 
     /**
-     * Every band slug used by the PHP side exists in the JS map, so a slug
-     * added on one side alone is caught. The slugs are frozen identifiers —
-     * relabelling a band is a lang-string change, never a slug change.
+     * The band slugs in bands.js are exactly the slugs the i18n bundles label,
+     * and each has its band_<slug> lang string, so a slug added or dropped on
+     * one side alone is caught. The slugs are frozen identifiers — relabelling
+     * a band is a lang-string change, never a slug change.
      *
      * @return void
      */
-    public function test_band_slugs_are_the_same_set(): void {
-        $js = $this->amd_source('lib/bands.js');
-        preg_match('/BAND_COLOURS\s*=\s*\{(.*?)\}/s', $js, $block);
-        preg_match_all("/(\w+)\s*:\s*'#/", $block[1], $slugs);
+    public function test_band_slugs_match_the_bundle_labels(): void {
+        $this->resetAfterTest();
+        $jsslugs = $this->js_band_slugs();
 
-        $jsslugs = $slugs[1];
-        sort($jsslugs);
-        $phpslugs = array_keys(score_gauge::BAND_COLOURS);
-        sort($phpslugs);
+        $bundles = [
+            'i18n_bundle' => bootstrap::i18n_bundle()['bands'],
+            'simulator_i18n' => bootstrap::simulator_i18n()['bands'],
+        ];
+        foreach ($bundles as $name => $bands) {
+            $phpslugs = array_keys($bands);
+            sort($phpslugs);
+            $this->assertSame($jsslugs, $phpslugs, "bootstrap::{$name}() labels a different set of bands than bands.js.");
+        }
 
-        $this->assertSame($phpslugs, $jsslugs);
+        $strings = get_string_manager();
+        foreach ($jsslugs as $slug) {
+            $this->assertTrue(
+                $strings->string_exists('band_' . $slug, 'block_feedback_tracker'),
+                "Band '{$slug}' has no band_{$slug} lang string."
+            );
+        }
+    }
+
+    /**
+     * Every band the score calculator can assign has a colour in bands.js, so
+     * no server-computed band renders uncoloured.
+     *
+     * @return void
+     */
+    public function test_calculator_bands_have_a_js_colour(): void {
+        $this->resetAfterTest();
+        unset_config('score_thresholds_band', 'block_feedback_tracker');
+        $jsslugs = $this->js_band_slugs();
+
+        $calculated = [responsiveness_calculator::BAND_NODATA];
+        for ($score = 0; $score <= 100; $score++) {
+            $calculated[] = responsiveness_calculator::band_for((float) $score);
+        }
+        $calculated = array_values(array_unique($calculated));
+        $this->assertCount(5, $calculated, 'Precondition: the scores 0..100 reach every scored band plus nodata.');
+
+        $this->assertSame([], array_values(array_diff($calculated, $jsslugs)));
     }
 }

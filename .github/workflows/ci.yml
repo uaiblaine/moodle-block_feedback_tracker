@@ -1,6 +1,27 @@
 name: ci
 
-on: [push, pull_request]
+# workflow_dispatch is the manual escape hatch: it lets a run be launched for
+# a push whose commits would otherwise skip CI, without pushing another commit.
+#
+# push is filtered to the branches that are merge targets. Without the filter
+# every push to a feature branch ran the whole pipeline AND the pull_request
+# event ran it again on the same commit, doubling the jobs for no extra
+# information.
+on:
+  push:
+    branches:
+      - main
+      - 'MOODLE_*_STABLE'
+  pull_request:
+  workflow_dispatch:
+
+# Supersede a run when new commits arrive on the same pull request: pushing
+# three fixes in a row otherwise leaves three full pipelines running to the end.
+# Never on main - each merge there is the only run its commit will ever get, and
+# a second merge landing quickly must not cancel the first one's verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # One reusable-workflow call per supported Moodle branch (version.php

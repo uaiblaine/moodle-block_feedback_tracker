@@ -67,6 +67,30 @@ final class tool_page_viewed_test extends \advanced_testcase {
     }
 
     /**
+     * Every slug a tool page fires links back to that page.
+     *
+     * @return void
+     */
+    public function test_each_tool_page_slug_links_to_its_page(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $pages = [
+            'calendar' => '/blocks/feedback_tracker/pages/calendar_editor.php',
+            'audit' => '/blocks/feedback_tracker/pages/audit_log.php',
+            'reset' => '/blocks/feedback_tracker/pages/reset.php',
+            'bulkremove' => '/blocks/feedback_tracker/pages/bulk_remove.php',
+        ];
+
+        foreach ($pages as $slug => $path) {
+            $event = tool_page_viewed::create([
+                'context' => \context_system::instance(),
+                'other' => ['page' => $slug],
+            ]);
+            $this->assertSame((new \moodle_url($path))->out(false), $event->get_url()->out(false), $slug);
+        }
+    }
+
+    /**
      * An unknown slug — including the legacy 'manage' one left in historic log
      * rows — falls back to the plugin's admin settings page, and the localised
      * event name resolves.

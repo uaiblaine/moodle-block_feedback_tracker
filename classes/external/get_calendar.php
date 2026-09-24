@@ -40,7 +40,7 @@ use core_external\external_value;
  * either `:managecalendar` or `:viewdashboard` at system context.
  */
 class get_calendar extends external_api {
-    /** Maximum date span in days. */
+    /** Most days one call may cover, both ends included: a leap year. */
     public const MAX_SPAN_DAYS = 366;
 
     /**
@@ -72,6 +72,9 @@ class get_calendar extends external_api {
         $end = (int) $params['endymd'];
         if ($end < $start) {
             throw new \invalid_parameter_exception('endymd must be >= startymd');
+        }
+        if (self::span_days($start, $end) > self::MAX_SPAN_DAYS) {
+            throw new \invalid_parameter_exception('The range may cover at most ' . self::MAX_SPAN_DAYS . ' days');
         }
 
         $sysctx = \context_system::instance();
@@ -130,6 +133,29 @@ class get_calendar extends external_api {
             'days'         => $dayrows,
             'businesshours' => $hoursrows,
         ];
+    }
+
+    /**
+     * Number of days from $start to $end, both included.
+     *
+     * @param int $start YYYYMMDD, not after $end.
+     * @param int $end YYYYMMDD.
+     * @return int For example 1 for a single day and 366 for all of 2024.
+     * @throws \invalid_parameter_exception When either value is not a real calendar date.
+     */
+    private static function span_days(int $start, int $end): int {
+        $utc = new \DateTimeZone('UTC');
+        $dates = [];
+        foreach ([$start, $end] as $ymd) {
+            $y = intdiv($ymd, 10000);
+            $m = intdiv($ymd, 100) % 100;
+            $d = $ymd % 100;
+            if ($ymd < 10000101 || $ymd > 99991231 || !checkdate($m, $d, $y)) {
+                throw new \invalid_parameter_exception('Not a YYYYMMDD date: ' . $ymd);
+            }
+            $dates[] = (new \DateTimeImmutable('now', $utc))->setDate($y, $m, $d)->setTime(0, 0);
+        }
+        return (int) $dates[0]->diff($dates[1])->days + 1;
     }
 
     /**

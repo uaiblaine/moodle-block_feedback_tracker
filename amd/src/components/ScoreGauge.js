@@ -16,10 +16,6 @@
 /**
  * SVG ring gauge for the Academic Responsiveness Score.
  *
- * Direct port of templates/score_gauge.mustache. The geometry maths is
- * identical to classes/output/score_gauge.php::export_for_template(); both
- * must move together if the design ever changes.
- *
  * @module    block_feedback_tracker/components/ScoreGauge
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
@@ -35,9 +31,10 @@ import {colourFor} from 'block_feedback_tracker/lib/bands';
  * @param {number|null} props.score  0..100, or null for "no data".
  * @param {string|null} props.band   Band slug — drives the stroke colour.
  * @param {number} [props.size]      Square pixel size; defaults to 100.
- * @param {string} [props.arialabel] Localised label for assistive tech. Falls
- *                                   back to English only when a caller omits
- *                                   it; every caller should pass one.
+ * @param {string} [props.arialabel] Localised label for assistive tech, in
+ *                                   which a `{$a}` is replaced by the score
+ *                                   shown (the gauge_aria string). Falls back
+ *                                   to English only when a caller omits it.
  * @returns {object} vnode
  */
 export default function ScoreGauge({score, band, size = 100, arialabel = ''}) {
@@ -56,9 +53,9 @@ export default function ScoreGauge({score, band, size = 100, arialabel = ''}) {
         <svg class="bft-gauge"
              viewBox="0 0 ${size} ${size}"
              width=${size} height=${size}
-             role="img" aria-label=${arialabel || ('Responsiveness score ' + label)}>
+             role="img" aria-label=${arialabel ? arialabel.replace('{$a}', label) : ('Responsiveness score ' + label)}>
             <circle cx=${cx} cy=${cx} r=${r.toFixed(2)}
-                    fill="none" stroke="#e5e7eb" stroke-width="8" />
+                    fill="none" stroke="var(--bft-border-soft, #e5e7eb)" stroke-width="8" />
             <circle cx=${cx} cy=${cx} r=${r.toFixed(2)}
                     fill="none" stroke=${colour} stroke-width="8"
                     stroke-linecap="round"
@@ -66,7 +63,7 @@ export default function ScoreGauge({score, band, size = 100, arialabel = ''}) {
                     transform=${'rotate(-90 ' + cx + ' ' + cx + ')'} />
             <text x=${cx} y=${texty.toFixed(2)}
                   text-anchor="middle" font-size=${fontsize}
-                  font-weight="700" fill="#0f172a">${label}</text>
+                  font-weight="700" fill="var(--bft-text, #0f172a)">${label}</text>
         </svg>
     `;
 }

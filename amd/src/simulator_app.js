@@ -23,6 +23,7 @@
  */
 
 import {render, html} from 'block_feedback_tracker/lib/preact';
+import {setGroupingSeparator, setDecimalSeparator, setDateContext} from 'block_feedback_tracker/lib/format';
 import SimulatorView from 'block_feedback_tracker/views/SimulatorView';
 
 /**
@@ -59,6 +60,10 @@ export const init = () => {
         if (!initial) {
             return;
         }
+        const config = initial.config || {};
+        setGroupingSeparator(config.thousandssep);
+        setDecimalSeparator(config.decsep);
+        setDateContext(config.locale, config.timezone);
         render(html`<${SimulatorView} initial=${initial} />`, root);
     });
 };

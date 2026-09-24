@@ -28,6 +28,7 @@ namespace block_feedback_tracker\local\audit;
 
 /**
  * Wraps {block_feedback_tracker_log}, the audit trail of bulk recomputes,
+ * calendar edits ({@see \block_feedback_tracker\local\calendar\observer}),
  * queue drains, reconciliation ticks, block removals and data resets, so they
  * can be explained later.
  *
@@ -36,13 +37,13 @@ namespace block_feedback_tracker\local\audit;
 class recompute_log {
     /** Reason: admin data reset, or a settings save that re-queued every rollup. */
     public const REASON_MANUAL_RESET = 'manual_reset';
-    /** Reason: a calendar day was saved. */
+    /** Reason: a calendar day was saved or removed. */
     public const REASON_CALENDAR_SAVE = 'calendar_save';
-    /** Reason: business hours saved. */
+    /** Reason: the business hours of a weekday were saved. */
     public const REASON_BUSINESS_HOURS_SAVE = 'business_hours_save';
-    /** Reason: a pause window was saved. */
+    /** Reason: a pause window was saved or deleted. */
     public const REASON_PAUSE_SAVE = 'pause_save';
-    /** Reason: a CSV bulk import was processed. */
+    /** Reason: a CSV bulk import saved at least one calendar day. */
     public const REASON_BULK_IMPORT = 'bulk_import';
     /** Reason: daily pending recompute pass. */
     public const REASON_DAILY_PENDING = 'daily_pending';

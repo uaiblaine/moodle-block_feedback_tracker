@@ -88,7 +88,7 @@ final class observer_test extends \advanced_testcase {
      * Firing submission_graded sets timegraded and effectivehours and queues
      * one adhoc recompute task.
      */
-    public function test_submission_graded_persists_pauses_and_queues_recompute(): void {
+    public function test_submission_graded_sets_effective_hours_and_queues_recompute(): void {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
 

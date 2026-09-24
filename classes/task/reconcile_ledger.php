@@ -30,7 +30,7 @@ use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
-use block_feedback_tracker\local\sla\group_resolver;
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\retention;
 use block_feedback_tracker\local\sla\rule_resolver;
 use block_feedback_tracker\local\sla\submission_ledger;
@@ -105,9 +105,6 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /** Token the window predicate is spliced into, in a probe template. */
     private const WINDOW_TOKEN = '__window__';
 
-    /** @var int Epoch second after which this tick must stop starting work. */
-    private int $deadline = 0;
-
     /**
      * @var int Epoch second after which the sweep now running must stop
      *          starting windows: its share of what was left of the tick when
@@ -158,6 +155,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         /* Default-ON checkbox: an unset value (false) means enabled, and only
          * an explicit '0' turns it off. A `?: 1` read would never see the off
          * state, because the stored '0' is falsy. */
@@ -185,12 +183,6 @@ class reconcile_ledger extends \core\task\scheduled_task {
         $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
             ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
-        $this->deadline = $deadline;
-
-        // Flush the memos the ledger consults; a long-lived cron process would
-        // otherwise carry one tick's decisions into the next.
-        submission_ledger::reset_memos();
-        group_resolver::reset_memo();
 
         $sweeps = [
             'missing' => 'sweep_missing_rows',

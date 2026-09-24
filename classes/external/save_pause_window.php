@@ -42,7 +42,9 @@ use core_external\external_value;
  * is also checked against the context the existing row lives in.
  *
  * Fires `cal_pause_updated` so the observer scopes the re-enqueue (site →
- * all groups, course → that course, group → one tuple).
+ * all groups, course → that course, group → one tuple). An update that moves
+ * the window to another scope fires it once more for the scope it left, whose
+ * rollups counted the window until now.
  */
 class save_pause_window extends external_api {
     /**
@@ -124,6 +126,7 @@ class save_pause_window extends external_api {
             'timemodified' => $now,
         ];
 
+        $vacated = null;
         if ($id > 0) {
             $existing = $DB->get_record('block_feedback_tracker_cpause', ['id' => $id], '*', MUST_EXIST);
             /* Authorise against the context the row already lives in, not just
@@ -137,6 +140,17 @@ class save_pause_window extends external_api {
 
             $record->id = (int) $existing->id;
             $DB->update_record('block_feedback_tracker_cpause', $record);
+
+            if ((string) $existing->scopelevel !== $scopelevel || (int) $existing->scopeid !== $scopeid) {
+                $vacated = cal_pause_updated::create([
+                    'context' => $existingcontext,
+                    'other'   => [
+                        'scopelevel' => (string) $existing->scopelevel,
+                        'scopeid' => (int) $existing->scopeid,
+                        'rowid' => $id,
+                    ],
+                ]);
+            }
         } else {
             $record->timecreated = $now;
             $id = (int) $DB->insert_record('block_feedback_tracker_cpause', $record);
@@ -148,6 +162,9 @@ class save_pause_window extends external_api {
             'other'    => ['scopelevel' => $scopelevel, 'scopeid' => $scopeid, 'rowid' => $id],
         ]);
         $event->trigger();
+        if ($vacated !== null) {
+            $vacated->trigger();
+        }
 
         return ['success' => true, 'id' => $id, 'calver' => calendar::current_version()];
     }

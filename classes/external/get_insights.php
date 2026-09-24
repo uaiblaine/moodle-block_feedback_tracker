@@ -39,15 +39,15 @@ use core_external\external_value;
  * first, else the 30-day trend) and a gentle watch (group with the most
  * critical-band pending submissions). A key is omitted when no row qualifies.
  *
- * Results are cached for 900 s per calver, user, scope mode and language, so
- * a settings save that bumps calver re-keys the cache.
+ * Results are cached for 900 s per calver, user, scope mode, banding ruler and
+ * language, so a settings save that bumps calver re-keys the cache.
  */
 class get_insights extends external_api {
     /** Cache TTL in seconds. */
     public const CACHE_TTL = 900;
 
     /** Cache-key version. Bump when the result shape or the formatting of its values changes. */
-    public const CACHE_KEY_VERSION = 5;
+    public const CACHE_KEY_VERSION = 6;
 
     /**
      * Parameters — no inputs.
@@ -84,11 +84,14 @@ class get_insights extends external_api {
 
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
         // Language is part of the key because the metric suffixes are
-        // localised and the course and group names filtered server-side.
+        // localised and the course and group names filtered server-side; the
+        // banding ruler is, because it picks the gentle watch's count.
+        $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         $key = 'insights_v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
             . '_' . $USER->id
             . '_' . ($scope === null ? 'all' : 'scoped')
+            . ($usedays ? '_d' : '')
             . '_' . current_language();
         $cached = $cache->get($key);
         if (
@@ -102,7 +105,7 @@ class get_insights extends external_api {
         $rows = self::source_rows($userid);
         $brightspot = self::pick_bright_spot($rows);
         $mostimproved = self::pick_most_improved($rows);
-        $gentlewatch = self::pick_gentle_watch($rows);
+        $gentlewatch = self::pick_gentle_watch($rows, $usedays);
 
         // Omit null insight keys entirely — external_single_structure with
         // VALUE_OPTIONAL on the field allows missing keys but not literal
@@ -146,7 +149,7 @@ class get_insights extends external_api {
         $sql = "SELECT g.id, g.courseid, g.groupid, c.fullname AS coursename,
                        grp.name AS groupname,
                        g.responsiveness_score, g.score_band, g.trend_pct_30d,
-                       g.median_eff_h, g.critical, g.pending, g.numgraded30d
+                       g.median_eff_h, g.critical, g.critical_days, g.pending, g.numgraded30d
                   FROM {block_feedback_tracker_group} g
                   JOIN {course} c ON c.id = g.courseid
              LEFT JOIN {groups} grp ON grp.id = g.groupid
@@ -155,8 +158,9 @@ class get_insights extends external_api {
     }
 
     /**
-     * Bright spot — the highest-scoring group, with the oldest tie broken
-     * by larger numgraded30d. Returns null when no group has a score yet.
+     * Bright spot — the highest-scoring group; a score tie goes to the group
+     * with more submissions graded in the rollup window (numgraded30d).
+     * Returns null when no group has a score yet.
      *
      * @param array $rows
      * @return array|null
@@ -167,7 +171,8 @@ class get_insights extends external_api {
             return null;
         }
         usort($scored, static function ($a, $b) {
-            return (float) $b->responsiveness_score <=> (float) $a->responsiveness_score;
+            return ((float) $b->responsiveness_score <=> (float) $a->responsiveness_score)
+                ?: ((int) $b->numgraded30d <=> (int) $a->numgraded30d);
         });
         $top = $scored[0];
         $score = (float) $top->responsiveness_score;
@@ -252,22 +257,33 @@ class get_insights extends external_api {
      * Gentle watch — the group with the most critical-band pending
      * submissions. Returns null when no group has any critical pending.
      *
+     * The count follows the banding ruler, as the dashboard's courses table
+     * does: in business-days mode it is critical_days, falling back to the
+     * hour-based critical while the rollup has not filled critical_days yet.
+     *
      * @param array $rows
+     * @param bool $usedays Whether bucket::use_day_thresholds() is on.
      * @return array|null
      */
-    private static function pick_gentle_watch(array $rows): ?array {
+    private static function pick_gentle_watch(array $rows, bool $usedays): ?array {
+        $count = static function (\stdClass $r) use ($usedays): int {
+            if ($usedays && $r->critical_days !== null) {
+                return (int) $r->critical_days;
+            }
+            return (int) $r->critical;
+        };
         $critical = array_values(array_filter(
             $rows,
-            static fn ($r) => (int) $r->critical > 0
+            static fn ($r) => $count($r) > 0
         ));
         if (empty($critical)) {
             return null;
         }
-        usort($critical, static function ($a, $b) {
-            return (int) $b->critical <=> (int) $a->critical;
+        usort($critical, static function ($a, $b) use ($count) {
+            return $count($b) <=> $count($a);
         });
         $top = $critical[0];
-        $n = (int) $top->critical;
+        $n = $count($top);
         return self::identity($top) + [
             'metric_value' => numfmt::count($n),
             'metric_suffix' => get_string('insight_criticalpending', 'block_feedback_tracker'),

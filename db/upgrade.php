@@ -640,5 +640,43 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026090300, 'feedback_tracker');
     }
 
+    /* Remove two settings that nothing ever read: the wall-clock bucket
+     * thresholds (the hour buckets read bucket_thresholds_eff only) and the
+     * school comparison switch (the viewschoolcomparison capability is the
+     * only gate). The settings page no longer offers them. Then drop five
+     * unread rollup columns and recompute every rollup. */
+    if ($oldversion < 2026092402) {
+        unset_config('bucket_thresholds_raw', 'block_feedback_tracker');
+        unset_config('enable_school_comparison', 'block_feedback_tracker');
+
+        /* The next-pause and last-pause columns of the rollup: written on every
+         * recompute and read by nothing, since the cards take their pause
+         * notice from upcoming_pauses at read time. */
+        $grouptable = new xmldb_table('block_feedback_tracker_group');
+        foreach (['nextpause_ts', 'nextpause_reason', 'nextpause_note', 'lastpause_endts', 'lastpause_reason'] as $name) {
+            $field = new xmldb_field($name);
+            if ($dbman->field_exists($grouptable, $field)) {
+                $dbman->drop_field($grouptable, $field);
+            }
+        }
+
+        /* Several stored rollup figures changed meaning in this version:
+         * unallocated is null unless an activity uses marking allocation, and
+         * overgoal_days is bounded by sla_goal_days. The rollup is
+         * materialised, so re-enqueue every tuple rather than leave the old
+         * values in place until something else dirties it. */
+        $tuples = $DB->get_recordset('block_feedback_tracker_group', null, '', 'id, courseid, groupid');
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+            );
+        }
+        $tuples->close();
+
+        upgrade_block_savepoint(true, 2026092402, 'feedback_tracker');
+    }
+
     return true;
 }

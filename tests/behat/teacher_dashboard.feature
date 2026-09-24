@@ -16,13 +16,6 @@ Feature: Teacher dashboard renders for a multi-course editing teacher
       | user     | course | role           |
       | teacher1 | CA     | editingteacher |
       | teacher1 | CB     | editingteacher |
-    # Repeats the editingteacher archetype default in db/access.php, so on a
-    # standard install it changes nothing (role_change_permission() skips a
-    # permission the role already has); it keeps the scenario independent of
-    # that default.
-    And the following "permission overrides" exist:
-      | capability                              | permission | role           | contextlevel | reference |
-      | block/feedback_tracker:viewdashboard    | Allow      | editingteacher | System       |           |
 
   Scenario: Editing teacher sees the hero greeting and the courses heading
     Given I log in as "teacher1"
