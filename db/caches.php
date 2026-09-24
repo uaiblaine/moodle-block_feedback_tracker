@@ -47,8 +47,9 @@ $definitions = [
     ],
 
     // Block payload from responsiveness_payload::for_course(). Session-scoped; key
-    // is "{calver}_{userid}_{courseid}" plus suffixes for the day ruler, the page and
-    // the sort. Entries older than its CACHE_TTL, by their lastsynced field, are ignored.
+    // is "{calver}_{userid}_{courseid}" plus suffixes for the day ruler, the page, the
+    // sort and the language. Entries older than its CACHE_TTL, by their lastsynced
+    // field, are ignored.
     'responsiveness_payload' => [
         'mode' => cache_store::MODE_SESSION,
         'simplekeys' => false,

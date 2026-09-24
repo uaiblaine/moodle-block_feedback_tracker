@@ -333,7 +333,7 @@ class get_academic_days extends external_api {
                 'date'      => new external_value(PARAM_INT, 'YYYYMMDD'),
                 'starttime' => new external_value(PARAM_INT, 'Minutes since midnight'),
                 'endtime'   => new external_value(PARAM_INT, 'Minutes since midnight'),
-                'label'     => new external_value(PARAM_TEXT, ''),
+                'label'     => new external_value(PARAM_TEXT, 'Event note as plain text: tags stripped, not HTML-escaped'),
             ])),
             'lastsynced' => new external_value(PARAM_INT, ''),
         ]);

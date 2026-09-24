@@ -730,10 +730,9 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * A user-level override changes the dates one student is judged against
-     * and reaches the plugin through no other signal — the reconciler's
-     * rule-drift sweep compares against the activity's own dates and
-     * {assign_user_flags}, so it cannot see an {assign_overrides} row at all.
+     * A user-level override changes the dates one student is judged against,
+     * and the override events are what carry it to the ledger straight away;
+     * the reconciler's rule-drift sweep only catches up on a later pass.
      *
      * @return void
      */

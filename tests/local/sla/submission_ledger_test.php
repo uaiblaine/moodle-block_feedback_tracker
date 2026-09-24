@@ -283,6 +283,36 @@ final class submission_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * The grader filter is on while its setting was never saved, as the
+     * setting's default says: get_config() returns false for such a key, and
+     * only an explicit '0' turns the filter off. A student's submission in the
+     * same activity is still recorded, so the filter is not skipping everyone.
+     */
+    public function test_grader_filter_applies_while_the_setting_is_unset(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        unset_config('exclude_grader_submissions', 'block_feedback_tracker');
+        $this->assertFalse(
+            get_config('block_feedback_tracker', 'exclude_grader_submissions'),
+            'Precondition: the setting is absent, not stored as anything.'
+        );
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
+        $cm = get_coursemodule_from_instance('assign', $assign->id);
+        $this->insert_assign_submission((int) $assign->id, (int) $teacher->id, time() - 3600, 'submitted');
+        $this->insert_assign_submission((int) $assign->id, (int) $student->id, time() - 1800, 'submitted');
+
+        $this->assertNull(submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $teacher->id, 0));
+        $this->assertNotNull(submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0));
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $teacher->id]));
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]));
+    }
+
+    /**
      * With exclude_grader_submissions off, teacher submissions are recorded.
      */
     public function test_grader_filter_disabled_records_teacher_submission(): void {

@@ -51,7 +51,8 @@ class paused_aggregator {
     /**
      * Count paused days in a [start, end) window, by reason. Derived from the
      * per-day classification so the counts and the per-day map (consumed by
-     * the report-page heatmap) can never drift apart.
+     * the report-page heatmap) can never drift apart. An event's label is its
+     * note as plain text: tags stripped, not HTML-escaped.
      *
      * @param int $courseid Course context for manual-pause scoping; 0 for site-wide.
      * @param int $start    Unix seconds; inclusive lower bound.
@@ -141,7 +142,8 @@ class paused_aggregator {
         $dayymds = [];
         while ($cur < $endboundary) {
             $ymd = (int) $cur->format('Ymd');
-            $dow = (int) $cur->format('w');
+            // Day of the week counted from Monday as 0, the numbering calendar::is_weekend() reads.
+            $dow = (int) $cur->format('N') - 1;
             $days[$ymd] = $dow;
             $dayymds[] = $ymd;
             $cur = $cur->modify('+1 day');
@@ -181,7 +183,8 @@ class paused_aggregator {
                 $optend = $override['endtime'];
                 if ($optstart !== null && $optend !== null) {
                     // Sub-day — surface in the events sidecar but do NOT
-                    // mark the day paused (it's hour-scale, not day).
+                    // mark the day paused (it's hour-scale, not day). The label
+                    // is plain text, like {@see upcoming_pauses::clean_note()}.
                     $events[] = [
                         'date'      => (int) $ymd,
                         'starttime' => (int) $optstart,
@@ -189,7 +192,7 @@ class paused_aggregator {
                         'label'     => format_string(
                             (string) ($override['note'] ?? ''),
                             true,
-                            ['context' => $sysctx]
+                            ['context' => $sysctx, 'escape' => false]
                         ),
                     ];
                 } else if ($excluderecesses) {

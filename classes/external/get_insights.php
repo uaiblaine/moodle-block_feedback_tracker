@@ -46,8 +46,8 @@ class get_insights extends external_api {
     /** Cache TTL in seconds. */
     public const CACHE_TTL = 900;
 
-    /** Cache-key version. Bump when the result shape changes. */
-    public const CACHE_KEY_VERSION = 4;
+    /** Cache-key version. Bump when the result shape or the formatting of its values changes. */
+    public const CACHE_KEY_VERSION = 5;
 
     /**
      * Parameters — no inputs.
@@ -84,7 +84,7 @@ class get_insights extends external_api {
 
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
         // Language is part of the key because the metric suffixes are
-        // localised server-side.
+        // localised and the course and group names filtered server-side.
         $key = 'insights_v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
             . '_' . $USER->id
@@ -171,11 +171,7 @@ class get_insights extends external_api {
         });
         $top = $scored[0];
         $score = (float) $top->responsiveness_score;
-        return [
-            'courseid'     => (int) $top->courseid,
-            'coursename'   => (string) $top->coursename,
-            'groupid'      => (int) $top->groupid,
-            'groupname'    => (string) ($top->groupname ?? ''),
+        return self::identity($top) + [
             'metric_value' => (string) round($score),
             'metric_suffix' => get_string('insight_outof100', 'block_feedback_tracker'),
         ];
@@ -225,11 +221,7 @@ class get_insights extends external_api {
             }
         }
         if ($best !== null) {
-            return [
-                'courseid'      => (int) $best->courseid,
-                'coursename'    => (string) $best->coursename,
-                'groupid'       => (int) $best->groupid,
-                'groupname'     => (string) ($best->groupname ?? ''),
+            return self::identity($best) + [
                 'metric_value'  => '▲ ' . (string) round(abs($bestpct)) . '%',
                 'metric_suffix' => get_string('insight_faster_week_suffix', 'block_feedback_tracker'),
                 'momentum'      => true,
@@ -249,11 +241,7 @@ class get_insights extends external_api {
         });
         $top = $trended[0];
         $pct = (float) $top->trend_pct_30d;
-        return [
-            'courseid'      => (int) $top->courseid,
-            'coursename'    => (string) $top->coursename,
-            'groupid'       => (int) $top->groupid,
-            'groupname'     => (string) ($top->groupname ?? ''),
+        return self::identity($top) + [
             'metric_value'  => '▲ ' . (string) round(abs($pct)) . '%',
             'metric_suffix' => get_string('insight_faster_suffix', 'block_feedback_tracker'),
             'momentum'      => false,
@@ -280,13 +268,29 @@ class get_insights extends external_api {
         });
         $top = $critical[0];
         $n = (int) $top->critical;
-        return [
-            'courseid'     => (int) $top->courseid,
-            'coursename'   => (string) $top->coursename,
-            'groupid'      => (int) $top->groupid,
-            'groupname'    => (string) ($top->groupname ?? ''),
+        return self::identity($top) + [
             'metric_value' => numfmt::count($n),
             'metric_suffix' => get_string('insight_criticalpending', 'block_feedback_tracker'),
+        ];
+    }
+
+    /**
+     * The course and group an insight row names.
+     *
+     * Names are filtered in the course context but not escaped: PARAM_TEXT and
+     * the text nodes the dashboard renders them into escape for themselves.
+     * The ungrouped row (groupid 0) has no group name.
+     *
+     * @param \stdClass $row A source_rows() row.
+     * @return array{courseid:int, coursename:string, groupid:int, groupname:string}
+     */
+    private static function identity(\stdClass $row): array {
+        $options = ['context' => \context_course::instance((int) $row->courseid), 'escape' => false];
+        return [
+            'courseid'   => (int) $row->courseid,
+            'coursename' => format_string((string) $row->coursename, true, $options),
+            'groupid'    => (int) $row->groupid,
+            'groupname'  => format_string((string) ($row->groupname ?? ''), true, $options),
         ];
     }
 

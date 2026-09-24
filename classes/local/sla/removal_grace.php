@@ -112,12 +112,16 @@ final class removal_grace {
             $explicit = self::MIN_SECONDS;
         }
 
-        if ((int) (get_config('block_feedback_tracker', 'removal_grace_follow_recyclebin') ?: 0) !== 1) {
+        // Default ON: an unset key (false, as after a web upgrade before the new
+        // settings are saved) follows the recycle bin; only an explicit '0' does not.
+        $follow = get_config('block_feedback_tracker', 'removal_grace_follow_recyclebin');
+        if ($follow !== false && $follow !== null && (string) $follow === '0') {
             return $explicit;
         }
 
         $windows = [$explicit];
         foreach (['course', 'category'] as $bin) {
+            // An unset key reads as disabled, as {@see \tool_recyclebin\course_bin::is_enabled()} reads it.
             if ((int) (get_config('tool_recyclebin', $bin . 'binenable') ?: 0) !== 1) {
                 continue;
             }

@@ -296,6 +296,47 @@ final class get_dashboard_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(88.0, (float) $row['compliance_pct_days'], 0.01);
     }
 
+    /**
+     * The course name reaches the caller filtered in the caller's language,
+     * in the plain spelling, and the cached payload is keyed by that language:
+     * a second call in another language within the cache lifetime must not
+     * serve the first language's name.
+     *
+     * @return void
+     */
+    public function test_course_name_is_filtered_per_language(): void {
+        global $SESSION;
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $course = $this->getDataGenerator()->create_course([
+            'fullname' => '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>',
+        ]);
+        $this->seed_rollup($course, 3, 1, 1, 70);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+
+        $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('A & B', $response['data']['courses'][0]['coursename']);
+
+        /* Set directly rather than through force_current_language(), which
+         * refuses a language whose pack is not installed on the test site. */
+        $SESSION->forcelang = 'es';
+        $this->assertSame('es', current_language());
+        try {
+            $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        } finally {
+            unset($SESSION->forcelang);
+        }
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('C & D', $response['data']['courses'][0]['coursename']);
+    }
+
     // Helpers.
 
     /**

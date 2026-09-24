@@ -744,6 +744,242 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * The rule sweep dispatches exactly the rows the writer would change.
+     *
+     * Every row below stores what the writer resolves for it: a user override,
+     * a group override, a student in two overridden groups (the lowest
+     * sortorder governs), an extension, and a user override that removed the
+     * due date. None of them differs from the activity's date by accident, so
+     * a probe that compared against the activity alone would dispatch all but
+     * one on every pass, each repair writing back the same value. A due date
+     * moved behind the plugin is the control: it reaches exactly the one row
+     * that inherits it, and after the repair the sweep has nothing left.
+     *
+     * @return void
+     */
+    public function test_the_rule_sweep_dispatches_only_rows_the_writer_would_change(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $due = time() + 7 * 86400;
+        [$cm, $plain, $assign, $course] = $this->build_environment(['duedate' => $due, 'cutoffdate' => $due + 86400]);
+        $assignid = (int) $assign->id;
+        $first = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        $second = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        $students = [
+            'plain' => (int) $plain->id,
+            'user override' => $this->rule_student($course),
+            'group override' => $this->rule_student($course, $first),
+            'two groups' => $this->rule_student($course, $first, $second),
+            'extension' => $this->rule_student($course),
+            'removed due date' => $this->rule_student($course),
+        ];
+        $this->rule_override($assignid, ['userid' => $students['user override'], 'duedate' => $due + 86400]);
+        $this->rule_override($assignid, ['groupid' => $first, 'sortorder' => 1, 'duedate' => $due + 2 * 86400]);
+        $this->rule_override($assignid, ['groupid' => $second, 'sortorder' => 2, 'duedate' => $due + 3 * 86400]);
+        $this->rule_override($assignid, ['userid' => $students['removed due date'], 'duedate' => 0]);
+        $DB->insert_record('assign_user_flags', (object) [
+            'assignment' => $assignid,
+            'userid' => $students['extension'],
+            'extensionduedate' => $due + 5 * 86400,
+        ]);
+        foreach ($students as $userid) {
+            $this->insert_submission($assignid, $userid, time() - 4 * 86400, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        }
+        $expected = [
+            'plain' => $due,
+            'user override' => $due + 86400,
+            'group override' => $due + 2 * 86400,
+            'two groups' => $due + 2 * 86400,
+            'extension' => $due + 5 * 86400,
+            'removed due date' => null,
+        ];
+        foreach ($expected as $case => $close) {
+            $this->assertSame($close, $this->stored_close($cm, $students[$case]), "Sanity: $case as the writer stores it.");
+        }
+
+        $this->assertSame([], $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+
+        $moved = $due + 10 * 86400;
+        $DB->set_field('assign', 'duedate', $moved, ['id' => $assignid]);
+        $this->assertSame(
+            [$students['plain']],
+            $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'),
+            'Control: the moved due date reaches the row that inherits it, and no other.'
+        );
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame($moved, $this->stored_close($cm, $students['plain']), 'The repair wrote the moved date.');
+        $this->assertSame(
+            [],
+            $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'),
+            'After the repair the sweep has converged.'
+        );
+
+        /* The cut-off and the open date are compared too. A later cut-off
+         * reaches every row that inherits it; the extension already runs past
+         * it, so that row keeps the extension as its cut-off. */
+        $DB->set_field('assign', 'cutoffdate', $due + 2 * 86400, ['id' => $assignid]);
+        $inherits = array_values(array_diff($students, [$students['extension']]));
+        sort($inherits);
+        $this->assertSame($inherits, $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $DB->set_field('assign', 'allowsubmissionsfromdate', time() - 86400, ['id' => $assignid]);
+        $everyone = array_values($students);
+        sort($everyone);
+        $this->assertSame($everyone, $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+    }
+
+    /**
+     * A closed cycle is not the rule sweep's to repair.
+     *
+     * The repair rewrites only the current cycle of a submission, so a probe
+     * that selected closed cycles would dispatch the same row on every pass.
+     * The current cycle is the control.
+     *
+     * @return void
+     */
+    public function test_the_rule_sweep_leaves_closed_cycles_alone(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $student, $assign, $course] = $this->build_environment(['duedate' => time() + 7 * 86400]);
+        $now = time();
+        $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+        $DB->insert_record('assign_grades', (object) [
+            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
+            'grader' => 2, 'grade' => 70.0, 'timecreated' => $now - 3 * 86400, 'timemodified' => $now - 3 * 86400,
+        ]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        // A resubmission after the mark opens a second cycle.
+        $DB->set_field('assign_submission', 'timemodified', $now - 86400, ['assignment' => $assign->id]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $closed = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'cycle' => 0], '*', MUST_EXIST);
+        $current = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'cycle' => 1], '*', MUST_EXIST);
+        $this->assertSame(0, (int) $closed->iscurrent, 'Precondition: two cycles, the first one closed.');
+
+        $DB->set_field('block_feedback_tracker_sub', 'timecloses', 1, ['id' => $closed->id]);
+        $this->assertSame([], $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+
+        $DB->set_field('block_feedback_tracker_sub', 'timecloses', 1, ['id' => $current->id]);
+        $this->assertSame(
+            [(int) $student->id],
+            $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'),
+            'Control: the same drift on the current cycle is dispatched.'
+        );
+    }
+
+    /**
+     * An override edited or reordered without an event is repaired.
+     *
+     * Core fires no event when group overrides are reordered, and a direct
+     * write fires none at all. The sweep finds the students whose governing
+     * override changed, and only them.
+     *
+     * @return void
+     */
+    public function test_an_override_changed_behind_the_plugin_is_repaired(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $due = time() + 7 * 86400;
+        [$cm, $plain, $assign, $course] = $this->build_environment(['duedate' => $due]);
+        $assignid = (int) $assign->id;
+        $first = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        $second = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        $own = $this->rule_student($course);
+        $member = $this->rule_student($course, $first);
+        $both = $this->rule_student($course, $first, $second);
+        $ownoverride = $this->rule_override($assignid, ['userid' => $own, 'duedate' => $due + 86400]);
+        $firstoverride = $this->rule_override($assignid, ['groupid' => $first, 'sortorder' => 1, 'duedate' => $due + 2 * 86400]);
+        $secondoverride = $this->rule_override($assignid, ['groupid' => $second, 'sortorder' => 2, 'duedate' => $due + 3 * 86400]);
+        foreach ([(int) $plain->id, $own, $member, $both] as $userid) {
+            $this->insert_submission($assignid, $userid, time() - 4 * 86400, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        }
+        $this->assertSame([], $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'), 'Precondition: converged.');
+
+        $DB->set_field('assign_overrides', 'duedate', $due + 4 * 86400, ['id' => $ownoverride]);
+        $this->assertSame([$own], $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame($due + 4 * 86400, $this->stored_close($cm, $own), 'The user override edit was repaired.');
+
+        $DB->set_field('assign_overrides', 'duedate', $due + 5 * 86400, ['id' => $firstoverride]);
+        $affected = [$member, $both];
+        sort($affected);
+        $this->assertSame($affected, $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'));
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame($due + 5 * 86400, $this->stored_close($cm, $member));
+        $this->assertSame($due + 5 * 86400, $this->stored_close($cm, $both));
+
+        $DB->set_field('assign_overrides', 'sortorder', 2, ['id' => $firstoverride]);
+        $DB->set_field('assign_overrides', 'sortorder', 1, ['id' => $secondoverride]);
+        $this->assertSame(
+            [$both],
+            $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'),
+            'A reorder changes the governing override of the student in both groups only.'
+        );
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame($due + 3 * 86400, $this->stored_close($cm, $both));
+        $this->assertSame([], $this->sweep_dispatches($course, 'sweep_rule_drift', 'rules'), 'Converged again.');
+    }
+
+    /**
+     * Grade type "None" is judged the way the writer judges it.
+     *
+     * Core stores grade -1 for a grading on an activity with no grade, and
+     * grading_state::resolve() then reads only that a later grade row exists.
+     * A probe testing the value would select every marked row of the activity
+     * on every pass. The controls are the two real divergences on the same
+     * activity: a grading the plugin never saw, and one withdrawn behind it.
+     *
+     * @return void
+     */
+    public function test_a_marked_grade_type_none_submission_is_not_re_dispatched(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$cm, $marked, $assign, $course] = $this->build_environment(['grade' => 0]);
+        $unseen = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $tsubmit = time() - 4 * 86400;
+        $tgrade = time() - 2 * 86400;
+        $grading = static fn(int $userid): \stdClass => (object) [
+            'assignment' => $assign->id, 'userid' => $userid, 'attemptnumber' => 0,
+            'grader' => 2, 'grade' => -1.0, 'timecreated' => $tgrade, 'timemodified' => $tgrade,
+        ];
+        foreach ([(int) $marked->id, (int) $unseen->id] as $userid) {
+            $this->insert_submission((int) $assign->id, $userid, $tsubmit, 0);
+        }
+        $DB->insert_record('assign_grades', $grading((int) $marked->id));
+        foreach ([(int) $marked->id, (int) $unseen->id] as $userid) {
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        }
+        $this->assertSame(
+            $tgrade,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'timemarked', ['cmid' => $cm->id, 'userid' => $marked->id]),
+            'Sanity: the writer takes the grading as the mark.'
+        );
+
+        $this->assertSame([], $this->sweep_dispatches($course, 'sweep_grade_divergence', 'gradestate'));
+
+        $DB->insert_record('assign_grades', $grading((int) $unseen->id));
+        $this->assertSame(
+            [(int) $unseen->id],
+            $this->sweep_dispatches($course, 'sweep_grade_divergence', 'gradestate'),
+            'Control: a grading the plugin never saw is still found.'
+        );
+
+        $DB->delete_records('assign_grades', ['assignment' => $assign->id, 'userid' => $marked->id]);
+        $both = [(int) $marked->id, (int) $unseen->id];
+        sort($both);
+        $this->assertSame(
+            $both,
+            $this->sweep_dispatches($course, 'sweep_grade_divergence', 'gradestate'),
+            'Control: a grading withdrawn behind the plugin is found too.'
+        );
+    }
+
+    /**
      * A repair that could not be queued is reported, not assumed.
      *
      * `queue_adhoc_task()` returns false when nothing was queued, most often
@@ -1449,6 +1685,83 @@ final class reconcile_ledger_test extends \advanced_testcase {
         );
         $cm = get_coursemodule_from_instance('assign', $assign->id);
         return [$cm, $student, $assign, $course];
+    }
+
+    /**
+     * Run one sweep over a course, one window, and list the students it
+     * dispatched a repair for.
+     *
+     * Clears the adhoc queue first, so what is listed is this sweep's alone;
+     * the repairs stay queued for the caller to drain.
+     *
+     * @param \stdClass $course The course in scope.
+     * @param string $method The sweep method.
+     * @param string $key Its cursor key.
+     * @return int[] The dispatched user ids, ascending.
+     */
+    private function sweep_dispatches(\stdClass $course, string $method, string $key): array {
+        global $DB;
+        $DB->delete_records('task_adhoc');
+        $task = new reconcile_ledger();
+        (new \ReflectionMethod($task, $method))->invoke($task, [(int) $course->id], 500, $key);
+        $userids = [];
+        foreach (\core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission') as $queued) {
+            foreach ((array) ($queued->get_custom_data()->rows ?? []) as $descriptor) {
+                $userids[] = (int) ((array) $descriptor)['userid'];
+            }
+        }
+        sort($userids);
+        return $userids;
+    }
+
+    /**
+     * Enrol a student and add them to the given groups, in order.
+     *
+     * @param \stdClass $course
+     * @param int ...$groupids
+     * @return int The student's user id.
+     */
+    private function rule_student(\stdClass $course, int ...$groupids): int {
+        $user = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        foreach ($groupids as $groupid) {
+            $this->getDataGenerator()->create_group_member(['groupid' => $groupid, 'userid' => $user->id]);
+        }
+        group_resolver::reset_memo();
+        return (int) $user->id;
+    }
+
+    /**
+     * Insert an {assign_overrides} row; every date not given is NULL, which
+     * leaves it to the next source.
+     *
+     * @param int $assignid
+     * @param array $fields userid or groupid (with sortorder), and the dates it sets.
+     * @return int The override id.
+     */
+    private function rule_override(int $assignid, array $fields): int {
+        global $DB;
+        return (int) $DB->insert_record('assign_overrides', (object) array_merge([
+            'assignid' => $assignid,
+            'userid' => null,
+            'groupid' => null,
+            'sortorder' => null,
+            'allowsubmissionsfromdate' => null,
+            'duedate' => null,
+            'cutoffdate' => null,
+        ], $fields));
+    }
+
+    /**
+     * The stored due date of one student's ledger row.
+     *
+     * @param \stdClass $cm
+     * @param int $userid
+     * @return int|null
+     */
+    private function stored_close(\stdClass $cm, int $userid): ?int {
+        global $DB;
+        $value = $DB->get_field('block_feedback_tracker_sub', 'timecloses', ['cmid' => $cm->id, 'userid' => $userid], MUST_EXIST);
+        return $value === null ? null : (int) $value;
     }
 
     /**

@@ -27,10 +27,11 @@ declare(strict_types=1);
 namespace block_feedback_tracker\output;
 
 /**
- * Verifies the card's display toggles. The two default-ON booleans
- * (show_perceived_time, show_paused_today_indicator) must turn the
+ * Verifies the card's display toggles and its escaping. The two default-ON
+ * booleans (show_perceived_time, show_paused_today_indicator) must turn the
  * corresponding output off when the admin sets them to '0' — the stored
- * off-state for an admin_setting_configcheckbox.
+ * off-state for an admin_setting_configcheckbox. Names and pause labels must
+ * reach the HTML escaped exactly once.
  *
  * @covers \block_feedback_tracker\output\responsiveness_card
  */
@@ -184,6 +185,48 @@ final class responsiveness_card_test extends \advanced_testcase {
         $this->assertSame('World Cup', $ctx['upcoming'][0]['label']);
         $this->assertTrue($ctx['upcoming'][0]['haslabel']);
         $this->assertSame('29/06/2026 das 16h as 17h', $ctx['upcoming'][0]['when']);
+    }
+
+    /**
+     * The title, the subtitle and an upcoming pause's label reach the page
+     * escaped exactly once: the payload carries them as plain text and the
+     * template's double stashes escape them.
+     *
+     * @return void
+     */
+    public function test_rendered_card_escapes_names_and_labels_once(): void {
+        global $DB, $OUTPUT;
+        $this->resetAfterTest();
+        set_config('show_paused_today_indicator', '1', 'block_feedback_tracker');
+        set_config('calver', '1', 'block_feedback_tracker');
+        set_config('timezone', 'UTC', 'block_feedback_tracker');
+
+        // The pause label comes from the real lookup, so the test covers the
+        // note formatting in upcoming_pauses as well as the card.
+        $DB->insert_record('block_feedback_tracker_cday', (object) [
+            'daydate' => 20260629, 'daytype' => 'optional',
+            'starttime' => 16 * 60, 'endtime' => 17 * 60,
+            'note' => 'E & F',
+            'timecreated' => time(), 'timemodified' => time(),
+        ]);
+        $now = (new \DateTimeImmutable('2026-06-26 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        $upcoming = \block_feedback_tracker\local\calendar\upcoming_pauses::for_display(0, 0, $now);
+        $this->assertCount(1, $upcoming);
+
+        $ctx = $this->export($this->sample_payload([
+            'groupname' => 'A & B',
+            'groupsubtitle' => 'C & D',
+            'upcoming_pauses' => $upcoming,
+        ]));
+        $this->assertSame('A & B', $ctx['title']);
+        $this->assertSame('C & D', $ctx['subtitle']);
+
+        $html = $OUTPUT->render_from_template('block_feedback_tracker/responsiveness_card', $ctx);
+
+        $this->assertSame(1, substr_count($html, 'A &amp; B'));
+        $this->assertSame(1, substr_count($html, 'C &amp; D'));
+        $this->assertSame(1, substr_count($html, 'E &amp; F'));
+        $this->assertStringNotContainsString('&amp;amp;', $html);
     }
 
     /**

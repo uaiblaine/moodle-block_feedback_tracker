@@ -36,18 +36,24 @@ namespace block_feedback_tracker\local\sla;
  * {@see for_group()} then resolves every (assign, group) pair in memory, so a
  * page of many group cards costs a fixed handful of queries rather than one per
  * pair. Date resolution reuses {@see rule_resolver::merge_override()} so the
- * group-override-wins priority stays defined in one place.
+ * group-override-wins priority, and what NULL and 0 mean in an override row,
+ * stay defined in one place. This is the schedule of one group, not of a
+ * student: a student in several groups, or with an extension, is resolved by
+ * {@see rule_resolver::resolve_rule()} instead.
  *
  * Action model, first match wins (canmanage = the viewing user holds
  * mod/assign:manageoverrides on the module). Each row also carries an
  * `editable` flag (= canmanage); the chip links to the override editor only
  * when editable, otherwise it is a static, informational badge:
  *   - !canmanage, any effective schedule               → 'done'   (no link)
- *   - !canmanage, no schedule                          → 'norule' (no link)
- *   - a non-zero group override exists for the group   → 'done'
+ *   - !canmanage, no effective schedule                → 'norule' (no link)
+ *   - a group override sets any date for the group     → 'done'
  *   - a global rule exists and the assign is SEPARATEGROUPS → 'override'
  *   - a global rule exists (non-separate groups)       → 'done'
  *   - no dates anywhere                                → 'create'
+ *
+ * An override that sets a date to 0 has set it: it removed that date for the
+ * group, so the group has an override of its own even when no date is left.
  */
 class activity_schedule {
     /**
@@ -94,7 +100,8 @@ class activity_schedule {
             $item = new \stdClass();
             $item->cmid = (int) $cm->id;
             $item->instance = $instance;
-            $item->name = (string) $cm->name;
+            // Filtered in the module context but not escaped: the block's text nodes and PARAM_TEXT escape it.
+            $item->name = $cm->get_formatted_name(['escape' => false]);
             $item->groupmode = (int) groups_get_activity_groupmode($cm, $course);
             $item->canmanage = has_capability('mod/assign:manageoverrides', $cm->context, $userid);
             $item->assign = $arow;
@@ -138,7 +145,7 @@ class activity_schedule {
                 'name'     => $item->name,
                 'opens'    => $merged['timeopens'],
                 'closes'   => $merged['timecloses'],
-                'action'   => self::action_for($item, $override),
+                'action'   => self::action_for($item, $override, $merged['hasrule'] === 1),
                 'editable' => $item->canmanage,
             ];
         }
@@ -150,14 +157,15 @@ class activity_schedule {
      *
      * @param \stdClass $item Catalog item (assign defaults + groupmode + canmanage).
      * @param \stdClass|null $override Group override row, or null.
+     * @param bool $hasschedule Whether the group's merged schedule has any date.
      * @return string One of 'norule', 'done', 'override', 'create'.
      */
-    private static function action_for(\stdClass $item, ?\stdClass $override): string {
-        $hasoverride = self::has_dates($override);
+    private static function action_for(\stdClass $item, ?\stdClass $override, bool $hasschedule): string {
+        $hasoverride = self::sets_any_date($override);
         $hasglobal = self::has_dates($item->assign);
         if (!$item->canmanage) {
             // No edit rights: informational only, rendered without a link.
-            return ($hasoverride || $hasglobal) ? 'done' : 'norule';
+            return $hasschedule ? 'done' : 'norule';
         }
         if ($hasoverride) {
             return 'done';
@@ -172,17 +180,31 @@ class activity_schedule {
     }
 
     /**
-     * Whether a row carries any non-zero open / due / cutoff date.
+     * Whether an {assign} row carries any non-zero open / due / cutoff date.
      *
-     * @param \stdClass|null $row
+     * @param \stdClass $row
      * @return bool
      */
-    private static function has_dates(?\stdClass $row): bool {
-        if ($row === null) {
-            return false;
-        }
+    private static function has_dates(\stdClass $row): bool {
         return ((int) ($row->allowsubmissionsfromdate ?? 0)) > 0
             || ((int) ($row->duedate ?? 0)) > 0
             || ((int) ($row->cutoffdate ?? 0)) > 0;
+    }
+
+    /**
+     * Whether an override row sets any open / due / cutoff date. NULL leaves
+     * the activity's date in force; any other value, 0 included, is the
+     * group's own setting.
+     *
+     * @param \stdClass|null $override
+     * @return bool
+     */
+    private static function sets_any_date(?\stdClass $override): bool {
+        if ($override === null) {
+            return false;
+        }
+        return isset($override->allowsubmissionsfromdate)
+            || isset($override->duedate)
+            || isset($override->cutoffdate);
     }
 }

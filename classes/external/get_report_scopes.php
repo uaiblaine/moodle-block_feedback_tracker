@@ -107,6 +107,8 @@ class get_report_scopes extends external_api {
 
         // Display names: real names for this result's groups only, run
         // through the same custom-field title composition as the block.
+        // Filtered but not escaped, since PARAM_TEXT and the report's text
+        // nodes escape for themselves.
         $gids = [];
         foreach ($rollups as $r) {
             if ((int) $r->groupid > 0) {
@@ -116,7 +118,11 @@ class get_report_scopes extends external_api {
         $groupnames = [];
         if (!empty($gids)) {
             foreach ($DB->get_records_list('groups', 'id', $gids, '', 'id, name') as $nr) {
-                $groupnames[(int) $nr->id] = (string) $nr->name;
+                $groupnames[(int) $nr->id] = format_string(
+                    (string) $nr->name,
+                    true,
+                    ['context' => $context, 'escape' => false]
+                );
             }
         }
         $titles = responsiveness_payload::resolve_group_titles($groupnames);

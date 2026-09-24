@@ -105,23 +105,8 @@ if ($data = $form->get_data()) {
     $total = course_finder::count_candidates($filters);
 }
 
-$listrows = [];
-$index = 0;
-foreach ($rows as $row) {
-    $listrows[] = [
-        'courseid' => (int) $row->id,
-        'fullname' => format_string($row->fullname),
-        'shortname' => format_string($row->shortname),
-        'categoryname' => format_string($row->categoryname),
-        'hidden' => !$row->visible,
-        'enddate' => $row->enddate
-            ? userdate((int) $row->enddate, get_string('strftimedateshort', 'langconfig'))
-            : get_string('bulk_noenddate', 'block_feedback_tracker'),
-        'ledgerrows' => \block_feedback_tracker\local\output\numfmt::count((int) $row->ledgerrows),
-        // Rows past the first page start collapsed; the control reveals them.
-        'collapsed' => $index++ >= course_finder::PAGE_SIZE,
-    ];
-}
+// Names are filtered but not escaped: the template's double stashes escape them.
+$listrows = \block_feedback_tracker\local\output\bulk_remove_rows::for_template($rows);
 
 $event = \block_feedback_tracker\event\tool_page_viewed::create([
     'context' => $context,

@@ -271,6 +271,74 @@ final class get_grader_priority_list_test extends \advanced_testcase {
         $this->assertSame('Submitted Student', $result['submissions'][0]['studentname']);
     }
 
+    /**
+     * Course, group and activity names reach the caller filtered, in the plain
+     * spelling: the multilang filter picks the English half, and the ampersand
+     * is not escaped.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        global $DB;
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $course = $this->getDataGenerator()->create_course(['fullname' => $multilang]);
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        [$cm, $student] = $this->seed_pending($course, 'Ana Silva', 10.0);
+        $DB->set_field('assign', 'name', $multilang, ['id' => $cm->instance]);
+        $DB->set_field(
+            'block_feedback_tracker_sub',
+            'groupid',
+            $group->id,
+            ['userid' => $student->id, 'courseid' => $course->id]
+        );
+
+        $this->setAdminUser();
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_grader_priority_list',
+            ['limit' => 10, 'bucket' => '']
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['submissions']);
+        $row = $response['data']['submissions'][0];
+        $this->assertSame('A & B', $row['coursename']);
+        $this->assertSame('A & B', $row['groupname']);
+        $this->assertSame('A & B', $row['activityname']);
+    }
+
+    /**
+     * The student name follows the site's full-name format rather than a
+     * hard-coded "first last", as it does everywhere else in Moodle.
+     *
+     * @return void
+     */
+    public function test_student_name_follows_fullnamedisplay(): void {
+        global $CFG;
+        $course = $this->getDataGenerator()->create_course();
+        $this->seed_pending($course, 'Ana Silva', 10.0);
+        $this->setAdminUser();
+
+        $result = external_api::clean_returnvalue(
+            get_grader_priority_list::execute_returns(),
+            get_grader_priority_list::execute(10, '')
+        );
+        $this->assertSame('Ana Silva', $result['submissions'][0]['studentname'], 'Control: the default format.');
+
+        $CFG->fullnamedisplay = 'lastname firstname';
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_grader_priority_list',
+            ['limit' => 10, 'bucket' => '']
+        );
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('Silva Ana', $response['data']['submissions'][0]['studentname']);
+    }
+
     // Helpers.
 
     /**

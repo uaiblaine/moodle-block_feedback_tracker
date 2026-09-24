@@ -387,16 +387,19 @@ class upcoming_pauses {
     }
 
     /**
-     * Sanitise a stored note for safe display.
+     * A stored note as a plain-text label: filtered and stripped of tags by
+     * format_string(), but not HTML-escaped. Every consumer escapes for itself
+     * (the card's Mustache double stash, the text nodes of the JS views), so an
+     * escaped label would show a typed "A & B" as "A &amp; B".
      *
      * @param string|null $note Raw note value.
-     * @return string
+     * @return string Plain text; '' for no note.
      */
     private static function clean_note(?string $note): string {
         if ($note === null || $note === '') {
             return '';
         }
-        return format_string($note, true, ['context' => \context_system::instance()]);
+        return format_string($note, true, ['context' => \context_system::instance(), 'escape' => false]);
     }
 
     /**

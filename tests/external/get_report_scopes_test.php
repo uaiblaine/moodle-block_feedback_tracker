@@ -208,6 +208,42 @@ final class get_report_scopes_test extends \advanced_testcase {
     }
 
     /**
+     * A group name reaches the caller filtered, in the plain spelling: the
+     * multilang filter picks the English half and the ampersand is not escaped.
+     *
+     * @return void
+     */
+    public function test_group_name_is_filtered_and_plain(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $group = $this->getDataGenerator()->create_group([
+            'courseid' => $course->id,
+            'name' => '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>',
+        ]);
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $generator->create_rollup_row(['courseid' => (int) $course->id, 'groupid' => (int) $group->id]);
+        group_access::reset_memo();
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_report_scopes',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['groups']);
+        $this->assertSame((int) $group->id, $response['data']['groups'][0]['groupid']);
+        $this->assertSame('A & B', $response['data']['groups'][0]['name']);
+    }
+
+    /**
      * Callers without viewresponsiveness are rejected.
      *
      * @return void

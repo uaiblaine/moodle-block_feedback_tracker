@@ -137,7 +137,7 @@ final class activity_schedule_test extends \advanced_testcase {
         [$course, $teacher, $group] = $this->base_course_group();
         $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
         $ovrclose = $this->ts('2026-05-20 00:00:00');
-        $this->make_group_override((int) $assign->id, (int) $group->id, 0, $ovrclose);
+        $this->make_group_override((int) $assign->id, (int) $group->id, null, $ovrclose);
         $this->prohibit_manageoverrides($course);
 
         $catalog = activity_schedule::catalog_for_course($course, (int) $teacher->id);
@@ -168,6 +168,62 @@ final class activity_schedule_test extends \advanced_testcase {
     }
 
     /**
+     * A group override that sets the due date to 0 removed it for the group:
+     * the row shows no close date although the activity has one, and the
+     * group counts as having its own override. The open date it left NULL is
+     * still the activity's.
+     *
+     * @return void
+     */
+    public function test_a_group_override_that_removes_the_due_date(): void {
+        $this->resetAfterTest();
+        [$course, $teacher, $group] = $this->base_course_group();
+        $globalopen = $this->ts('2026-05-01 00:00:00');
+        $assign = $this->getDataGenerator()->create_module('assign', [
+            'course' => $course->id,
+            'allowsubmissionsfromdate' => $globalopen,
+            'duedate' => $this->ts('2026-05-10 00:00:00'),
+            'groupmode' => SEPARATEGROUPS,
+        ]);
+        $this->make_group_override((int) $assign->id, (int) $group->id, null, 0);
+
+        $catalog = activity_schedule::catalog_for_course($course, (int) $teacher->id);
+        $acts = activity_schedule::for_group($catalog, (int) $group->id);
+
+        $this->assertNull($acts[0]['closes'], 'The override removed the due date for this group.');
+        $this->assertSame($globalopen, (int) $acts[0]['opens'], 'Control: the NULL open date is inherited.');
+        $this->assertSame('done', $acts[0]['action'], 'The group has its own override, not a prompt to create one.');
+    }
+
+    /**
+     * Without edit rights the chip follows the group's effective schedule: an
+     * override that removed the activity's only date leaves the group with no
+     * rule at all.
+     *
+     * @return void
+     */
+    public function test_without_manageoverrides_a_removed_only_date_is_norule(): void {
+        $this->resetAfterTest();
+        [$course, $teacher, $group] = $this->base_course_group();
+        $assign = $this->getDataGenerator()->create_module('assign', [
+            'course' => $course->id,
+            'duedate' => $this->ts('2026-05-10 00:00:00'),
+        ]);
+        $this->make_group_override((int) $assign->id, (int) $group->id, null, 0);
+        $this->prohibit_manageoverrides($course);
+
+        $catalog = activity_schedule::catalog_for_course($course, (int) $teacher->id);
+        $other = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+
+        $this->assertSame('norule', activity_schedule::for_group($catalog, (int) $group->id)[0]['action']);
+        $this->assertSame(
+            'done',
+            activity_schedule::for_group($catalog, (int) $other->id)[0]['action'],
+            'Control: a group without the override keeps the activity\'s rule.'
+        );
+    }
+
+    /**
      * The catalog lists every visible assign in the course.
      *
      * @return void
@@ -185,6 +241,38 @@ final class activity_schedule_test extends \advanced_testcase {
     }
 
     /**
+     * Activity names are filtered in the module context but not escaped: the
+     * block renders them as text nodes and the web service as PARAM_TEXT.
+     *
+     * @return void
+     */
+    public function test_activity_names_are_filtered_and_plain(): void {
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        [$course, $teacher, $group] = $this->base_course_group();
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $this->getDataGenerator()->create_module('assign', ['course' => $course->id, 'name' => $multilang]);
+        $off = $this->getDataGenerator()->create_module('assign', ['course' => $course->id, 'name' => $multilang]);
+        filter_set_local_state('multilang', \context_module::instance($off->cmid)->id, TEXTFILTER_OFF);
+        \filter_manager::reset_caches();
+
+        $rows = activity_schedule::for_group(
+            activity_schedule::catalog_for_course($course, (int) $teacher->id),
+            (int) $group->id
+        );
+
+        $names = [];
+        foreach ($rows as $row) {
+            $names[$row['cmid']] = $row['name'];
+        }
+        $this->assertCount(2, $names);
+        $this->assertSame('A & BC & D', $names[(int) $off->cmid], 'The filter switched off for this activity stays off.');
+        unset($names[(int) $off->cmid]);
+        $this->assertSame(['A & B'], array_values($names));
+    }
+
+    /**
      * Create a course with an editing teacher and one group.
      *
      * @return array{0: \stdClass, 1: \stdClass, 2: \stdClass} [course, teacher, group]
@@ -197,24 +285,25 @@ final class activity_schedule_test extends \advanced_testcase {
     }
 
     /**
-     * Insert a group-scoped assign override row.
+     * Insert a group-scoped assign override row. NULL leaves the activity's
+     * date in force; 0 removes it for the group.
      *
      * @param int $assignid
      * @param int $groupid
-     * @param int $opens allowsubmissionsfromdate
-     * @param int $closes duedate
+     * @param int|null $opens allowsubmissionsfromdate
+     * @param int|null $closes duedate
      * @return void
      */
-    private function make_group_override(int $assignid, int $groupid, int $opens, int $closes): void {
+    private function make_group_override(int $assignid, int $groupid, ?int $opens, ?int $closes): void {
         global $DB;
         $DB->insert_record('assign_overrides', (object) [
             'assignid' => $assignid,
             'groupid' => $groupid,
             'userid' => null,
-            'sortorder' => 0,
+            'sortorder' => 1,
             'allowsubmissionsfromdate' => $opens,
             'duedate' => $closes,
-            'cutoffdate' => 0,
+            'cutoffdate' => null,
         ]);
     }
 

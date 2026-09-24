@@ -133,9 +133,15 @@ class get_responsiveness extends external_api {
     private static function group_structure(): external_single_structure {
         return new external_single_structure([
             'groupid'              => new external_value(PARAM_INT, ''),
-            'groupname'            => new external_value(PARAM_TEXT, ''),
-            'groupsubtitle'        => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'coursename'           => new external_value(PARAM_TEXT, ''),
+            'groupname'            => new external_value(PARAM_TEXT, 'Card title as plain text, not HTML-escaped'),
+            'groupsubtitle'        => new external_value(
+                PARAM_TEXT,
+                'Card subtitle as plain text, not HTML-escaped',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'coursename'           => new external_value(PARAM_TEXT, 'Course full name as plain text, not HTML-escaped'),
             'pending'              => new external_value(PARAM_INT, ''),
             'critical'             => new external_value(PARAM_INT, ''),
             'overgoal'             => new external_value(PARAM_INT, ''),
@@ -208,7 +214,7 @@ class get_responsiveness extends external_api {
                 new external_single_structure([
                     'start'     => new external_value(PARAM_INT, 'Pause start unix ts (sort key)'),
                     'type'      => new external_value(PARAM_ALPHA, 'Pause type / reason slug'),
-                    'label'     => new external_value(PARAM_RAW, 'Pre-sanitised pause label'),
+                    'label'     => new external_value(PARAM_RAW, 'Pause note as plain text: tags stripped, not HTML-escaped'),
                     'when'      => new external_value(PARAM_TEXT, 'Localised date / time window'),
                     'typelabel' => new external_value(PARAM_TEXT, 'Localised pause-type label'),
                 ]),
@@ -228,7 +234,7 @@ class get_responsiveness extends external_api {
                     'date'      => new external_value(PARAM_INT, 'YYYYMMDD'),
                     'starttime' => new external_value(PARAM_INT, 'Minutes since midnight'),
                     'endtime'   => new external_value(PARAM_INT, 'Minutes since midnight'),
-                    'label'     => new external_value(PARAM_RAW, 'Pre-sanitised event label'),
+                    'label'     => new external_value(PARAM_RAW, 'Event note as plain text: tags stripped, not HTML-escaped'),
                 ]),
                 '',
                 VALUE_DEFAULT,

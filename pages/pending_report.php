@@ -114,7 +114,8 @@ try {
 
 $initial = [
     'courseid' => (int) $courseid,
-    'coursename' => format_string($course->fullname),
+    // Plain text: the view renders it as a text node, which escapes it.
+    'coursename' => format_string($course->fullname, true, ['context' => $context, 'escape' => false]),
     // Filter parameters only — no rows. The view issues the first fetch with
     // these after mount.
     'pending' => [

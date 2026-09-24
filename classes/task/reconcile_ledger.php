@@ -32,6 +32,7 @@ use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
 use block_feedback_tracker\local\sla\group_resolver;
 use block_feedback_tracker\local\sla\retention;
+use block_feedback_tracker\local\sla\rule_resolver;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
 
@@ -579,6 +580,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * not re-flagged for ever, and the mark tests mirror
      * {@see grading_state::resolve()} exactly — a divergence sweep that
      * disagrees with the writer would dispatch the same repair on every tick.
+     * That includes its grade type "None" branch (`a.grade = 0`), where the
+     * grade value is never read: core stores -1 on such a grading, so a value
+     * test would select every marked row of the activity on every pass.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -607,14 +611,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
                     AND (
                          (l.timemarked IS NULL
                           AND g.id IS NOT NULL
-                          AND g.grade IS NOT NULL
-                          AND g.grade >= 0
-                          AND g.timemodified > l.timesubmitted)
+                          AND g.timemodified > l.timesubmitted
+                          AND (a.grade = 0 OR (g.grade IS NOT NULL AND g.grade >= 0)))
                       OR (l.timemarked IS NOT NULL
                           AND (g.id IS NULL
-                               OR g.grade IS NULL
-                               OR g.grade < 0
-                               OR g.timemodified <= l.timesubmitted))
+                               OR g.timemodified <= l.timesubmitted
+                               OR (a.grade <> 0 AND (g.grade IS NULL OR g.grade < 0))))
                     )
                ORDER BY l.id ASC",
                 ['modname' => 'assign']
@@ -940,12 +942,20 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
-     * Ledger rows whose stored due-date rule no longer matches the activity.
+     * Ledger rows whose stored rule no longer matches the activity.
      *
-     * Covers a changed due date or cut-off, and any override or extension
-     * whose event was lost — including a revoked extension, whose only
-     * remaining evidence is that the stored close time stopped matching the
-     * assignment's own due date.
+     * Covers a changed open date, due date or cut-off, an override or an
+     * extension whose event was lost, a group override edit that moved it to
+     * another group, a reordering of group overrides (core fires no event for
+     * it) and a change of group membership, which reattributes the row but
+     * does not re-resolve its dates.
+     *
+     * The expected dates come from the same SQL the writer stores them with
+     * ({@see rule_resolver::joins_sql()}, {@see rule_resolver::date_sql()}), so
+     * a row is selected exactly when a repair would change it; the repair
+     * writes only the current cycle, hence `iscurrent = 1`. The expressions
+     * give 0 for "no date" and the ledger stores NULL, so the stored side is
+     * read through COALESCE.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -955,26 +965,26 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function sweep_rule_drift(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $drift = [];
+        foreach (['timeopens', 'timecloses', 'timecutoff'] as $column) {
+            $drift[] = "COALESCE(l.$column, 0) <> " . rule_resolver::date_sql($column, 'a');
+        }
         $acted = $this->walk(
             $key,
             $batch,
-            $this->ledger_window("AND l.courseid $csql", $cparams, $batch),
+            $this->ledger_window("AND l.iscurrent = 1 AND l.courseid $csql", $cparams, $batch),
             $this->repair_probe(
                 "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
                         l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                    FROM {block_feedback_tracker_sub} l
-                   JOIN {assign} a ON a.id = l.iteminstance
-              LEFT JOIN {assign_user_flags} uf
-                     ON uf.assignment = l.iteminstance
-                    AND uf.userid = l.userid
+                   JOIN {course_modules} cm ON cm.id = l.cmid
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {assign} a ON a.id = cm.instance
+                   " . rule_resolver::joins_sql('a.id', 'l.userid') . "
                   WHERE l.id " . self::WINDOW_TOKEN . "
-                    AND ((COALESCE(uf.extensionduedate, 0) > 0
-                          AND COALESCE(l.timecloses, 0) <> uf.extensionduedate)
-                      OR (COALESCE(uf.extensionduedate, 0) = 0
-                          AND l.hasrule = 1
-                          AND COALESCE(l.timecloses, 0) <> COALESCE(a.duedate, 0)))
+                    AND (" . implode("\n                         OR ", $drift) . ")
                ORDER BY l.id ASC",
-                []
+                ['modname' => 'assign']
             )
         );
         $this->flush_repairs($key);

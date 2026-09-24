@@ -80,7 +80,9 @@ class responsiveness_payload {
         $cache = \cache::make('block_feedback_tracker', 'responsiveness_payload');
         // The banding ruler (hours vs business days) swaps the pending-band
         // counts, so it is part of the key — flipping the display unit takes
-        // effect on the next fetch instead of waiting out the TTL.
+        // effect on the next fetch instead of waiting out the TTL. So is the
+        // language: the payload carries localised strings and names filtered
+        // in the current language, which a language switch must not reuse.
         $key = calendar::current_version() . '_' . $userid . '_' . $courseid
             . (bucket::use_day_thresholds() ? '_d' : '');
         if ($limit > 0) {
@@ -89,6 +91,7 @@ class responsiveness_payload {
         if ($sort !== 'default') {
             $key .= '_' . $sort;
         }
+        $key .= '_' . current_language();
         if (!$force) {
             $cached = $cache->get($key);
             if (
@@ -158,6 +161,10 @@ class responsiveness_payload {
 
         // Resolve display names for this page's real groups only (gid > 0):
         // naming every group of the course would cost O(total groups) per page.
+        // Names are filtered but not escaped: the block's text nodes and the
+        // card's double stashes escape for themselves, and a PARAM_TEXT return
+        // field passes an entity through unchanged.
+        $coursecontext = \context_course::instance($courseid);
         $pagegroupids = [];
         foreach ($rollups as $r) {
             $gid = (int) $r->groupid;
@@ -169,7 +176,11 @@ class responsiveness_payload {
         if (!empty($pagegroupids)) {
             $namerows = $DB->get_records_list('groups', 'id', $pagegroupids, '', 'id, name');
             foreach ($namerows as $nr) {
-                $groupnames[(int) $nr->id] = (string) $nr->name;
+                $groupnames[(int) $nr->id] = format_string(
+                    (string) $nr->name,
+                    true,
+                    ['context' => $coursecontext, 'escape' => false]
+                );
             }
         }
         // Composed display titles + subtitles, driven by the
@@ -304,7 +315,8 @@ class responsiveness_payload {
      * composed names as the full payload without rebuilding it.
      *
      * @param array $groupnames Real group names keyed by group id.
-     * @return array<int, array{title: string, subtitle: string|null}>
+     * @return array<int, array{title: string, subtitle: string|null}> Plain text:
+     *         custom-field values converted, group names as passed in.
      */
     public static function resolve_group_titles(array $groupnames): array {
         $titlefields = self::parse_shortnames(
@@ -360,7 +372,8 @@ class responsiveness_payload {
     }
 
     /**
-     * Batch-load group custom-field values, keyed by group id then shortname.
+     * Batch-load group custom-field values, keyed by group id then shortname,
+     * as plain text ({@see self::plain_field_value()}).
      * Returns only fields that actually carry a value. Degrades to an empty
      * map (callers fall back to the real group name) on any error.
      *
@@ -393,7 +406,7 @@ class responsiveness_payload {
                     if ($datacontroller === null || !isset($idtoshort[$fid])) {
                         continue;
                     }
-                    $val = trim((string) $datacontroller->export_value());
+                    $val = self::plain_field_value($datacontroller);
                     if ($val !== '') {
                         $out[(int) $gid][$idtoshort[$fid]] = $val;
                     }
@@ -403,6 +416,33 @@ class responsiveness_payload {
             debugging('block_feedback_tracker: group custom-field load failed: ' . $e->getMessage());
         }
         return $out;
+    }
+
+    /**
+     * One group custom field's value as plain single-line text.
+     *
+     * export_value() returns display HTML: text escaped by format_string()
+     * (text, select, number), an <a> around a text field that has a link
+     * configured, and a format_text() block for a textarea. The composed
+     * titles reach PARAM_TEXT web service fields, whose clean_returnvalue()
+     * throws on any tag, and JS text nodes, which would show entities
+     * literally. So the HTML goes through html_to_text(), core's conversion
+     * to plain text (the one content_to_text() uses), without the link list.
+     * Its plain-text conventions apply to a rich textarea: bold is upper-cased
+     * and emphasis wrapped in underscores.
+     *
+     * @param \core_customfield\data_controller $data One field's data for one group.
+     * @return string Plain text on one line; '' when the field has no value.
+     */
+    private static function plain_field_value(\core_customfield\data_controller $data): string {
+        $value = $data->export_value();
+        if ($value === null || $value === '') {
+            return '';
+        }
+        $text = html_to_text((string) $value, 0, false);
+        // A stored entity for an angle bracket decodes to a bare one, which PARAM_TEXT would read as a tag.
+        $text = strip_tags($text);
+        return trim((string) preg_replace('/\s+/u', ' ', $text));
     }
 
     /**
@@ -429,8 +469,8 @@ class responsiveness_payload {
      * passes them.
      *
      * @param int $groupid Group ID.
-     * @param string $groupname Display title (composed or real group name).
-     * @param \stdClass $course Course object.
+     * @param string $groupname Display title as plain text (composed or real group name).
+     * @param \stdClass $course Course object; its full name is sent as plain text.
      * @param \stdClass $row Rollup row.
      * @param array $trendseries Daily median effective hours over the last 14 days, as {day, value} pairs.
      * @param array|null $pausedaggregate Output of paused_aggregator::for_window().
@@ -469,7 +509,11 @@ class responsiveness_payload {
             'groupid'              => $groupid,
             'groupname'            => $groupname,
             'groupsubtitle'        => $groupsubtitle,
-            'coursename'           => $course->fullname,
+            'coursename'           => format_string(
+                (string) $course->fullname,
+                true,
+                ['context' => \context_course::instance((int) $course->id), 'escape' => false]
+            ),
             'pending'              => (int) $row->pending,
             'critical'             => $criticalout,
             'overgoal'             => $overgoalout,
@@ -528,8 +572,8 @@ class responsiveness_payload {
             'lastpause_endts'      => $row->lastpause_endts !== null ? (int) $row->lastpause_endts : null,
             'lastpause_reason'     => $row->lastpause_reason !== null ? (string) $row->lastpause_reason : null,
             /* Upcoming-pause notice: up to 3 pauses visible now, with the
-             * localised when / typelabel strings; label is already
-             * format_string()-escaped. */
+             * localised when / typelabel strings; label is plain text, not
+             * HTML-escaped (see upcoming_pauses::clean_note()). */
             'upcoming_pauses' => array_map(static fn ($u) => [
                 'start' => (int) $u['start'],
                 'type' => (string) $u['type'],
@@ -546,7 +590,7 @@ class responsiveness_payload {
             ],
             /* Sub-day optional events sidecar. Each entry is
              * {date: YYYYMMDD, starttime: min, endtime: min, label: str};
-             * label is already format_string()-escaped by paused_aggregator. */
+             * label is plain text, not HTML-escaped. */
             'paused_events_30d' => is_array($pausedaggregate['events'] ?? null)
                 ? array_map(static fn ($e) => [
                     'date'      => (int) $e['date'],

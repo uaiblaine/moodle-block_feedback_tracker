@@ -48,10 +48,11 @@ class get_dashboard extends external_api {
 
     /**
      * Cache-key version. Bump it with any change to execute()'s WHERE clause,
-     * aggregate columns or returned shape, so entries cached by an earlier
-     * plugin version stop matching without a purge.
+     * aggregate columns, returned shape or the formatting of returned values,
+     * so entries cached by an earlier plugin version stop matching without a
+     * purge.
      */
-    public const CACHE_KEY_VERSION = 7;
+    public const CACHE_KEY_VERSION = 8;
 
     /**
      * Parameters.
@@ -94,14 +95,16 @@ class get_dashboard extends external_api {
         // The key carries the user (so per-user filtering doesn't leak across
         // teachers), whether the user is in full-site view-all mode (so gaining
         // or losing that grant re-keys at once), the calendar version, the band
-        // filter and the display unit.
+        // filter, the display unit and the language the course names were
+        // filtered in.
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
         $key = 'v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
             . '_' . $USER->id
             . '_' . ($scope === null ? 'all' : 'scoped')
             . '_' . $band
-            . (\block_feedback_tracker\local\sla\bucket::use_day_thresholds() ? '_d' : '');
+            . (\block_feedback_tracker\local\sla\bucket::use_day_thresholds() ? '_d' : '')
+            . '_' . current_language();
         $cached = $cache->get($key);
         if (
             $cached !== false && is_array($cached)
@@ -162,6 +165,7 @@ class get_dashboard extends external_api {
         $courses = [];
         $courseids = array_map(static fn ($r) => (int) $r->courseid, $rows);
         $trendseries = self::trend_series_for_courses($courseids);
+        self::preload_course_contexts($courseids);
         // Counts follow the banding ruler: business-days mode serves the
         // day-ruler twins, falling back to the hour counts while the rollup
         // has not yet filled critical_days for the course.
@@ -180,7 +184,12 @@ class get_dashboard extends external_api {
                 : null;
             $courses[] = [
                 'courseid'  => $cid,
-                'coursename' => (string) $r->coursename,
+                // Filtered but not escaped: PARAM_TEXT and the dashboard's text nodes escape it.
+                'coursename' => format_string(
+                    (string) $r->coursename,
+                    true,
+                    ['context' => \context_course::instance($cid), 'escape' => false]
+                ),
                 'numgroups' => (int) $r->numgroups,
                 'pending'   => (int) $r->pending,
                 'critical'  => $critical,
@@ -213,6 +222,32 @@ class get_dashboard extends external_api {
         ];
         $cache->set($key, $result);
         return $result;
+    }
+
+    /**
+     * Load the course contexts of a result into the context cache in one
+     * query, so formatting each course name does not fetch its context alone.
+     *
+     * @param int[] $courseids
+     * @return void
+     */
+    private static function preload_course_contexts(array $courseids): void {
+        global $DB;
+        if (empty($courseids)) {
+            return;
+        }
+        [$insql, $params] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'ctxc');
+        $params['ctxlevel'] = CONTEXT_COURSE;
+        $contexts = $DB->get_records_select(
+            'context',
+            "contextlevel = :ctxlevel AND instanceid $insql",
+            $params,
+            '',
+            \context_helper::get_preload_record_columns_sql('{context}')
+        );
+        foreach ($contexts as $ctx) {
+            \context_helper::preload_from_record($ctx);
+        }
     }
 
     /**

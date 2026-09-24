@@ -208,20 +208,34 @@ class submission_browser {
 
         $total = (int) $DB->count_records_sql("SELECT COUNT(1) $from WHERE $rowswhere", $rowsparams);
 
+        /* The row query alone also joins the module context, whose columns
+         * preload the contexts the activity names are formatted in; the name
+         * fields are the ones fullname() reads. */
+        $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
+        $namefields = \core_user\fields::for_name()->get_sql('u')->selects;
         $select = "SELECT sub.id, sub.cmid, sub.userid, sub.iteminstance, sub.groupid, sub.timesubmitted,
                           sub.timegraded, sub.timemarked, sub.timeclosed,
                           sub.closedsource,
                           sub.queuehours, sub.allochours,
                           sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
-                          u.firstname, u.lastname, a.name AS activityname, g.name AS groupname";
+                          a.name AS activityname, g.name AS groupname,
+                          $ctxfields
+                          $namefields";
+        $ctxjoin = "LEFT JOIN {context} ctx ON ctx.instanceid = sub.cmid AND ctx.contextlevel = :bftctxmodule";
         $orderby = self::order_by($mode, $sort, $order);
         $rows = $DB->get_records_sql(
-            "$select $from WHERE $rowswhere ORDER BY $orderby",
-            $rowsparams,
+            "$select $from $ctxjoin WHERE $rowswhere ORDER BY $orderby",
+            $rowsparams + ['bftctxmodule' => CONTEXT_MODULE],
             $page * $perpage,
             $perpage
         );
+        foreach ($rows as $r) {
+            if ($r->ctxid !== null) {
+                \context_helper::preload_from_record($r);
+            }
+        }
+        $names = self::display_names($rows, $courseid);
 
         [$goal, $crit] = self::band_bounds();
         // Banding follows the global display unit: business-days mode
@@ -262,10 +276,10 @@ class submission_browser {
                 'submissionid'     => (int) $r->id,
                 'cmid'             => (int) $r->cmid,
                 'userid'           => (int) $r->userid,
-                'studentname'      => trim($r->firstname . ' ' . $r->lastname),
-                'activityname'     => (string) ($r->activityname ?? ''),
+                'studentname'      => fullname($r),
+                'activityname'     => $names['activities'][(int) $r->cmid] ?? '',
                 'groupid'          => (int) $r->groupid,
-                'groupname'        => (string) ($r->groupname ?? ''),
+                'groupname'        => $names['groups'][(int) $r->groupid] ?? '',
                 'timesubmitted'    => (int) $r->timesubmitted,
                 'timegraded'       => $r->timegraded !== null ? (int) $r->timegraded : 0,
                 'waitinghours'     => $r->waitinghours !== null ? (float) $r->waitinghours : 0.0,
@@ -305,6 +319,42 @@ class submission_browser {
         }
 
         return ['total' => $total, 'counts' => $counts, 'rows' => $out];
+    }
+
+    /**
+     * Activity and group names of a page of rows, each formatted once.
+     *
+     * Names are filtered (multilang and other string filters) but not escaped:
+     * the PARAM_TEXT fields of the web services, the report's text nodes and
+     * the drilldown's double stashes all escape for themselves. An activity
+     * name is formatted in its module context, where filters can be switched
+     * off per activity, and a group name in the course context.
+     *
+     * @param array $rows Page rows; each needs cmid, activityname, groupid and groupname.
+     * @param int $courseid The course every row belongs to.
+     * @return array{activities: array<int, string>, groups: array<int, string>} Plain
+     *         names keyed by course module id and by group id.
+     */
+    private static function display_names(array $rows, int $courseid): array {
+        $activities = [];
+        $groups = [];
+        $courseoptions = null;
+        foreach ($rows as $r) {
+            $cmid = (int) $r->cmid;
+            if (!isset($activities[$cmid])) {
+                $activities[$cmid] = format_string(
+                    (string) ($r->activityname ?? ''),
+                    true,
+                    ['context' => \context_module::instance($cmid), 'escape' => false]
+                );
+            }
+            $groupid = (int) $r->groupid;
+            if ($r->groupname !== null && !isset($groups[$groupid])) {
+                $courseoptions ??= ['context' => \context_course::instance($courseid), 'escape' => false];
+                $groups[$groupid] = format_string((string) $r->groupname, true, $courseoptions);
+            }
+        }
+        return ['activities' => $activities, 'groups' => $groups];
     }
 
     /**
@@ -393,10 +443,12 @@ class submission_browser {
             $params['groupid'] = $groupid;
         }
         if ($search !== '') {
-            $fullname = $DB->sql_concat('u.firstname', "' '", 'u.lastname');
+            // The student name is matched as fullname() displays it, so a needle copied from the table finds its row.
+            [$fullname, $fullnameparams] = \core_user\fields::get_sql_fullname('u');
             $like = $DB->sql_like_escape($search);
             $where .= ' AND (' . $DB->sql_like($fullname, ':searchname', false)
                 . ' OR ' . $DB->sql_like('a.name', ':searchact', false) . ')';
+            $params += $fullnameparams;
             $params['searchname'] = '%' . $like . '%';
             $params['searchact'] = '%' . $like . '%';
         }

@@ -63,8 +63,10 @@ final class course_finder {
      *  - `hiddenonly`    (bool) only courses hidden from students
      *
      * @param array $filters See the description for the recognised keys.
-     * @return array Rows of id, fullname, shortname, visible, startdate,
-     *               enddate, categoryname and ledgerrows, keyed by course id.
+     * @return array Rows of id, fullname, shortname, category, visible,
+     *               startdate, enddate, categoryname and ledgerrows, keyed by
+     *               course id. Names are stored values, not yet formatted
+     *               ({@see \block_feedback_tracker\local\output\bulk_remove_rows}).
      */
     public static function candidates(array $filters): array {
         global $DB;
@@ -77,7 +79,7 @@ final class course_finder {
         /* The ledger count is what makes the confirmation informed: an
          * administrator should see how much measured history each course would
          * eventually lose, not just how many courses they ticked. */
-        $sql = "SELECT c.id, c.fullname, c.shortname, c.visible, c.startdate, c.enddate,
+        $sql = "SELECT c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate,
                        cat.name AS categoryname,
                        (SELECT COUNT(1)
                           FROM {block_feedback_tracker_sub} l
@@ -88,7 +90,7 @@ final class course_finder {
                   JOIN {block_instances} bi ON bi.parentcontextid = ctx.id
                                            AND bi.blockname = :blockname
                  WHERE $wheresql
-              GROUP BY c.id, c.fullname, c.shortname, c.visible, c.startdate, c.enddate, cat.name
+              GROUP BY c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate, cat.name
               ORDER BY c.fullname ASC";
 
         return $DB->get_records_sql($sql, $params, 0, self::MAX_RESULTS);

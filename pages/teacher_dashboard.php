@@ -96,7 +96,8 @@ $dashboardcollapsed = (bool) get_user_preferences(
 
 $initial = [
     'userid' => (int) $USER->id,
-    'greeting_firstname' => format_string($USER->firstname),
+    // Plain text: the view renders the greeting as a text node, which escapes it.
+    'greeting_firstname' => format_string($USER->firstname, true, ['context' => $sysctx, 'escape' => false]),
     'dashboard' => $dashboard,
     'gradenow' => $gradenow,
     'insights' => $insights,

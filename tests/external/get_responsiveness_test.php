@@ -33,6 +33,7 @@ use core_external\external_api;
  * Tests for retrieving responsiveness data via external functions.
  *
  * @covers \block_feedback_tracker\external\get_responsiveness
+ * @covers \block_feedback_tracker\local\payload\responsiveness_payload
  */
 final class get_responsiveness_test extends \advanced_testcase {
     /**
@@ -528,6 +529,149 @@ final class get_responsiveness_test extends \advanced_testcase {
                 'timemodified' => $now,
             ]);
         }
+    }
+
+    /**
+     * Titles composed from group custom fields pass the PARAM_TEXT return
+     * validation and arrive as plain text: a text field holding "A & B" is
+     * not escaped, and a text field with a link configured gives its text
+     * instead of an <a>, which would make clean_returnvalue() reject the
+     * whole response.
+     *
+     * @return void
+     */
+    public function test_custom_field_titles_are_plain_text(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        // Custom-field data is saved only for a user who can edit it.
+        $this->setAdminUser();
+        $generator = $this->getDataGenerator();
+        $category = $generator->create_custom_field_category([
+            'component' => 'core_group',
+            'area' => 'group',
+        ]);
+        $generator->create_custom_field([
+            'categoryid' => (int) $category->get('id'),
+            'type' => 'text',
+            'shortname' => 'room',
+        ]);
+        $generator->create_custom_field([
+            'categoryid' => (int) $category->get('id'),
+            'type' => 'text',
+            'shortname' => 'roomlink',
+            'configdata' => ['link' => 'https://example.com/rooms/$$'],
+        ]);
+        set_config('group_title_fields', 'room', 'block_feedback_tracker');
+        set_config('group_subtitle_fields', 'roomlink', 'block_feedback_tracker');
+
+        $course = $generator->create_course();
+        $teacher = $generator->create_and_enrol($course, 'editingteacher');
+        $group = $generator->create_group([
+            'courseid' => $course->id,
+            'name' => 'Raw name',
+            'customfield_room' => 'A & B',
+            'customfield_roomlink' => 'C & D',
+        ]);
+        $this->seed_rollup($course, (int) $group->id);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_responsiveness',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], (string) json_encode($response['exception'] ?? null));
+        $result = external_api::clean_returnvalue(get_responsiveness::execute_returns(), $response['data']);
+        $this->assertCount(1, $result['groups']);
+        $this->assertSame((int) $group->id, (int) $result['groups'][0]['groupid']);
+        $this->assertSame('A & B', $result['groups'][0]['groupname']);
+        $this->assertSame('C & D', $result['groups'][0]['groupsubtitle']);
+    }
+
+    /**
+     * Group and course names go through format_string() without escaping:
+     * markup is stripped, so the PARAM_TEXT return validation accepts the
+     * response, and the ampersand stays as typed.
+     *
+     * @return void
+     */
+    public function test_group_and_course_names_are_plain_text(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        $course = $this->getDataGenerator()->create_course(['fullname' => 'A & <b>B</b>']);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => 'C & <b>D</b>']);
+        $this->seed_rollup($course, (int) $group->id);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_responsiveness',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], (string) json_encode($response['exception'] ?? null));
+        $card = $response['data']['groups'][0];
+        $this->assertSame('C & D', $card['groupname']);
+        $this->assertSame('A & B', $card['coursename']);
+    }
+
+    /**
+     * The cached payload is keyed by the language: a second call in another
+     * language within the cache lifetime rebuilds the group and activity names
+     * in that language instead of serving the first language's payload.
+     *
+     * @return void
+     */
+    public function test_cached_payload_is_per_language(): void {
+        global $SESSION;
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $this->getDataGenerator()->create_module('assign', ['course' => $course->id, 'name' => $multilang]);
+        $this->seed_rollup($course, (int) $group->id);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_responsiveness',
+            ['courseid' => (int) $course->id]
+        );
+        $this->assertFalse($response['error'], (string) json_encode($response['exception'] ?? null));
+        $card = $response['data']['groups'][0];
+        $this->assertSame('A & B', $card['groupname']);
+        $this->assertCount(1, $card['activities']);
+        $this->assertSame('A & B', $card['activities'][0]['name']);
+
+        /* Set directly rather than through force_current_language(), which
+         * refuses a language whose pack is not installed on the test site. */
+        $SESSION->forcelang = 'es';
+        $this->assertSame('es', current_language());
+        try {
+            $response = external_api::call_external_function(
+                'block_feedback_tracker_get_responsiveness',
+                ['courseid' => (int) $course->id]
+            );
+        } finally {
+            unset($SESSION->forcelang);
+        }
+        $this->assertFalse($response['error'], (string) json_encode($response['exception'] ?? null));
+        $card = $response['data']['groups'][0];
+        $this->assertSame('C & D', $card['groupname']);
+        $this->assertSame('C & D', $card['activities'][0]['name']);
     }
 
     /**

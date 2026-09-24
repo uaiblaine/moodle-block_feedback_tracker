@@ -108,6 +108,7 @@ $string['cachedef_pause_windows_by_course'] = 'Manual SLA pause windows applicab
 $string['cachedef_responsiveness_payload'] = 'Per-user, per-course responsiveness payload.';
 $string['cachedef_site_comparison'] = 'Site-wide median + percentile benchmarks.';
 $string['caleditor_bulk_button'] = 'Import';
+$string['caleditor_bulk_error_line'] = 'Line {$a->line}: {$a->raw} — {$a->message}';
 $string['caleditor_bulk_heading'] = 'Bulk CSV import';
 $string['caleditor_bulk_result'] = '{$a->saved} days saved, {$a->errors} errors.';
 $string['caleditor_col_actions'] = 'Actions';

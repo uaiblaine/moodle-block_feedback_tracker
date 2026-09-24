@@ -33,9 +33,9 @@ use block_feedback_tracker\local\calendar\day_counter;
 /**
  * Idempotent upserts into {block_feedback_tracker_sub}, one row per
  * (cmid, userid, attemptnumber, cycle). Reads the live {assign_submission} /
- * {assign_grades} / {assign_overrides} / gradebook state, invokes the
- * academic-time engine to compute effective hours, and enqueues the
- * (courseid, groupid) tuple for rollup recompute.
+ * {assign_grades} / {assign_overrides} / {assign_user_flags} / gradebook
+ * state, invokes the academic-time engine to compute effective hours, and
+ * enqueues the (courseid, groupid) tuple for rollup recompute.
  *
  * The per-user upsert runs a bounded number of queries beyond the engine
  * call, so it is suitable to run inline from event observers; the team,
@@ -72,8 +72,8 @@ class submission_ledger {
      * Upsert one ledger row for (cmid, userid, attemptnumber), in its current
      * measurement cycle.
      *
-     * Reads the current submission + grade + overrides from the assign
-     * tables, computes raw/effective hours, classifies the bucket, and
+     * Reads the current submission + grade + overrides + extension from the
+     * assign tables, computes raw/effective hours, classifies the bucket, and
      * enqueues the (course, group) tuple. Returns the ledger row id, or null if
      * the inputs are not resolvable (cm missing, not an assign, no submission
      * row) or the submitter is excluded.
@@ -286,7 +286,7 @@ class submission_ledger {
 
         $cmid = (int) $cm->id;
         $groupid = group_resolver::resolve_group_for_user((int) $cm->course, $userid);
-        $rule = rule_resolver::resolve_rule($assign, $userid, $groupid);
+        $rule = rule_resolver::resolve_rule((int) $assign->id, $userid);
 
         $flags = null;
         if (!empty($assign->markingworkflow)) {
@@ -1099,6 +1099,12 @@ class submission_ledger {
      * Re-resolve the rule columns for every ledger row tied to (assignid,
      * groupid). Used when a group override is created / updated / deleted.
      *
+     * Each member is resolved against all of their groups
+     * ({@see rule_resolver::resolve_rule()}), so a member of two overridden
+     * groups keeps whichever override core applies to them, and after a
+     * deletion falls back to their remaining groups rather than to the
+     * activity.
+     *
      * @param int $assignid
      * @param int $groupid
      * @return void
@@ -1106,15 +1112,18 @@ class submission_ledger {
     public static function re_resolve_rules_for_assign_group(int $assignid, int $groupid): void {
         global $DB;
 
-        $assign = $DB->get_record('assign', ['id' => $assignid]);
-        if (!$assign) {
+        if (!$DB->record_exists('assign', ['id' => $assignid])) {
             return;
         }
 
         /* Selected by membership of the overridden group, not by the ledger's
          * `groupid`: that column is the reporting attribution (the group a
          * student last joined, see group_resolver) and need not match the
-         * group an override targets. */
+         * group an override targets. Only that group's members can change:
+         * everybody else's governing override does not involve it. An edit
+         * that moves an override to another group names the new group only,
+         * so the old group's members are left to the reconciler's rule-drift
+         * sweep. */
         $rows = $DB->get_records_sql(
             "SELECT l.id, l.userid, l.courseid, l.groupid
                FROM {block_feedback_tracker_sub} l
@@ -1125,8 +1134,11 @@ class submission_ledger {
 
         $now = time();
         $tuples = [];
+        $rules = [];
         foreach ($rows as $row) {
-            $rule = rule_resolver::resolve_rule($assign, (int) $row->userid, $groupid);
+            $userid = (int) $row->userid;
+            $rules[$userid] ??= rule_resolver::resolve_rule($assignid, $userid);
+            $rule = $rules[$userid];
             $DB->update_record('block_feedback_tracker_sub', (object) [
                 'id'           => $row->id,
                 'timeopens'    => $rule['timeopens'],
@@ -1151,7 +1163,8 @@ class submission_ledger {
      *
      * Used when a user-level override or an extension changes: both alter the
      * dates that submission is judged against, and neither is visible in any
-     * other signal the plugin receives.
+     * other signal the plugin receives. The extension is read from
+     * {assign_user_flags} by {@see rule_resolver::resolve_rule()}.
      *
      * @param int $assignid
      * @param int $userid
@@ -1160,19 +1173,21 @@ class submission_ledger {
     public static function re_resolve_rules_for_assign_user(int $assignid, int $userid): void {
         global $DB;
 
-        $assign = $DB->get_record('assign', ['id' => $assignid]);
-        if (!$assign) {
+        if (!$DB->record_exists('assign', ['id' => $assignid])) {
             return;
         }
         $rows = $DB->get_records('block_feedback_tracker_sub', [
             'iteminstance' => $assignid,
             'userid' => $userid,
         ], '', 'id, courseid, groupid');
+        if (empty($rows)) {
+            return;
+        }
 
+        $rule = rule_resolver::resolve_rule($assignid, $userid);
         $now = time();
         $tuples = [];
         foreach ($rows as $row) {
-            $rule = rule_resolver::resolve_rule($assign, $userid, (int) $row->groupid);
             $DB->update_record('block_feedback_tracker_sub', (object) [
                 'id'           => $row->id,
                 'timeopens'    => $rule['timeopens'],
@@ -1396,7 +1411,11 @@ class submission_ledger {
      * @return bool
      */
     private static function should_skip_submitter(int $courseid, int $userid): bool {
-        if ((int) (get_config('block_feedback_tracker', 'exclude_grader_submissions') ?? 1) !== 1) {
+        /* Default-ON checkbox: get_config() returns false for a key never
+         * saved (a web upgrade leaves it so until upgradesettings.php is
+         * saved), so only an explicit '0' turns the filter off. */
+        $setting = get_config('block_feedback_tracker', 'exclude_grader_submissions');
+        if ($setting !== false && $setting !== null && (string) $setting === '0') {
             return false;
         }
         $key = $courseid . ':' . $userid;

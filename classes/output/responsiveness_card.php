@@ -64,9 +64,16 @@ class responsiveness_card implements \renderable, \templatable {
     public function export_for_template(\renderer_base $output): array {
         $p = $this->payload;
 
-        $title = format_string(($p['groupname'] !== '' ? $p['groupname'] : $p['coursename']));
+        // The template prints both through double stashes, which escape them,
+        // so format_string() filters and strips tags but does not escape.
+        $formatoptions = ['context' => \context_course::instance($this->courseid), 'escape' => false];
+        $title = format_string(
+            (string) ($p['groupname'] !== '' ? $p['groupname'] : $p['coursename']),
+            true,
+            $formatoptions
+        );
         $subtitle = isset($p['groupsubtitle']) && (string) $p['groupsubtitle'] !== ''
-            ? format_string((string) $p['groupsubtitle']) : '';
+            ? format_string((string) $p['groupsubtitle'], true, $formatoptions) : '';
 
         $gauge = new score_gauge(
             $p['responsiveness_score'] !== null ? (float) $p['responsiveness_score'] : null,
@@ -180,10 +187,11 @@ class responsiveness_card implements \renderable, \templatable {
     }
 
     /**
-     * Build the scheduled-pause notice rows ("Pausa prevista") from the
+     * Build the scheduled-pause notice rows ("Upcoming pause") from the
      * payload's upcoming_pauses list. The list is already decorated with
      * localised when/typelabel strings by upcoming_pauses::for_display(), so
-     * the no-JS card and the Preact block render identical text.
+     * the no-JS card and the Preact block render identical text. Its label is
+     * plain text, which the template's double stash escapes.
      *
      * @param array $p
      * @return array

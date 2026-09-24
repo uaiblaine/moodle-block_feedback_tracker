@@ -187,6 +187,46 @@ final class get_insights_test extends \advanced_testcase {
     }
 
     /**
+     * Course and group names reach the caller filtered, in the plain spelling:
+     * the multilang filter picks the English half and the ampersand is not
+     * escaped.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $course = $this->generator()->create_tracked_course(['fullname' => $multilang]);
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $group->id,
+            'pending' => 2,
+            'critical' => 2,
+            'responsiveness_score' => 80.0,
+            'score_band' => 'good',
+        ]);
+        $teacher = $this->generator()->create_user_in_role((int) $course->id, 'editingteacher');
+        $this->setUser($teacher);
+        dashboard_scope::reset_memo();
+        $_POST['sesskey'] = sesskey();
+
+        $response = external_api::call_external_function('block_feedback_tracker_get_insights', []);
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        foreach (['bright_spot', 'gentle_watch'] as $slot) {
+            $this->assertArrayHasKey($slot, $response['data']);
+            $this->assertSame((int) $group->id, $response['data'][$slot]['groupid']);
+            $this->assertSame('A & B', $response['data'][$slot]['coursename'], $slot);
+            $this->assertSame('A & B', $response['data'][$slot]['groupname'], $slot);
+        }
+    }
+
+    /**
      * The payload is cached per user with the language in the key, so two
      * consecutive calls agree.
      *

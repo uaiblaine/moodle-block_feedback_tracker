@@ -44,8 +44,11 @@ $PAGE->set_title(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
 
+// The notice and its error lines are plain text; the template escapes them,
+// so an exception message can never inject markup.
 $notice = null;
 $noticelevel = 'success';
+$noticeerrors = [];
 
 // Forms.
 $dayform = new calendar_day_form($PAGE->url->out(false));
@@ -94,16 +97,13 @@ try {
             'errors' => count($result['errors']),
         ]);
         if (!empty($result['errors'])) {
-            $errortext = '';
             foreach ($result['errors'] as $err) {
-                $errortext .= sprintf(
-                    "<br/>line %d: %s — %s",
-                    (int) $err['line'],
-                    s($err['raw']),
-                    s($err['message'])
-                );
+                $noticeerrors[] = get_string('caleditor_bulk_error_line', 'block_feedback_tracker', (object) [
+                    'line' => (int) $err['line'],
+                    'raw' => (string) $err['raw'],
+                    'message' => (string) $err['message'],
+                ]);
             }
-            $notice .= $errortext;
             $noticelevel = 'warning';
         }
     } else if ($data = $pauseform->get_data()) {
@@ -146,6 +146,7 @@ try {
 } catch (\Throwable $e) {
     $notice = $e->getMessage();
     $noticelevel = 'danger';
+    $noticeerrors = [];
 }
 
 // Inline GET-style delete actions (links from the data tables).
@@ -174,6 +175,7 @@ if ($action !== '' && confirm_sesskey()) {
     } catch (\Throwable $e) {
         $notice = $e->getMessage();
         $noticelevel = 'danger';
+        $noticeerrors = [];
     }
 }
 
@@ -274,7 +276,12 @@ $event->trigger();
 echo $OUTPUT->header();
 echo $OUTPUT->render_from_template('block_feedback_tracker/calendar_editor', [
     'heading'  => get_string('caleditor_title', 'block_feedback_tracker'),
-    'notice'   => $notice !== null ? ['text' => $notice, 'level' => $noticelevel] : null,
+    'notice'   => $notice !== null ? [
+        'text' => $notice,
+        'level' => $noticelevel,
+        'haserrors' => !empty($noticeerrors),
+        'errors' => $noticeerrors,
+    ] : null,
     'days' => [
         'heading'      => get_string('caleditor_days_heading', 'block_feedback_tracker'),
         'addheading'   => get_string('caleditor_days_add', 'block_feedback_tracker'),

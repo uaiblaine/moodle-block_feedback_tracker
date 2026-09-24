@@ -177,6 +177,36 @@ final class upcoming_pauses_test extends \advanced_testcase {
     }
 
     /**
+     * Labels from every source (a sub-day event, a full-day span, a manual
+     * pause) are plain text: tags stripped, ampersand not escaped, because
+     * every consumer escapes the label itself.
+     *
+     * @return void
+     */
+    public function test_labels_are_plain_text(): void {
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $this->add_cday(20260629, 'optional', 16 * 60, 17 * 60, 'A & B');
+        $this->add_cday(20260630, 'holiday', null, null, 'C & D');
+        $this->add_cday(20260701, 'recess', null, null, 'G <span>H</span>');
+        $this->add_cpause('course', 42, '2026-06-28 00:00:00', '2026-06-29 00:00:00', 'E & F');
+
+        $now = $this->ts('2026-06-28 09:00:00');
+        $labels = array_column(upcoming_pauses::for_course_group(42, 0, $now, 10), 'label', 'type');
+
+        $this->assertSame('E & F', $labels['coursepaused']);
+        $this->assertSame('A & B', $labels['optional']);
+        $this->assertSame('C & D', $labels['holiday']);
+        // Control: the notes still go through format_string(), which strips the tags.
+        $this->assertSame('G H', $labels['recess']);
+
+        // The decorated entries every surface renders carry the same label.
+        pause_lookup::reset_memo();
+        $display = array_column(upcoming_pauses::for_display(42, 0, $now, 10), 'label', 'type');
+        $this->assertSame('A & B', $display['optional']);
+    }
+
+    /**
      * Seed enough calendar config for the lookup to read.
      *
      * @return void
@@ -223,9 +253,10 @@ final class upcoming_pauses_test extends \advanced_testcase {
      * @param int $scopeid Scope id.
      * @param string $start UTC datetime string.
      * @param string $end UTC datetime string.
+     * @param string|null $note Optional note.
      * @return void
      */
-    private function add_cpause(string $scopelevel, int $scopeid, string $start, string $end): void {
+    private function add_cpause(string $scopelevel, int $scopeid, string $start, string $end, ?string $note = null): void {
         global $DB;
         $DB->insert_record('block_feedback_tracker_cpause', (object) [
             'scopelevel' => $scopelevel,
@@ -234,7 +265,7 @@ final class upcoming_pauses_test extends \advanced_testcase {
             'reason' => 'closure',
             'timestart' => $this->ts($start),
             'timeend' => $this->ts($end),
-            'note' => null,
+            'note' => $note,
             'timecreated' => time(),
             'timemodified' => time(),
         ]);
