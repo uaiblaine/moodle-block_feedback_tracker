@@ -156,10 +156,7 @@ class activity_schedule {
         $hasoverride = self::has_dates($override);
         $hasglobal = self::has_dates($item->assign);
         if (!$item->canmanage) {
-            // No edit rights: informational only. The group still reads as
-            // 'done' when it has any effective schedule (group override or a
-            // global rule), and 'norule' when it has none. Both render without
-            // a link.
+            // No edit rights: informational only, rendered without a link.
             return ($hasoverride || $hasglobal) ? 'done' : 'norule';
         }
         if ($hasoverride) {

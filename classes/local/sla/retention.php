@@ -31,19 +31,17 @@ namespace block_feedback_tracker\local\sla;
  *
  * The ledger has no natural ceiling: a closed measurement is never rewritten,
  * a resubmission after grading opens another one, and a team submission is
- * carried by every member. Left alone the table grows for the life of the
- * site, which is fine until it is not.
+ * carried by every member, so the table grows for the life of the site.
  *
- * Retention is off by default, matching this plugin's other destructive
- * switch (`backfill_active`): an upgrade must never start deleting a site's
- * data because a new version happened to ship a policy. Turning it on is an
- * explicit, informed act — it bounds the report's all-time Graded tab, which
- * is an audit surface, to the configured window.
+ * Retention is off by default, like the delayed removal cleanup
+ * ({@see removal_grace::is_active()}): an upgrade must never start deleting a
+ * site's data because a new version shipped a policy. Turning it on also
+ * bounds the report's all-time Graded tab, an audit surface, to the window.
  *
- * Both the pruner and the reconciler read the cutoff from here. They have to
- * agree: the reconciler recreates ledger rows for submissions it cannot find
- * one for, so without a shared boundary it would resurrect every row the
- * pruner deleted, on the next tick, for ever.
+ * Both task\prune_ledger and task\reconcile_ledger read the cutoff from here.
+ * They must agree: the reconciler recreates ledger rows for submissions that
+ * have none, so without a shared boundary it would resurrect every row the
+ * pruner deleted.
  */
 final class retention {
     /** Default lifetime of a closed measurement, in days. */
@@ -64,11 +62,9 @@ final class retention {
         }
         $days = (int) (get_config('block_feedback_tracker', 'retention_days') ?: self::DEFAULT_DAYS);
         if ($days < self::MIN_DAYS) {
-            /* A window shorter than a month would delete work still inside the
-             * 30-day statistical window the score and the medians are built
-             * from, so the rollup would disagree with its own inputs. Treat a
-             * too-small value as a misconfiguration and fall back rather than
-             * silently corrupting the figures. */
+            /* A shorter window would delete work still inside the 30-day window
+             * the score and medians are built from, so a too-small value is
+             * treated as a misconfiguration and falls back to the default. */
             $days = self::DEFAULT_DAYS;
         }
         $now = $now ?? time();

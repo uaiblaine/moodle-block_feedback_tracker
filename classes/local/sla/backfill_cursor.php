@@ -27,28 +27,22 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Wraps the {block_feedback_tracker_bfcursor} table.
+ * Wraps the {block_feedback_tracker_bfcursor} table: one row per tracked
+ * course, holding the last {assign_submission}.id the backfill walked
+ * (`lastsubid`).
  *
- * v1.7.0 replaced the single global `backfill_cursor` config key with
- * one row per block-enabled course. Each row tracks where backfill has
- * progressed through `{assign_submission}` for THAT course, allowing:
+ * Per-course rows let a course that gains the block later be walked from the
+ * start without touching other courses' progress, and let one course be
+ * re-walked ({@see self::reset()}) or paused ({@see self::disable()}) alone.
  *
- *  - Adding the block to a new course later → fresh cursor=0 row → next
- *    backfill tick walks that course from the start, without touching
- *    other courses' progress.
- *  - Re-running backfill on one course without re-walking everything
- *    else (`reset($courseid)` flips cursor=0 + active=1).
- *  - Pausing backfill for a single course (`disable($courseid)`).
- *
- * The dispatcher (`task\backfill_history`) is the only writer of the
- * `cursor` / `active` / `lastrunat` columns under normal operation —
- * the per-row mutex is implicit in the scheduler serialising the
- * dispatcher across the cluster.
+ * During normal operation only `task\backfill_history` writes the rows, and
+ * the scheduled-task lock keeps one dispatcher running at a time, so no
+ * per-row lock is needed. cli/backfill_course.php is the manual exception.
  */
 class backfill_cursor {
     /**
      * Fetch the cursor row for one course, lazily creating it (with
-     * cursor=0, active=1) if none exists. Idempotent.
+     * lastsubid 0, active 1) if none exists. Idempotent.
      *
      * @param int $courseid
      * @return \stdClass The row.
@@ -74,16 +68,14 @@ class backfill_cursor {
     /**
      * Make sure every listed course has a cursor row, in two queries.
      *
-     * The dispatcher calls this once a tick for every tracked course, so doing
-     * it with {@see self::get_or_create()} in a loop cost one point SELECT per
-     * course per tick — and it happens BEFORE the dispatcher's own "everything
-     * is complete, nothing to do" early return, so a site that finished its
-     * backfill months ago went on paying that every five minutes, for ever.
+     * The dispatcher calls this every tick for every tracked course, before
+     * its early return when all backfill is complete, so a loop over
+     * {@see self::get_or_create()} would cost one SELECT per course per tick
+     * even on a site whose backfill finished long ago.
      *
      * Reads the whole cursor table rather than filtering on the ids passed in:
-     * the table holds at most one row per course that has ever been tracked, so
-     * it is small, and an IN list over every tracked course would be thousands
-     * of bind parameters to answer a question one unfiltered read answers.
+     * the table holds at most one row per course ever tracked, while an IN list
+     * over every tracked course could run to thousands of bind parameters.
      *
      * @param array $courseids Course ids that should have a cursor.
      * @return void
@@ -95,14 +87,10 @@ class backfill_cursor {
             return;
         }
         $known = $DB->get_fieldset_select('block_feedback_tracker_bfcursor', 'courseid', '');
-        /* array_unique as well as array_diff: a repeated courseid in the input
-         * would otherwise be inserted twice against a UNIQUE index, and
-         * insert_records batches, so on PostgreSQL the failing statement takes
-         * the whole chunk down and the other courses in it get no cursor
-         * either. The loop this replaces could not do that — it re-read per
-         * course and found the row it had just made. Today's only caller
-         * dedups upstream, but the method is public and says nothing about
-         * requiring it. */
+        /* Deduplicate as well as diff: the input may repeat a courseid,
+         * which would be inserted twice against the UNIQUE index on courseid.
+         * On PostgreSQL insert_records() batches, so the failing statement
+         * would also lose every other course in its chunk. */
         $missing = array_values(array_unique(array_diff(
             array_map('intval', $courseids),
             array_map('intval', $known ?: [])
@@ -111,9 +99,8 @@ class backfill_cursor {
             return;
         }
 
-        /* insert_records() requires every row to carry the same keys in the
-         * same order, and array_diff preserves the original keys — hence the
-         * array_values above, and a record built the same way each time here. */
+        /* insert_records() throws unless every record has the same fields in
+         * the same order, so each one is built from the same literal. */
         $now = time();
         $records = [];
         foreach ($missing as $courseid) {
@@ -129,9 +116,9 @@ class backfill_cursor {
     }
 
     /**
-     * Advance the cursor for one course to the given subid and record
-     * the run timestamp. If $complete is true, also flip active=0
-     * (no more rows past the cursor — admin can reset to retry).
+     * Advance the cursor for one course to the given submission id and record
+     * the run timestamp. Sets active to 0 when $complete (no rows left past
+     * the cursor; {@see self::reset()} retries), and back to 1 otherwise.
      *
      * @param int $courseid
      * @param int $newcursor
@@ -150,9 +137,9 @@ class backfill_cursor {
     }
 
     /**
-     * Reset one course's cursor to 0 and mark active=1 so the next
+     * Reset one course's cursor to 0 and mark it active so the next
      * dispatcher tick walks it from the start. Lazily creates the row
-     * if absent. Used by the per-course backfill CLI tool.
+     * if absent. Used by cli/backfill_course.php.
      *
      * @param int $courseid
      * @return void
@@ -169,9 +156,8 @@ class backfill_cursor {
     }
 
     /**
-     * Disable backfill for one course — sets active=0 without touching
-     * the cursor. Counterpart to enable() if admins want to pause one
-     * course's backfill without resetting its progress.
+     * Pause backfill for one course without resetting its progress: sets
+     * active to 0 and leaves the cursor. {@see self::enable()} resumes it.
      *
      * @param int $courseid
      * @return void
@@ -217,7 +203,7 @@ class backfill_cursor {
     }
 
     /**
-     * Return EVERY cursor row (active + complete) for the listing tool.
+     * Return every cursor row, active or complete, for the cli/backfill_course.php listing.
      *
      * @return array<int, \stdClass>
      */
@@ -227,8 +213,8 @@ class backfill_cursor {
     }
 
     /**
-     * Drop the cursor row entirely. Called from the course_deleted
-     * observer chain via submission_ledger::delete_for_course().
+     * Drop the cursor row entirely. Course deletion does not come through
+     * here: {@see submission_ledger::delete_for_course()} deletes the row itself.
      *
      * @param int $courseid
      * @return void

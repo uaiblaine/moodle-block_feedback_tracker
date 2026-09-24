@@ -29,9 +29,10 @@ namespace block_feedback_tracker\output;
 use block_feedback_tracker\local\output\numfmt;
 
 /**
- * One responsiveness card per (course, group). Composes the score gauge,
- * counts row, metrics row, scheduled-pause notice, and an optional score
- * breakdown. Rendered via Mustache; see templates/responsiveness_card.mustache.
+ * One responsiveness card per (course, group): the block's no-JS first paint.
+ * Composes the score gauge, counts row, metrics row, optional sparkline,
+ * scheduled-pause notice and drilldown link. Rendered via Mustache; see
+ * templates/responsiveness_card.mustache.
  */
 class responsiveness_card implements \renderable, \templatable {
     /** @var int The course ID. */
@@ -73,9 +74,8 @@ class responsiveness_card implements \renderable, \templatable {
             100
         );
 
-        // Default-ON toggles: an unset value (get_config returns false) keeps the
-        // default; only an explicit '0' turns them off. A plain `?: 1` read would
-        // mis-handle the off case because the stored '0' is falsy in PHP.
+        // Default-ON toggles: unset (get_config returns false) keeps the default and
+        // only a stored '0' turns them off; a `?: 1` read could never turn them off.
         $perceivedcfg = get_config('block_feedback_tracker', 'show_perceived_time');
         $showperceived = ($perceivedcfg === false || $perceivedcfg === null) ? true : ((string) $perceivedcfg !== '0');
         $pausecfg = get_config('block_feedback_tracker', 'show_paused_today_indicator');
@@ -168,6 +168,7 @@ class responsiveness_card implements \renderable, \templatable {
         if ($p['trend_pct_30d'] !== null) {
             $trendval = (float) $p['trend_pct_30d'];
             // Speed model: fewer hours (negative) = faster = ▲; more = slower = ▼.
+            // Same rule as amd/src/lib/format.js formatTrend(); keep in step.
             $arrow = $trendval < 0 ? '▲' : ($trendval > 0 ? '▼' : '→');
             $trendtxt = $arrow . ' ' . format_float(abs($trendval), 0) . '%';
         }

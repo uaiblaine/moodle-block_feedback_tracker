@@ -37,10 +37,8 @@ global $USER;
 $simenabled = (int) (get_config('block_feedback_tracker', 'enable_teacher_simulator') ?: 0) === 1;
 if (!is_siteadmin()) {
     $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids((int) $USER->id);
-    // A null scope is a full-site grant (the viewalldata capability, or a site
-    // admin with enable_admin_view_all) — always allowed, like a site admin.
-    // Other non-admins need the simulator switch on AND a non-empty teaching
-    // scope; with the switch off the simulator stays admin/viewalldata-only.
+    // A null scope (full-site grant) is always allowed; anyone else needs the
+    // simulator switch on and a non-empty teaching scope.
     if ($scope !== null && (!$simenabled || empty($scope))) {
         throw new \required_capability_exception(
             $sysctx,

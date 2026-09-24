@@ -33,8 +33,10 @@ namespace block_feedback_tracker\local\sla;
  * record that something changed.
  *
  * Every handler is idempotent: replaying the same event leaves the ledger
- * in the same state (the unique key on cmid/userid/attemptnumber enforces
- * this).
+ * in the same state (the unique key on cmid/userid/attemptnumber/cycle
+ * enforces this). Write handlers gate on {@see course_access::is_processable()};
+ * the cleanup handlers (deletions, unenrolment) deliberately do not, so data
+ * tracked earlier is still removed after the block is gone.
  */
 class observer {
     /** Ceiling on rows re-derived from any one bulk-triggering event. */
@@ -65,19 +67,14 @@ class observer {
     }
 
     /**
-     * Chunk a set of backfill descriptors into adhoc tasks, and say so when
-     * the set was truncated.
+     * Chunk a set of backfill descriptors into adhoc tasks, with a debugging
+     * notice when the source query hit {@see self::BULK_MAX_ROWS}, so a
+     * truncated sweep is not mistaken for full coverage.
      *
-     * A bounded sweep that stays quiet reads as full coverage, which is the
-     * one thing it must never do — the remainder has to be picked up
-     * deliberately rather than assumed done.
-     *
-     * The ceiling is judged on `$fetched`, the number of rows the query
-     * actually returned, not on the descriptor count. Callers collapse many
-     * rows into one descriptor — every cycle of an attempt, every member of a
-     * team — so a descriptor count can sit far below the ceiling while the
-     * `LIMIT` has already truncated the source. Measuring the wrong one turns
-     * this notice into the silence it exists to prevent.
+     * The ceiling is judged on `$fetched`, the rows the query returned, not on
+     * the descriptor count: callers collapse many rows into one descriptor
+     * (every cycle of an attempt, every member of a team), so the descriptor
+     * count can sit far below the ceiling after the LIMIT has truncated.
      *
      * @param array $rows Row descriptors for backfill_one_submission.
      * @param int $fetched Rows the source query returned, before collapsing.
@@ -145,14 +142,12 @@ class observer {
             return;
         }
         /* The assignsubmission_* events override objecttable, so their
-         * objectid is the SUBPLUGIN row id (assignsubmission_onlinetext.id /
-         * assignsubmission_file.id) and the real {assign_submission}.id lives
-         * in other['submissionid']. Reading objectid against
-         * {assign_submission} looks up one table's id in another: it either
-         * finds nothing, or finds an unrelated row and writes a ledger entry
-         * for the wrong student. The mod_assign events carry the submission id
-         * in objectid and set no submissionid key, so the fallback serves
-         * both families. */
+         * objectid is the subplugin row id (e.g. assignsubmission_file.id) and
+         * the {assign_submission}.id is in other['submissionid']; reading
+         * objectid would find nothing or another student's submission. The
+         * mod_assign events observed here carry the submission id in objectid
+         * (and in other['submissionid'] when they set it), so the fallback
+         * serves both families. */
         $other = $event->other;
         if (is_object($other)) {
             $other = (array) $other;
@@ -254,10 +249,10 @@ class observer {
      * Marking-workflow state changed for one student.
      *
      * The event carries the assign instance in objectid, the student in
-     * relateduserid and the new state in other['newstate']. It is the ONLY
+     * relateduserid and the new state in other['newstate']. It is the only
      * signal that a grade became visible to the student: mod_assign stores no
-     * release timestamp anywhere ({assign_user_flags} has no time columns on
-     * any supported version), so an unobserved release is unrecoverable.
+     * release timestamp ({assign_user_flags} records the state, not when it
+     * changed), so an unobserved release is unrecoverable.
      *
      * @param \core\event\base $event
      * @return void
@@ -294,10 +289,9 @@ class observer {
         );
 
         if ($released) {
-            /* Earlier cycles and earlier attempts of the same student may carry
-             * a mark that was never released; this transition releases the lot.
-             * Stamped set-based because the upsert above only ever touches the
-             * current cycle of the latest attempt. */
+            /* Earlier cycles and attempts may carry a mark never released; this
+             * transition releases them all, and the upsert above only touches
+             * the current cycle of the latest attempt. */
             submission_ledger::stamp_release_for_user($cmid, $userid, $when);
         }
     }
@@ -305,12 +299,11 @@ class observer {
     /**
      * Identities revealed on a blind-marked assignment.
      *
-     * Until this happens core suppresses `submission_graded` entirely —
-     * `gradebook_item_update()` returns false before doing anything when blind
-     * marking is on without marking-anonymous — so every grading on the
-     * activity is invisible to the plugin and every submission reads as
-     * awaiting feedback. This is the moment the whole activity becomes
-     * knowable, so it is re-derived in the background.
+     * Until then core never fires `submission_graded`: `gradebook_item_update()`
+     * returns false while blind marking is on without the markinganonymous
+     * setting, and the event is triggered only when it succeeds. Every
+     * grading so far was invisible to the plugin, so the whole activity is
+     * re-derived in the background.
      *
      * @param \core\event\base $event
      * @return void
@@ -328,9 +321,8 @@ class observer {
             return;
         }
 
-        /* Dispatched as adhoc chunks rather than looped inline: a large cohort
-         * would otherwise run the whole academic-time engine inside the
-         * teacher's request. */
+        /* Adhoc chunks rather than an inline loop, so a large cohort does not
+         * run the academic-time engine inside the teacher's request. */
         $rows = $DB->get_records_sql(
             "SELECT s.id, s.userid, s.attemptnumber
                FROM {assign_submission} s
@@ -359,22 +351,17 @@ class observer {
     /**
      * An activity's settings were saved.
      *
-     * Only `assign` matters, and only three of its settings do:
-     * `markingworkflow`, `markingallocation` and `teamsubmission` change what
-     * the rows already written *mean*. With marking workflow on, the response
-     * lands when the mark is released rather than when it is entered, so
-     * `timeclosed` is chosen from a different stamp; with team submission on,
-     * the work belongs to a group rather than a person. None of this is a
-     * value drifting out of sync, so no reconciler sweep can see it: the
-     * divergence sweep keys on the mark, the rule sweep keys on dates, and
-     * both would find the stored rows perfectly consistent with a definition
-     * that no longer applies. Re-derivation from live state is the only repair.
+     * Only `assign` matters. `markingworkflow`, `markingallocation` and
+     * `teamsubmission` change what the rows already written mean (with
+     * marking workflow the response lands on release, not entry; with team
+     * submission the work belongs to a group). The stored rows then stay
+     * consistent with a definition that no longer applies, so no reconciler
+     * sweep can detect it.
      *
-     * Rather than compare settings against a snapshot the ledger does not
-     * keep, every affected row is simply re-derived — the upsert reads the
-     * live {assign} row, so the re-derivation *is* the resync. The work is
-     * dispatched as adhoc chunks: a settings save must not run the
-     * academic-time engine for a whole cohort inside the teacher's request.
+     * The ledger keeps no settings snapshot to compare against, so every row
+     * of the activity is re-derived from the live {assign} row, in adhoc
+     * chunks so a settings save does not run the academic-time engine for a
+     * whole cohort inside the teacher's request.
      *
      * @param \core\event\base $event
      * @return void
@@ -390,10 +377,9 @@ class observer {
         if (is_object($other)) {
             $other = (array) $other;
         }
-        /* The module name is the cheap rejection, and it carries most of the
-         * traffic: this event also fires once per contained module when a
-         * section is hidden or shown, and once per selected module from the
-         * bulk-edit web service. */
+        /* The cheap rejection for most of the traffic: this event also fires
+         * per module when a section is shown or hidden, and per module on
+         * bulk edits. */
         if (($other['modulename'] ?? null) !== 'assign') {
             return;
         }
@@ -402,30 +388,23 @@ class observer {
         }
 
         global $DB;
-        /* Nothing measured yet — the overwhelmingly common case for a settings
-         * save — means nothing to re-derive. One indexed existence check keeps
-         * a routine save off every path below. */
+        /* Nothing measured yet, the common case for a settings save, means
+         * nothing to re-derive. */
         if (!$DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cmid])) {
             return;
         }
 
-        /* Route on the LIVE teamsubmission flag, never on the stored
-         * teamgroupid, because the stored value cannot tell the two shapes
-         * apart: mod_assign's DEFAULT group IS groupid 0, so a team row for it
-         * is stored with teamgroupid = 0, identical to an individual row.
-         * Routing those per member sends each member back through the
-         * whole-group fan-out — quadratic in group size, on the one path that
-         * exists to be cheap.
+        /* Route on the live teamsubmission flag, never on the stored
+         * teamgroupid: mod_assign's default team is groupid 0, so a team row
+         * for it looks exactly like an individual row. Routing those per
+         * member would send each member through the whole-group fan-out,
+         * quadratic in group size.
          *
-         * It also covers team submission being switched off, where the rows
-         * still carry their old teamgroupid and a team descriptor built from it
-         * would be a guaranteed no-op (upsert_for_team_attempt() returns
-         * immediately once the activity is no longer a team one). That case is
-         * defensive rather than live: core freezes the teamsubmission field
-         * whenever the activity has any submission or grade
-         * (mod/assign/mod_form.php), and ledger rows only exist once it does,
-         * so the settings form cannot produce it — a restore or a direct write
-         * still can. */
+         * The live flag also handles team submission being switched off, when
+         * a team descriptor built from the old teamgroupid would be a no-op
+         * (upsert_for_team_attempt() returns early). The settings form cannot
+         * do that once there are submissions (mod/assign/mod_form.php freezes
+         * the field), but a restore or a direct write can. */
         $teamsubmission = (int) $DB->get_field_sql(
             "SELECT a.teamsubmission
                FROM {assign} a
@@ -436,11 +415,10 @@ class observer {
             IGNORE_MISSING
         );
 
-        /* Selecting the row id first is not cosmetic: get_records_sql() keys
-         * the result by the first column and silently keeps only the last row
-         * of any duplicate key, so a DISTINCT userid projection would drop
-         * every attempt but one for any student with a resubmission. The
-         * de-duplication is done here instead, on the real key. */
+        /* The row id comes first because get_records_sql() keys the result by
+         * the first column and keeps only the last row of a duplicate key: a
+         * userid-first projection would drop all but one attempt of a student
+         * who resubmitted. De-duplication happens below, on the real key. */
         $rows = $DB->get_records_sql(
             "SELECT l.id, l.userid, l.attemptnumber, l.teamgroupid
                FROM {block_feedback_tracker_sub} l
@@ -485,10 +463,11 @@ class observer {
      * Allocated marker changed for one student.
      *
      * Records when marking responsibility landed, which mod_assign never
-     * stores. Only the batch "Set allocated marker" operation fires this on
-     * Moodle 4.5 and 5.1 — the grading form and quick grading write the flag
-     * with no event at all — so coverage is partial by construction and the
-     * stored `allocsource` says so.
+     * stores. On Moodle 4.5 and 5.1 only the batch "Set allocated marker"
+     * operation fires this (the grading form and quick grading write the flag
+     * with no event), so coverage is partial and the stored `allocsource`
+     * says so. Moodle 5.2 fires it from every allocation path
+     * ({@see \assign::update_allocated_markers()}).
      *
      * @param \core\event\base $event
      * @return void
@@ -599,7 +578,7 @@ class observer {
     }
 
     /**
-     * Course deleted. Drops all ledger / rollup / trend / queue rows.
+     * Course deleted. Drops all ledger / rollup / trend / queue / backfill-cursor rows.
      *
      * @param \core\event\base $event
      * @return void
@@ -615,26 +594,20 @@ class observer {
     /**
      * A grade changed in the gradebook.
      *
-     * This is the only signal the plugin has that a teacher responded outside
-     * the activity. It fires for EVERY gradebook item on the site, so the
-     * order of the guards below is the design: the course gate first (memoised,
-     * so a whole-gradebook regrade in an untracked course costs one query for
-     * the entire request), then one indexed read to reject every item that is
-     * not an assign.
+     * The only signal that a teacher responded outside the activity. It fires
+     * for every gradebook item on the site, so the guard order matters: the
+     * memoised course gate first (a whole-gradebook regrade in an untracked
+     * course pays for it once), then one indexed read rejecting every item
+     * that is not an assign.
      *
-     * It also fires on the ordinary grading path — `gradebook_item_update()`
-     * performs the gradebook write, and only then is `submission_graded`
-     * triggered — so without the closed-cycle early exit every grade save
-     * would re-derive the same row twice and run the academic-time engine
-     * twice. A cycle that already has a response is exactly the case this
-     * observer has nothing to add to, which is what makes that exit both cheap
-     * and correct.
+     * It also fires on the ordinary grading path, before `submission_graded`;
+     * the early exit below keeps every grade save from re-deriving the row
+     * twice.
      *
-     * `\core\event\grade_deleted` is deliberately NOT registered: under the
-     * earliest-wins rule a deletion does not withdraw a response, so there is
-     * nothing for it to do. (It is also unreliable — it only fires when the
-     * grade object happens to have had its item loaded, which on a site with
-     * completion disabled it has not.)
+     * `\core\event\grade_deleted` is deliberately not observed: under the
+     * earliest-wins rule a deletion does not withdraw a response. It is also
+     * unreliable: {@see \grade_grade::delete()} fires it only when the grade
+     * object already had its item loaded.
      *
      * @param \core\event\base $event
      * @return void
@@ -659,11 +632,10 @@ class observer {
         }
 
         global $DB;
-        /* The event's context is the COURSE context, so contextinstanceid is a
-         * courseid here and must never be read as a cmid. The cm is reached
-         * through the grade item instead — one indexed read that also rejects
-         * every non-assign item, including an outcome item attached to an
-         * assign (itemnumber >= 1000). */
+        /* The event's context is the course context, so contextinstanceid is a
+         * courseid here, never a cmid. The cm is reached through the grade
+         * item, which also rejects every non-assign item, including an
+         * assign's outcome items (itemnumber 1000 and up). */
         $cmid = (int) $DB->get_field_sql(
             "SELECT cm.id
                FROM {grade_items} gi
@@ -690,25 +662,17 @@ class observer {
             return;
         }
 
-        /* The early exit. A cycle that already carries a response cannot be
-         * improved by this event — earliest wins — and this is the branch the
-         * ordinary grading path takes, twice per save, on every site. */
-        /* Skip when the activity owns this cycle — either it has already been
-         * answered, or {assign_grades} carries a mark that postdates the
-         * hand-in, which means mod_assign is mid-save and submission_graded is
-         * about to fire.
+        /* The early exit: skip when the activity owns this cycle, because it
+         * is already answered (earliest wins) or {assign_grades} carries a
+         * mark that postdates the hand-in. Core writes {assign_grades}, pushes
+         * to the gradebook (firing this event) and only then triggers
+         * submission_graded, so on a first grading the ledger row is still
+         * open here; testing timeclosed alone would re-derive every ordinary
+         * grade save twice.
          *
-         * The second half is what makes the exit useful. Core writes
-         * {assign_grades}, then pushes to the gradebook (firing this event),
-         * and only then triggers submission_graded — so on a FIRST grading the
-         * ledger row is still open when we arrive, and a check on timeclosed
-         * alone would let every ordinary grade save re-derive the same row
-         * twice and run the academic-time engine twice.
-         *
-         * Nothing is lost by deferring to the activity: under earliest-wins the
-         * mark it is saving right now is at or before this gradebook write, so
-         * it would win regardless. A gradebook response that is genuinely
-         * earlier belongs to a cycle the activity has not marked at all, which
+         * Deferring loses nothing: the mark being saved is at or before this
+         * gradebook write, so it wins anyway. A genuinely earlier gradebook
+         * response belongs to a cycle the activity has not marked, which
          * fails this test and proceeds. */
         $row = $DB->get_record_select(
             'block_feedback_tracker_sub',
@@ -745,22 +709,16 @@ class observer {
      * A user's enrolment in a course was removed.
      *
      * Their ledger rows describe a response owed to somebody who is no longer
-     * a participant, so they inflate the course's pending count, the grader
-     * priority list and the medians until something removes them. The
-     * reconciler's departed-participant sweep already does, but it walks
-     * exactly one course per tick on a two-hourly task, so on a site with N
-     * tracked courses the rows survive up to ~2N hours — a whole semester's
-     * worth on a large site. This is the same deletion, immediately.
+     * a participant, inflating the course's pending count, the grader
+     * priority list and the medians. The reconciler's departed-participant
+     * sweep removes them too, but only as its rotation through the tracked
+     * courses reaches this one; this is the same deletion, immediately.
+     * Ungated, like the other cleanup handlers.
      *
-     * Like the other cleanup handlers, it skips the processability gate: data
-     * previously tracked has to be collectable even after the block is gone.
-     *
-     * A user may hold several enrolments in one course. Core has already
-     * worked out whether this was the last one and ships the answer in the
-     * payload (`$ue->lastenrol`, set in `unenrol_user()` immediately before the
-     * event); re-deriving it with `get_enrolled_sql()` would materialise the
-     * whole enrolled set to answer a one-row question, once per event, and a
-     * bulk unenrolment fires one event per student.
+     * A user may hold several enrolments in one course. Core ships whether
+     * this was the last one in the payload (`lastenrol`, set by
+     * `unenrol_user()`), which avoids materialising the enrolled set with
+     * `get_enrolled_sql()` once per event of a bulk unenrolment.
      *
      * @param \core\event\base $event
      * @return void
@@ -787,8 +745,7 @@ class observer {
                 return;
             }
         } else if (self::still_enrolled($courseid, $userid)) {
-            /* No payload to trust — a non-core producer of this event. One
-             * indexed existence check, not an enrolled-set materialisation. */
+            /* No payload to trust (a non-core producer of this event). */
             return;
         }
 
@@ -822,13 +779,11 @@ class observer {
      * A user account was deleted.
      *
      * Their rows would otherwise stay in every course they ever submitted in,
-     * keeping a deleted account inside the data the privacy provider declares
-     * and exports, and inside the userlist of every one of those courses.
-     * Ungated, like the other cleanup handlers.
+     * inside the data the privacy provider declares and exports. Ungated, like
+     * the other cleanup handlers.
      *
-     * The user id comes from `objectid`: core only guarantees `relateduserid`
-     * with a `debugging()` fallback to `objectid`, so reading `objectid`
-     * directly is the one that always holds.
+     * The user id comes from `objectid`, which core always sets;
+     * `relateduserid` only falls back to it with a `debugging()` notice.
      *
      * @param \core\event\base $event
      * @return void

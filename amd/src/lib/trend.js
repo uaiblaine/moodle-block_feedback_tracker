@@ -14,10 +14,13 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * "Speed" model for the trend signal — shared by every surface so the sign,
- * arrow, colour and wording never drift apart.
+ * "Speed" model for the trend signal — shared by the Preact components
+ * (TrendRow, the responsiveness heroes, the simulator) so the sign, arrow,
+ * colour and wording never drift apart. The server no-JS card
+ * (classes/output/responsiveness_card.php) and format.js formatTrend keep
+ * their own arrow rule, without the ±2% dead band.
  *
- * The trend percentage is the change in median effective HOURS over the
+ * The trend percentage is the change in median effective hours over the
  * window (negative = fewer hours = work returned faster). For display we
  * speak in terms of speed: faster = ▲ green, slower = ▼ red, within ±2% =
  * → muted. The magnitude is always shown unsigned — direction is carried by

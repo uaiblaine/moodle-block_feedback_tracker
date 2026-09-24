@@ -39,14 +39,10 @@ namespace block_feedback_tracker\external;
  * It also asserts that every scheduled task in db/tasks.php is claimed by a
  * test under tests/task/.
  *
- * The last two turn coverage from something an audit notices into something
- * the build enforces: registering a web service without a test, or without a
- * failure-path test for its gate, fails here. The missing refusal test is
- * precisely how a cross-context write IDOR reached production once.
- *
- * Catches the common drift modes — renaming a class without updating
- * services.php, deleting a capability someone still references — at
- * the cost of one cheap PHPUnit pass per CI run.
+ * Registering a web service without a test, or without a test of its
+ * capability refusal, therefore fails the build. The checks also catch a
+ * class renamed without updating services.php and a capability deleted while
+ * still referenced.
  *
  * @coversNothing
  */
@@ -134,9 +130,9 @@ final class services_coverage_test extends \advanced_testcase {
      * Every capability-gated web service has a test that exercises the
      * refusal, not just the happy path.
      *
-     * Removing a gate must turn exactly one test red. Without this assertion
-     * a gate can be deleted in silence, which is how the save_pause_window
-     * authorisation hole shipped.
+     * The check is textual: the test file must mention
+     * required_capability_exception. Without it a gate could be deleted with
+     * every test still green.
      *
      * @return void
      */
@@ -164,10 +160,9 @@ final class services_coverage_test extends \advanced_testcase {
     /**
      * Every scheduled task declared in db/tasks.php is claimed by a test file.
      *
-     * The three service wrappers are covered collectively in
-     * scheduled_tasks_test rather than one file each, so the check is that
-     * some test in tests/task/ names the class — not that a file exists per
-     * task.
+     * Several tasks share one file (scheduled_tasks_test covers the service
+     * wrappers and two retention tasks), so the check is that some test in
+     * tests/task/ names the class, not that a file exists per task.
      *
      * @return void
      */
@@ -227,11 +222,9 @@ final class services_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Heuristic for whether a capability lives outside the plugin's
-     * own access.php (a core capability or one from another plugin).
-     * The plugin only references its own capabilities today, but the
-     * check is here so this test doesn't fail when a future WS
-     * legitimately requires a core capability.
+     * Whether a capability lies outside the plugin's own namespace (core or
+     * another plugin), so a web service may list it without this test
+     * failing. Such capabilities are not checked for existence.
      *
      * @param string $cap
      * @return bool

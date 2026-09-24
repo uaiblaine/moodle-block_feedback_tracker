@@ -14,18 +14,21 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Full-page React view for pages/pending_report.php — MVP3 redesign that
- * inherits the dashboard's hero + collapse pattern and the block's vocabulary.
+ * Full-page React view for pages/pending_report.php, reusing the dashboard's
+ * hero + collapse pattern and the block's vocabulary.
  *
  * Composition (top → bottom):
  *   1. Breadcrumb (back to course + current crumb)
  *   2. Title row (course name H1 + overall status pill)
- *   3. Collapsible container: ResponsivenessModule hero + AcademicDaysStrip
+ *   3. ResponsivenessModule hero, scheduled-pause notice and AcademicDaysStrip
+ *      (the hero and the strip collapse together)
  *   4. StatusDistributionBar — pending bands (Waiting/Attention/Priority) with a
- *      "Já avaliados" toggle into the graded view (Excellent/Good/Up Next/Priority)
+ *      toggle into the graded view (On goal/Good/Regular result bands)
  *   5. Toolbar — class select, real (server-side) search, refresh
- *   6. Table — Student / Activity / Class / Submitted / Effective / Perceived |
- *      Graded / Status|Result / Action (grade + pause-timeline)
+ *   6. Table — Student / Activity / Class / Submitted / [Graded] / Effective /
+ *      [Perceived] / Status or Result / Action (grade or review link); Graded
+ *      shows in graded mode only, Perceived in pending mode only
+ *   7. Drafts table (pending mode only)
  *
  * Everything is server-driven: the group filter, distribution filter, search,
  * column sort, paging, and the distribution counts all re-fetch the WS so they
@@ -56,7 +59,7 @@ import Notification from 'core/notification';
 /** Moodle user-preference name persisting the hero+heatmap collapse state. */
 const PREF_REPORT_COLLAPSED = 'block_feedback_tracker_report_collapsed';
 
-/** Business hours above which effective/perceived differ enough to tag a row. */
+/** Hours by which the wall-clock wait must exceed effective hours to tag a row as paused. */
 const PAUSED_TAG_EPSILON = 0.5;
 
 /**
@@ -114,8 +117,7 @@ const gradedBadge = (slabucket, i18n) => {
 /**
  * Compute the hero scope for the active class filter. Single group → that
  * group's metrics; "all" → pending-weighted score, mean of the include-pending
- * medians, summed counts. Mirrors the server's old build_pending_report_scope
- * and the dashboard's aggregate().
+ * medians, summed counts. Same aggregation as DashboardView's aggregate().
  *
  * @param {Array<object>} scopes  Trimmed per-group metrics from the payload.
  * @param {number} gid            Active group id, 0 = whole course.
@@ -287,20 +289,6 @@ const PausedTag = ({submissionid, tip, label, openid, onToggle}) => html`
 `;
 
 /**
- * Awaiting-release chip. A mark exists but the marking workflow has not
- * released it, so the student still sees nothing. Releasing needs a permission
- * the marker often does not hold, so the chip states the outstanding step
- * rather than letting the row read as finished.
- *
- * @param {object} props
- * @param {number} props.submissionid  Row id; drives the open-popover state.
- * @param {string} props.tip           Localised explanation.
- * @param {string} props.label         Localised chip label.
- * @param {number|null} props.openid   Currently open submissionid, or null.
- * @param {Function} props.onToggle    Sets the open submissionid (or null).
- * @returns {object} vnode
- */
-/**
  * Marker-turnaround chip. Shown only when the submission carries both
  * allocation stamps, i.e. when the split is a fact for this row rather than an
  * estimate. Reads "queue → turnaround" so a long wait for someone to be made
@@ -335,6 +323,10 @@ const AllocSplitTag = ({queuehours, allochours, tip}) => {
  * one row can raise more than one of these and a key of the row alone would let
  * them fight over the single open slot.
  *
+ * Releasing a workflow mark needs mod/assign:releasegrades, which core grants
+ * only to editing teachers and managers, so the release tag names that step for
+ * a marker who often cannot take it, instead of letting the row read as finished.
+ *
  * @param {object} props
  * @param {string} props.tagkey   Unique per row AND variant.
  * @param {string} props.variant  Modifier for the CSS class.
@@ -347,11 +339,10 @@ const AllocSplitTag = ({queuehours, allochours, tip}) => {
 const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => {
     const popid = 'bft-tip-' + String(tagkey).replace(':', '-');
     const open = openid === tagkey;
-    /* No aria-label here. The button already has visible text, so an
-       aria-label would REPLACE that two-word name with the whole explanation
-       and demote title to the description — screen readers then read the same
-       paragraph twice on one focus, for every tag on every row. The button is
-       named by its text; aria-controls ties it to the popup it opens. */
+    /* No aria-label: the button is named by its visible text. An aria-label
+       holding the explanation would replace that short name, and with title
+       also set screen readers would read the explanation twice on focus.
+       aria-controls ties the button to the popup it opens. */
     return html`
         <span class="bft-row-release-wrap">
             <button type="button"
@@ -377,8 +368,7 @@ const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => {
  * @param {object} props.initial  Mount-point payload.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function PendingReportView({initial}) {
     const i18n = initial.i18n || {};
@@ -420,8 +410,8 @@ export default function PendingReportView({initial}) {
 
     // Hero scopes + class-filter list, from the lightweight rollup-only
     // get_report_scopes WS (the full responsiveness payload is never built
-    // for this page). Hero renders "—" and the class filter stays hidden
-    // until this lands.
+    // for this page). The hero and the class filter stay hidden until this
+    // lands.
     const [groupScopes, setGroupScopes] = useState([]);
     const availableGroups = groupScopes.map((g) => ({
         id: Number(g.groupid) || 0,
@@ -452,8 +442,8 @@ export default function PendingReportView({initial}) {
     // touch devices and discoverability.
     const [pausedinfo, setPausedinfo] = useState(null);
 
-    // Which row's awaiting-release explanation is pinned open (submissionid,
-    // or null). Kept separate from pausedinfo so a row can show both.
+    // Which RowDisclosureTag explanation is pinned open (its tagkey, e.g.
+    // '42:release', or null). Kept separate from pausedinfo so a row can show both.
     const [releaseinfo, setReleaseinfo] = useState(null);
 
     // Academic-days heatmap (async).

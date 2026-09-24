@@ -27,17 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\event;
 
 /**
- * Fired once, server-side, when a teacher opens one of the data-bearing report
- * surfaces: the cross-course dashboard, the pending report, or the group
- * drill-down. The viewed surface is in `other['report']`
- * ('dashboard' | 'pending' | 'drilldown').
+ * Fired once, server-side, when a teacher opens a report page. `other['report']`
+ * names it: 'dashboard' (cross-course dashboard), 'pending' (pending report) or
+ * 'drilldown' (group drill-down); the last two also carry `other['groupid']`.
  *
- * This is a read-only access event with no observer of its own — Moodle's
- * standard logstore subscribes to every event, so triggering it is all that is
- * needed for the access to land in the site logs. It is deliberately fired at
- * page render (not in the backing web services, which re-run on every
- * refresh / filter / sort / page) so the log grows linearly with genuine
- * navigations rather than with in-page interactions.
+ * Fire it at page render, never from the web services behind these pages: they
+ * re-run on every refresh, filter, sort and page change, so logging there would
+ * record interactions instead of visits. No observer is needed; the standard
+ * logstore records every event.
  */
 class report_viewed extends \core\event\base {
     /**

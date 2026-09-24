@@ -16,12 +16,10 @@
 /**
  * Progressive reveal for the bulk block-removal list.
  *
- * Every candidate is already in the DOM; this only uncollapses the next batch.
- * Fetching more rows per click would lose the ticks an administrator has
- * already made, which on a destructive tool is the difference between a
- * considered selection and a re-done one. The counter is the point of the
- * exercise — "showing 25 of 340" is what stops a truncated list reading as a
- * complete one.
+ * Every loaded candidate (up to course_finder::MAX_RESULTS) is already in the
+ * DOM; this only uncollapses the next batch, so the ticks already made on a
+ * destructive tool survive paging. The "showing N of M" counter keeps a
+ * partly revealed list from reading as the complete one.
  *
  * @module     block_feedback_tracker/bulk_remove
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -68,9 +66,8 @@ const wire = (root) => {
     /**
      * Keep the submit gated on the typed number matching the ticks.
      *
-     * The same check runs server-side; this only spares the round trip. A
-     * count has to be read to be typed, which a fixed confirmation word does
-     * not, and it goes stale the moment the selection changes.
+     * The same check runs server-side in pages/bulk_remove.php, which also
+     * explains why a count is asked for; this only spares the round trip.
      *
      * @returns {void}
      */

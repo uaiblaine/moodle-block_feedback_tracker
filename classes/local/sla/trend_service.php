@@ -30,8 +30,9 @@ use block_feedback_tracker\local\calendar\calendar;
 
 /**
  * Per-(course, group, day) row writer for {block_feedback_tracker_trend},
- * which powers the 30-day sparkline. Called by the daily `recompute_trend`
- * task to materialise yesterday's row.
+ * which feeds the sparkline and the other daily series. Called by the daily
+ * `recompute_trend` task to materialise yesterday's rows, and by
+ * cli/backfill_trends.php.
  */
 class trend_service {
     /**

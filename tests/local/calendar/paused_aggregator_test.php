@@ -27,8 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\calendar;
 
 /**
- * Verifies the weekend / holiday / recess bucket counts the design's
- * Paused Periods callout displays.
+ * Verifies the weekend / holiday / recess bucket counts shown by the paused
+ * periods callout (PausedCallout.js).
  *
  * @covers \block_feedback_tracker\local\calendar\paused_aggregator
  */
@@ -128,7 +128,7 @@ final class paused_aggregator_test extends \advanced_testcase {
         $end = (new \DateTimeImmutable('2026-06-01', new \DateTimeZone('UTC')))->getTimestamp();
         $result = paused_aggregator::for_window(0, $start, $end);
 
-        // Sub-day event must NOT inflate the recess bucket.
+        // A sub-day event must not inflate the recess bucket.
         $this->assertSame(0, $result['recess']);
         $this->assertCount(1, $result['events']);
         $event = $result['events'][0];
@@ -250,8 +250,8 @@ final class paused_aggregator_test extends \advanced_testcase {
         $this->assertTrue($perday[20260525]['paused']);
         $this->assertSame('holiday', $perday[20260525]['reason']);
 
-        // Counts derived from the per-day map equal for_window()'s own counts —
-        // the two share one classification pass, so they can never diverge.
+        // Counts derived from the per-day map equal for_window()'s own counts;
+        // both come from classify_window().
         $weekend = 0;
         $holiday = 0;
         $recess = 0;

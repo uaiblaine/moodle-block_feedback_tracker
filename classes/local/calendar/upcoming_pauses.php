@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Upcoming scheduled-pause lookup for the "Pausa prevista" notice.
+ * Upcoming scheduled-pause lookup for the "Upcoming pause" notice.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -39,11 +39,9 @@ namespace block_feedback_tracker\local\calendar;
  *  - manual pause windows in {block_feedback_tracker_cpause}, scoped to the
  *    (courseid, groupid) tuple via {@see pause_lookup}.
  *
- * Visibility window — a pause is advertised from {@see self::LEAD_DAYS} days
- * before it starts until the day after it ends ("appears 3 days before, is
- * removed the day after"). The horizon is intentionally day-granular: the
- * lead counts whole calendar days, and an entry disappears once the calendar
- * day after its last day begins.
+ * Visibility window, in whole calendar days: a pause is advertised from
+ * {@see self::LEAD_DAYS} days before the day it starts, and disappears once
+ * the calendar day after its last day begins.
  */
 class upcoming_pauses {
     /** Calendar days before a pause that the notice starts to show. */
@@ -89,7 +87,7 @@ class upcoming_pauses {
     /**
      * Like {@see self::for_course_group()} but decorated with the localised
      * display strings every surface renders: `when` (date / time window) and
-     * `typelabel` (the "Tipo:" value). Formatting is centralised here — in
+     * `typelabel` (the value after "Type:"). Formatting is centralised here — in
      * the platform calendar timezone — so the block (WS + no-JS card),
      * dashboard and report all show identical text.
      *
@@ -116,8 +114,8 @@ class upcoming_pauses {
 
     /**
      * Localised "when" line for an entry: a timed window for sub-day events
-     * ("29/06/2026 das 16h às 17h"), a single date for one full day, a date
-     * range for a multi-day span, or an open-ended start.
+     * ("06/29/2026, 16:00–17:00" in English), a single date for one full day,
+     * a date range for a multi-day span, or an open-ended start.
      *
      * @param array $entry One raw entry from for_course_group().
      * @param \DateTimeZone $tz Platform timezone.
@@ -182,9 +180,9 @@ class upcoming_pauses {
     }
 
     /**
-     * Localised label for a pause type/reason slug (literal map for the
-     * string-checker). Day-types reuse calendar::daytype_label(); manual-pause
-     * scopes reuse the pause_reason_* family.
+     * Localised label for a pause type/reason slug. Day-types reuse
+     * calendar::daytype_label(); manual-pause scopes reuse the pause_reason_*
+     * family.
      *
      * @param string $type Type / reason slug.
      * @return string
@@ -244,8 +242,9 @@ class upcoming_pauses {
 
     /**
      * Day-type candidates from {block_feedback_tracker_cday}. Sub-day optional
-     * rows become timed events; every other inactive day-type becomes a
-     * full-day span (consecutive same-type/same-note days collapsed).
+     * rows become timed events; every other holiday / recess / closed /
+     * optional row becomes a full-day span (consecutive same-type/same-note
+     * days collapsed). The exclude* settings are not consulted.
      *
      * @param \DateTimeZone $tz Platform timezone.
      * @param int $now Reference timestamp.
@@ -369,7 +368,8 @@ class upcoming_pauses {
 
     /**
      * Translate a cpause scopelevel to a stable reason slug. Mirrors
-     * rollup_service::cpause_reason() — both must agree on these slugs.
+     * {@see \block_feedback_tracker\local\sla\rollup_service::cpause_reason()} and
+     * {@see academic_time::pause_reason_for_scope()}; keep the three in step.
      *
      * @param string $scopelevel One of site / course / group.
      * @return string

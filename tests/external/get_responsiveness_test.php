@@ -90,8 +90,8 @@ final class get_responsiveness_test extends \advanced_testcase {
 
         $this->assertTrue($result['success']);
         $this->assertSame((int) $course->id, $result['courseid']);
-        // Single-call (no limit) keeps the legacy contract alongside the new
-        // pagination metadata: every group at once, nothing more to fetch.
+        // Without a limit the call returns every group at once and reports no
+        // further page.
         $this->assertSame(1, $result['total']);
         $this->assertSame(0, $result['offset']);
         $this->assertSame(0, $result['limit']);
@@ -119,15 +119,14 @@ final class get_responsiveness_test extends \advanced_testcase {
          */
         $this->assertSame('excellent', $card['score_band']);
 
-        // Phase 3C — payload includes the new perceived / paused / peer
-        // keys with sensible defaults. perceived_median_hours mirrors
-        // median_raw_h (= waitinghours 24.0 here, the only ledger row).
+        // The payload carries the perceived / paused / peer keys with their
+        // defaults. perceived_median_hours mirrors median_raw_h (waitinghours
+        // 24.0 of the only ledger row).
         $this->assertArrayHasKey('perceived_median_hours', $card);
         $this->assertEqualsWithDelta(24.0, $card['perceived_median_hours'], 0.01);
-        // V1.0.21 — include-pending "current" medians power the block's
-        // Effective / Perceived tiles. With no pending work here they equal the
-        // graded medians; the include-pending case is covered in
-        // rollup_service_test::test_cur_medians_include_pending.
+        // The include-pending "current" medians feed the block's Effective /
+        // Perceived tiles. With no pending work they equal the graded medians;
+        // see rollup_service_test::test_cur_medians_include_pending.
         $this->assertArrayHasKey('cur_median_eff_h', $card);
         $this->assertEqualsWithDelta(16.0, $card['cur_median_eff_h'], 0.01);
         $this->assertArrayHasKey('cur_median_raw_h', $card);
@@ -139,7 +138,7 @@ final class get_responsiveness_test extends \advanced_testcase {
         $this->assertArrayHasKey('weekend', $card['paused_breakdown_30d']);
         $this->assertArrayHasKey('holiday', $card['paused_breakdown_30d']);
         $this->assertArrayHasKey('recess', $card['paused_breakdown_30d']);
-        // V1.0.9 — sub-day optional events sidecar; empty by default.
+        // Sub-day events of 'optional' calendar days; empty by default.
         $this->assertArrayHasKey('paused_events_30d', $card);
         $this->assertIsArray($card['paused_events_30d']);
         // Single-group fixture < MIN_SAMPLE for peer_stats, so peer
@@ -223,9 +222,8 @@ final class get_responsiveness_test extends \advanced_testcase {
     }
 
     /**
-     * limit = 0 keeps the legacy contract: every visible group in one call,
-     * offset 0, hasmore false. Guards back-compat for callers (the block's
-     * pending-report page) that never pass a page size.
+     * limit = 0 returns every visible group in one call, with offset 0 and
+     * hasmore false, for callers that pass no page size.
      */
     public function test_no_limit_returns_all_groups(): void {
         $this->resetAfterTest();
@@ -254,7 +252,8 @@ final class get_responsiveness_test extends \advanced_testcase {
      * Pagination counts and pages only the groups the caller can see. A
      * SEPARATEGROUPS teacher who belongs to one group of three gets total = 1
      * and only that group, even with a page size that would otherwise span
-     * the whole course (and the admin-only groupid 0 row stays hidden).
+     * the whole course (and the groupid 0 row, which only unrestricted users
+     * see, stays hidden).
      */
     public function test_pagination_respects_visible_groups(): void {
         $this->resetAfterTest();
@@ -271,12 +270,12 @@ final class get_responsiveness_test extends \advanced_testcase {
         $this->seed_rollup($course, (int) $groupa->id);
         $this->seed_rollup($course, (int) $groupb->id);
         $this->seed_rollup($course, (int) $groupc->id);
-        // Admin-only "Ungrouped" row SEPARATEGROUPS must hide from a restricted teacher.
+        // The "Ungrouped" row, which a restricted teacher must not see.
         $this->seed_rollup($course, 0);
 
         // Custom role: viewresponsiveness without moodle/site:accessallgroups.
         // The editingteacher archetype grants the latter, which would bypass
-        // the SEPARATEGROUPS filter (see get_dashboard_test for the rationale).
+        // the SEPARATEGROUPS filter.
         $coursectx = \context_course::instance($course->id);
         $roleid = create_role(
             'Test teacher (no allgroups)',

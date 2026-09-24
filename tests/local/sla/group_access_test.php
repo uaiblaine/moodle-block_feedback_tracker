@@ -28,10 +28,9 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * This class is the plugin's single decision point for group visibility, and
- * its three-valued return is the part callers get wrong: null means
- * unrestricted, [] means nothing is visible and the caller must short-circuit,
- * and an int[] is a whitelist that never contains groupid 0.
+ * Pins group_access's three-valued return: null means unrestricted, [] means
+ * nothing is visible and the caller must short-circuit, and an int[] is a
+ * whitelist that never contains groupid 0.
  *
  * @covers \block_feedback_tracker\local\sla\group_access
  */
@@ -107,9 +106,8 @@ final class group_access_test extends \advanced_testcase {
 
     /**
      * A user in no group under separate groups sees nothing — and the return
-     * must be an empty array, never null. Conflating the two turns "sees
-     * nothing" into "sees everything", which is the failure this class exists
-     * to prevent.
+     * must be an empty array, never null, or "sees nothing" would read as
+     * "sees everything".
      *
      * @return void
      */

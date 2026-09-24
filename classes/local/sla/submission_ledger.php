@@ -31,14 +31,15 @@ use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\calendar\day_counter;
 
 /**
- * Idempotent upserts into {block_feedback_tracker_sub} keyed by
- * (cmid, userid, attemptnumber). Reads the live {assign_submission} /
- * {assign_grades} / {assign_overrides} state, invokes the academic-time
- * engine to compute effective hours, and enqueues the (courseid, groupid)
- * tuple for rollup recompute.
+ * Idempotent upserts into {block_feedback_tracker_sub}, one row per
+ * (cmid, userid, attemptnumber, cycle). Reads the live {assign_submission} /
+ * {assign_grades} / {assign_overrides} / gradebook state, invokes the
+ * academic-time engine to compute effective hours, and enqueues the
+ * (courseid, groupid) tuple for rollup recompute.
  *
- * All write paths are O(1) in DB queries beyond the engine call, suitable
- * to run inline from event observers.
+ * The per-user upsert runs a bounded number of queries beyond the engine
+ * call, so it is suitable to run inline from event observers; the team,
+ * re-resolve and delete paths scale with the members or rows they touch.
  */
 class submission_ledger {
     /**
@@ -54,19 +55,16 @@ class submission_ledger {
 
     /**
      * Allocation first seen by a reconciliation sweep, because core fired no
-     * event for it. The stamp is the moment of discovery, so the recorded
-     * turnaround is an over-estimate bounded by the sweep period — kept
-     * separable from observed stamps so a median is never built from a mix
-     * without saying so.
+     * event for it. The stamp is the moment of discovery, later than the real
+     * allocation, so the queue time is over-estimated and the marker
+     * turnaround under-estimated; kept separable from observed stamps so a
+     * median is never built from a mix without saying so.
      */
     public const ALLOC_SOURCE_RECONCILED = 'reconciled';
 
     /**
      * The allocation landed at or after the grading, so the marker's own
-     * turnaround cannot be measured. Recorded rather than silently stored as
-     * zero: a zero interval bands as `excellent`, which would read as a
-     * flawless turnaround — the worst possible failure direction for a metric
-     * attached to a person.
+     * turnaround cannot be measured ({@see self::allocation_measures()}).
      */
     public const ALLOC_SOURCE_LATE = 'late';
 
@@ -76,8 +74,9 @@ class submission_ledger {
      *
      * Reads the current submission + grade + overrides from the assign
      * tables, computes raw/effective hours, classifies the bucket, and
-     * enqueues the (course, group) tuple. Returns the ledger row id or null if
-     * the inputs are not resolvable (cm missing, not an assign, etc.).
+     * enqueues the (course, group) tuple. Returns the ledger row id, or null if
+     * the inputs are not resolvable (cm missing, not an assign, no submission
+     * row) or the submitter is excluded.
      *
      * A *cycle* is one measurement of teacher response. Work resubmitted after
      * it already carried a mark opens a new cycle rather than rewriting the
@@ -100,12 +99,11 @@ class submission_ledger {
     ): ?int {
         global $DB;
 
-        /* userid 0 is not a user: it is the container row mod_assign writes
-         * for a team submission (one row per group, userid 0, groupid G).
-         * Mirroring it verbatim produced a ledger row the rollup counted (it
-         * does not join {user}) but every list hid (they all do), i.e. a
-         * pending item nobody could clear. has_capability() cannot catch it
-         * either — it evaluates userid 0 as a real, capability-less user. */
+        /* userid 0 is not a user: it is mod_assign's team-submission container
+         * row (one per group, userid 0, groupid G). Stored, it would be a
+         * pending item the rollup counts (it does not join {user}) but every
+         * list hides. should_skip_submitter() cannot catch it: has_capability()
+         * treats userid 0 as a real, capability-less user. */
         if ($userid <= 0) {
             return null;
         }
@@ -326,12 +324,10 @@ class submission_ledger {
             $prevsubmitted = (int) $existing->timesubmitted;
             $prevmarked = $existing->timemarked !== null ? (int) $existing->timemarked : 0;
             /* A gradebook closure never touched {assign_grades}, so it leaves
-             * timemarked null. Without this the test below could never pass for
-             * such a cycle, and a student who resubmitted after being graded in
-             * the gradebook would have that work silently absorbed into the
-             * closed cycle — never measured, never pending, and invisible to
-             * every sweep, because each of them keys on something this row
-             * still satisfies. */
+             * timemarked null; use its timeclosed instead. Otherwise work
+             * resubmitted after a gradebook grade would be absorbed into the
+             * closed cycle and never measured, and no reconciler sweep would
+             * notice. */
             if (
                 $prevmarked === 0
                 && (string) ($existing->closedsource ?? '') === gradebook_response::SOURCE_GRADEBOOK
@@ -340,14 +336,12 @@ class submission_ledger {
             }
 
             if ($prevmarked > 0 && $prevmarked >= $prevsubmitted && $livesubmitted > $prevmarked) {
-                /* The student moved the work after this cycle was marked. Core
-                 * keeps reporting "Graded" on every per-user surface while its
-                 * needs-grading counter re-flags the row and the grading table
-                 * labels it "Graded - resubmitted". Open a NEW cycle instead of
-                 * rewriting the closed one: the completed turnaround stays in
-                 * the history and the re-look gets its own clock. Keyed on
-                 * timemarked, not timegraded, so a marking-workflow row that
-                 * was marked but never released is detected too. */
+                /* The student changed the work after this cycle was marked (core's
+                 * grading table shows "Graded - resubmitted" and re-flags it as
+                 * needing grading): open a new cycle rather than rewrite the
+                 * closed one. Keyed on timemarked, not timegraded, so a
+                 * marking-workflow row marked but never released is detected
+                 * too. */
                 $cycle++;
                 $existing = null;
                 $newcycle = true;
@@ -391,13 +385,8 @@ class submission_ledger {
             }
         }
 
-        /* Which event stops the clock. Off (the default) keeps the historical
-         * behaviour — the mark stops it — so no displayed number moves on
-         * upgrade. On, the clock stops when the feedback actually reaches the
-         * student, which on a marking-workflow activity is the release. Either
-         * way timereleased and gradestate are recorded, so the UI can flag a
-         * marked-but-unreleased submission to the teacher who entered the mark
-         * (frequently not the one who may release it). */
+        /* Which event stops the clock: the mark (default) or, with
+         * release_stops_clock on, the release. See release_stops_the_clock(). */
         $requirerelease = self::release_stops_the_clock();
         $isclosed = $requirerelease ? $state['isclosed'] : $state['markbelongs'];
 
@@ -414,10 +403,10 @@ class submission_ledger {
             }
         }
 
-        /* timeclosed records when the response reached the STUDENT, whatever
-         * the score clock is set to, so switching the setting later needs no
-         * re-derivation. It is deliberately NOT a coalesce: on a
-         * marking-workflow activity a mark that was never released has not
+        /* timeclosed records when the response reached the student, whatever
+         * the clock setting, so switching the setting later needs no
+         * re-derivation. Gated on isclosed rather than falling back to the
+         * mark: on a marking-workflow activity an unreleased mark has not
          * reached anybody. */
         $timeclosed = null;
         $closedsource = null;
@@ -425,13 +414,10 @@ class submission_ledger {
             $timeclosed = !empty($assign->markingworkflow)
                 ? ($timereleased ?? $state['timemarked'])
                 : $state['timemarked'];
-            /* Sticky, exactly as timegraded is a few lines above. Without this
-             * the two clocks drift apart on the same row: assign::update_grade()
-             * restamps assign_grades.timemodified on every save, including a
-             * feedback-only edit days later, so timemarked moves and timeclosed
-             * followed it while timegraded correctly stayed put. It stays
-             * INSIDE the isclosed branch so an un-grading in the activity still
-             * clears it — withdrawal there is deliberate. */
+            /* Sticky, like timegraded above: assign::update_grade() restamps
+             * assign_grades.timemodified on every save, including a
+             * feedback-only edit days later, so timemarked moves. Inside the
+             * isclosed branch so un-grading in the activity still clears it. */
             if (
                 $storedstudentclosed !== null
                 && $storedstudentclosed > $timesubmitted
@@ -445,52 +431,37 @@ class submission_ledger {
         }
 
         /* The gradebook is the other surface the student reads, and mod_assign
-         * never learns what is typed into it. It may only ever CLOSE a cycle:
-         * a grade deleted there does not withdraw a response that had already
-         * reached the student, and the activity keeps sole authority over
-         * re-opening (clearing a mark there means "not answered yet", which is
-         * the cycle model's own rule).
+         * never learns what is typed into it. It may only close a cycle: a
+         * grade deleted there does not withdraw a response that already reached
+         * the student, and re-opening stays with the activity (clearing a mark
+         * there means "not answered yet").
          *
          * Earliest wins, so a response is dated when it landed rather than
-         * when the plugin noticed it — and, being monotone, the writer can
-         * never disagree with a reconciler sweep over the same facts.
+         * when the plugin noticed it, and the writer cannot disagree with a
+         * reconciler sweep over the same facts. It closes timegraded as well as
+         * timeclosed, because every pending predicate keys on timegraded.
          *
-         * It closes the OPERATIONAL clock as well as the disclosure one. Every
-         * pending predicate in the plugin keys on timegraded — the rollup, the
-         * priority list, the browser, the re-ager — so leaving timegraded to
-         * the activity alone would have left a gradebook-graded submission
-         * sitting in the pending count for ever, which is the whole failure
-         * this model exists to end.
-         *
-         * What it must NOT touch is the marker's own turnaround. queuehours
-         * and allochours measure the allocated marker's interval, and a grade
-         * typed into the gradebook is frequently a coordinator's act; closing
-         * that interval on it would measure the wrong person on a figure that
-         * carries their name. So allocation_measures() is given the
-         * activity-derived instant, and only that one. */
+         * It must not close the marker's own turnaround: a grade typed into the
+         * gradebook is often a coordinator's act, so allocation_measures() gets
+         * the activity-derived instant ($assigngraded) only. */
         $gradebook = gradebook_response::for_assign_user((int) $assign->id, $userid);
         $assigngraded = $timegraded;
 
-        /* Once the gradebook has answered a cycle, that answer is restored from
-         * the stored row rather than re-derived, and BOTH clocks are restored.
-         * {grade_grades} holds no history: hiding or clearing the grade makes
-         * the live read go quiet, so a re-derivation driven by anything else —
-         * a student save, a settings change, a rule sweep — would silently take
-         * the response back. Restoring only timeclosed, as an earlier draft
-         * did, left the row closed and pending at the same time.
+        /* Once the gradebook has answered a cycle, both clocks are restored from
+         * the stored row rather than re-derived: {grade_grades} holds no
+         * history, so after the grade is hidden or cleared a re-derivation
+         * triggered by anything else (a student save, a settings change, a rule
+         * sweep) would silently take the response back. Restoring timeclosed
+         * alone would leave the row closed and pending at once.
          *
-         * The restore is deliberately limited to gradebook-sourced closures.
-         * An activity-sourced one must still be withdrawable, because clearing
-         * a mark in the activity is the marker saying "not answered yet" —
-         * long-standing behaviour with its own test. */
+         * Limited to gradebook-sourced closures: an activity-sourced one stays
+         * withdrawable, because clearing a mark in the activity means "not
+         * answered yet". */
         if ($storedsource === gradebook_response::SOURCE_GRADEBOOK) {
-            /* The restore carries the same postdates-the-hand-in requirement as
-             * the live read below. A cycle's hand-in can move forward under a
-             * stored closure without a new cycle opening — a draft graded in
-             * the gradebook and only then submitted — and reinstating the older
-             * instant would close the cycle before the work existed, which is
-             * the zero-hour "excellent" the live gate exists to prevent,
-             * reached through the other door. */
+            /* Same postdates-the-hand-in requirement as the live read below: the
+             * hand-in can move forward under a stored closure without opening a
+             * new cycle (a draft graded in the gradebook, then submitted), and
+             * the older instant would close the cycle before the work existed. */
             if (
                 $storedstudentclosed !== null
                 && $storedstudentclosed > $timesubmitted
@@ -508,15 +479,12 @@ class submission_ledger {
             }
         }
 
-        /* The response has to postdate the work it answers. The activity side
-         * has always required this (grading_state::resolve's
-         * `$gradetime > $timesubmitted`); the gradebook needs it just as much,
-         * because {grade_grades} carries ONE grade per user per item with no
-         * attempt or cycle dimension. A resubmission opens a new cycle whose
-         * hand-in postdates an override made against the previous one, and
-         * without the gate that stale instant would close the new cycle before
-         * it began — a zero-hour interval, which bands as the best possible
-         * result. */
+        /* The response has to postdate the work it answers, as
+         * grading_state::resolve() requires on the activity side.
+         * {grade_grades} carries one grade per user per item, with no attempt
+         * or cycle, so an override made against the previous cycle would
+         * otherwise close a resubmission's new cycle before it began: a
+         * zero-hour interval, which bands as the best possible result. */
         $respondedat = $gradebook['respondedat'] !== null ? (int) $gradebook['respondedat'] : null;
         if ($respondedat !== null && $respondedat > $timesubmitted) {
             if ($timeclosed === null || $respondedat < $timeclosed) {
@@ -538,13 +506,10 @@ class submission_ledger {
             ? academic_time::elapsed_effective_hours((int) $cm->course, $groupid, $timesubmitted, $upperbound)
             : 0.0;
 
-        /* The response interval, split by who owns each part. A submission
-         * that sat ten days waiting to be allocated and was then marked in two
-         * hours must not read as a ten-day marker turnaround: that is the
-         * coordinator's queue, not the marker's work. The student-experience
-         * clock above is unchanged — it is still the institution's SLA. */
-        /* $assigngraded, not $timegraded: the marker interval closes on a mark
-         * entered inside the activity and on nothing else. */
+        /* The response interval split by owner (see allocation_measures()); the
+         * student-experience clock above is unchanged. $assigngraded, not
+         * $timegraded: the marker interval closes only on a mark entered
+         * inside the activity. */
         $alloc = self::allocation_measures(
             $existing,
             (int) $cm->course,
@@ -596,19 +561,14 @@ class submission_ledger {
 
         if ($existing !== null) {
             if (!$alloc['known']) {
-                /* This snapshot saw no allocation, so it has nothing to say
-                 * about the four measures — and saying nothing is not the same
-                 * as saying null. stamp_allocation_for_user() writes
-                 * timeallocated and queuehours together, and timeallocated is
-                 * not part of this record; so a re-derivation whose snapshot
-                 * predates that stamp would leave the instant standing while
-                 * erasing the measure taken from it. The row then reads as
-                 * allocated with no queue time, and the sweep that would repair
-                 * it selects on `timeallocated IS NULL` and cannot see it.
-                 *
-                 * Omitting the keys leaves the stored values alone. On the
-                 * insert path below they are written as-is, which is right: a
-                 * brand-new row has nothing to preserve. */
+                /* This snapshot saw no allocation, so leave the four measures
+                 * as stored rather than writing nulls. stamp_allocation_for_user()
+                 * writes timeallocated and queuehours together, and
+                 * timeallocated is not part of this record: a snapshot taken
+                 * before that stamp would keep the instant but erase its queue
+                 * time, and the repair sweep (which selects on
+                 * `timeallocated IS NULL`) could not see the row. A new row has
+                 * nothing to preserve, so the insert path writes them as-is. */
                 unset(
                     $record->queuehours,
                     $record->allochours,
@@ -623,18 +583,9 @@ class submission_ledger {
             $record->timecreated = $now;
             $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle, $retrying);
             if ($subid === null) {
-                /* A concurrent writer inserted this exact cycle between the read
-                 * at the top of this method and the insert above, so $record was
-                 * derived as if no row existed — the whole sticky-restore block
-                 * (earliest-wins timegraded, the gradebook closedsource/timeclosed
-                 * reinstatement) never ran. Writing it would silently discard the
-                 * other writer's recorded response.
-                 *
-                 * Re-enter instead of merging here, so the earliest-wins rule
-                 * stays in exactly one place: the second pass reads their row as
-                 * $existing and takes the ordinary update path. Bounded to one
-                 * retry — if the row vanishes again, insert_cycle_row's own
-                 * last-resort recovery adopts whatever is there. */
+                /* A concurrent writer inserted this cycle after the read at the
+                 * top of this method: re-derive against its row, bounded to one
+                 * retry. See insert_cycle_row(). */
                 return self::build_and_store(
                     $cm,
                     $assign,
@@ -650,10 +601,6 @@ class submission_ledger {
                 );
             }
         }
-
-        // V2.0.0+: the per-submission pause ledger was removed. The
-        // pause timeline is recomputed on demand by get_pause_timeline.
-        // $audit['pauses'] is intentionally unused here.
 
         /* islatest is an attempt-wide fact, so it is maintained set-based
          * across every cycle of the tuple — the upsert above only touches the
@@ -741,19 +688,18 @@ class submission_ledger {
      * inherits a submission on day 8 and grades it on day 9 turned it round in
      * a day, not nine.
      *
-     * A non-positive interval yields NULL, never 0.0. Zero effective hours
-     * bands as `excellent`, so a stamp that landed at or after the grading —
-     * which the reconciler produces whenever it discovers an allocation after
-     * the fact — would read as a flawless turnaround. That failure direction
-     * is unacceptable for a figure attached to a person, so the row is marked
-     * unmeasurable instead and excluded from the medians.
+     * A non-positive marker interval yields null, never 0.0: zero effective
+     * hours bands as `excellent`, so a stamp at or after the grading (which the
+     * reconciler produces when it discovers an allocation after the fact)
+     * would read as a flawless turnaround for a named person. Such a row is
+     * flagged `late` and left out of the medians.
      *
      * @param \stdClass|null $existing The current ledger row, or null when new.
      * @param int $courseid
      * @param int $groupid Reporting group, for the academic-time calendar.
      * @param int $timesubmitted This cycle's hand-in time.
      * @param int|null $timegraded The recorded response time, or null while open.
-     * @return array Keys: queuehours, allochours, allocdays, allocbucket, late.
+     * @return array Keys: queuehours, allochours, allocdays, allocbucket, late, known.
      */
     private static function allocation_measures(
         ?\stdClass $existing,
@@ -762,12 +708,10 @@ class submission_ledger {
         int $timesubmitted,
         ?int $timegraded
     ): array {
-        /* `known` says whether this snapshot could see an allocation at all,
-         * which is not the same as the measures coming out null. The late
-         * branch below returns three nulls and is a KNOWN answer: the marker
-         * interval is genuinely unmeasurable. Only the two early returns here
-         * mean "I have nothing to say", and the caller must not write silence
-         * over what another writer may have recorded since. */
+        /* `known` says whether this snapshot saw an allocation at all, which is
+         * not the same as the measures being null: the late branch below
+         * returns nulls as a known answer. Only the two early returns mean
+         * "nothing to say", and the caller then keeps the stored measures. */
         $none = [
             'queuehours' => null,
             'allochours' => null,
@@ -900,37 +844,25 @@ class submission_ledger {
     /**
      * Insert one cycle row, tolerating a concurrent writer.
      *
-     * The check-then-insert above races against a second request touching the
-     * same tuple, and the unique index turns that race into an exception that
-     * would abort the teacher's grade save. Outside a transaction it is safe to
-     * recover by re-reading; inside one it is not, because a failed INSERT has
-     * already poisoned the connection on PostgreSQL, so the exception is
-     * rethrown and the event manager downgrades it to a debugging notice.
+     * The check-then-insert in build_and_store() races against a second request
+     * touching the same tuple, and the unique index turns that race into an
+     * exception that would abort the teacher's grade save. Outside a
+     * transaction it is safe to recover by re-reading; inside one it is not,
+     * because a failed INSERT has already poisoned the connection on
+     * PostgreSQL, so the exception is rethrown (an event observer's exception
+     * becomes a debugging notice).
      *
-     * Recovery is NOT to write `$record` over the winner's row. `$record` was
-     * derived on the branch where no row existed, so none of the sticky rules
-     * ran — the earliest-wins `timegraded` restore, and the reinstatement of a
-     * gradebook-sourced `closedsource`/`timeclosed` that {grade_grades} can no
-     * longer report. Overwriting with it discards a response that had already
-     * reached the student. Instead this returns null and lets
-     * {@see self::build_and_store()} re-derive against the winner's row, so the
-     * earliest-wins rule keeps living in exactly one place.
+     * Recovery does not write `$record` over the winner's row: it was derived
+     * as if no row existed, so the sticky rules (earliest-wins `timegraded`,
+     * the reinstated gradebook `closedsource`/`timeclosed`) never ran and it
+     * would discard a response that already reached the student. Instead this
+     * returns null and {@see self::build_and_store()} re-derives against the
+     * winner's row. On that single retry ($retrying) a blind update is the
+     * last resort: adopting the row beats throwing.
      *
-     * On the bounded re-entry ($retrying) the blind update is the last resort:
-     * a row that collides twice and then cannot be read is a state no further
-     * retry improves, and adopting it beats throwing.
-     *
-     * NOT COVERED BY A TEST, deliberately. Reaching this catch needs a writer
-     * to insert between the read at the top of build_and_store() and the insert
-     * below, and both key on the same (cmid, userid, attemptnumber) tuple — so
-     * a read that misses guarantees an insert that cannot collide, and one
-     * process can never reach it. Driving it needs either a second connection
-     * interleaved inside one statement pair, or a seam here for a test subclass
-     * to override; the suite has neither, and no test in this repo uses
-     * reflection. The concurrency harness belongs with the work that raises
-     * concurrency (locking the writer), not with this fix. Until then the
-     * guarantee rests on the re-entry landing on the ordinary update path,
-     * which gradebook_response_test does cover.
+     * Not covered by a test: one process cannot reach the catch, since a read
+     * that misses guarantees an insert that cannot collide. It needs a second
+     * connection interleaved between the read and the insert.
      *
      * @param \stdClass $record Fully built ledger record.
      * @param int $cmid
@@ -1021,11 +953,10 @@ class submission_ledger {
         global $DB;
 
         $params = ['when' => $when, 'cmid' => $cmid, 'userid' => $userid];
-        /* timeclosed and closedsource go through COALESCE rather than being
-         * assigned: a cycle the gradebook already closed carries a timeclosed
-         * with no timereleased, so a plain assignment here would move a
-         * recorded response LATER — the one thing the earliest-wins rule
-         * exists to forbid. The release itself is still recorded either way. */
+        /* timeclosed and closedsource go through COALESCE: a cycle the
+         * gradebook already closed carries a timeclosed with no timereleased,
+         * and a plain assignment would move that recorded response later,
+         * breaking earliest-wins. The release itself is recorded either way. */
         $DB->execute(
             'UPDATE {block_feedback_tracker_sub}
                 SET timereleased = :when,
@@ -1075,9 +1006,7 @@ class submission_ledger {
      * `timeallocmarker` tracks the current marker, so someone who inherits a
      * long-queued submission is measured from their own start rather than from
      * a queue they did not cause. The marker id is re-read from core rather
-     * than taken from the event payload, because Moodle 5.2 and later fire one event
-     * per marker and the last one to arrive is not necessarily the one the
-     * table settles on.
+     * than taken from the event payload; see allocated_marker_id().
      *
      * @param int $cmid
      * @param int $userid
@@ -1122,13 +1051,10 @@ class submission_ledger {
                 'timemodified' => time(),
             ];
             if ($marker > 0) {
-                /* allocsource describes how the instant THIS row now carries
-                 * was obtained, so it may only move when an instant moves.
-                 * Writing it on every row of the pair meant a sweep running
-                 * with ALLOC_SOURCE_RECONCILED relabelled rows whose stamp came
-                 * from a real marker_updated event and had not changed —
-                 * quietly folding exact measurements into the discovery-time
-                 * population that allocsource exists to keep separate. */
+                /* allocsource describes how this row's instant was obtained, so
+                 * it changes only when an instant does; otherwise a sweep
+                 * running with ALLOC_SOURCE_RECONCILED would relabel stamps that
+                 * came from a real marker_updated event. */
                 $stamped = false;
                 if ($row->timeallocated === null) {
                     $update->timeallocated = $when;
@@ -1153,10 +1079,8 @@ class submission_ledger {
                     $update->allocbucket = null;
                     $stamped = true;
                 }
-                /* Either branch recorded an instant, so the label describes it.
-                 * A reassignment counts: timeallocmarker is the instant the
-                 * marker turnaround is measured from, and it was obtained the
-                 * same way this call obtained everything else. */
+                /* Either branch recorded an instant (a reassignment's
+                 * timeallocmarker included), so the label describes it. */
                 if ($stamped) {
                     $update->allocsource = $source;
                 }
@@ -1187,13 +1111,10 @@ class submission_ledger {
             return;
         }
 
-        /* Selected by real membership of the overridden group, not by the
-         * ledger's own `groupid`. That column is the REPORTING attribution —
-         * the group a student was last added to, used to bucket the dashboard
-         * — and has no reason to match the group an override targets. Keying
-         * on it re-resolved the wrong students whenever the two differ, which
-         * is the normal case on any course where reporting groups and
-         * override groups are not the same set. */
+        /* Selected by membership of the overridden group, not by the ledger's
+         * `groupid`: that column is the reporting attribution (the group a
+         * student last joined, see group_resolver) and need not match the
+         * group an override targets. */
         $rows = $DB->get_records_sql(
             "SELECT l.id, l.userid, l.courseid, l.groupid
                FROM {block_feedback_tracker_sub} l
@@ -1219,10 +1140,7 @@ class submission_ledger {
             ];
         }
 
-        /* Enqueue every reporting tuple actually touched. The old code
-         * enqueued one tuple built from the OVERRIDE group, which on a course
-         * whose reporting groups differ pointed at a rollup nothing had
-         * changed while leaving the real ones stale. */
+        // Enqueue the reporting tuples touched, not the override group.
         foreach ($tuples as [$courseid, $reportgroupid]) {
             dirty_queue::enqueue($courseid, $reportgroupid, dirty_queue::REASON_PAUSE);
         }
@@ -1319,11 +1237,9 @@ class submission_ledger {
      * Delete every ledger row matching a where clause, then re-enqueue each
      * distinct (course, group) tuple the deletion touched.
      *
-     * The read-then-delete order matters: the tuples have to be collected
-     * while the rows still exist, or the rollup keeps whatever totals it had
-     * when the rows disappeared. Shared by the three user-scoped entry points
-     * below so the predicate, the early return and the enqueue never drift
-     * apart — they were three separate copies before.
+     * The tuples are collected before the delete, while the rows still exist,
+     * or the rollup would keep its stale totals. Shared by the user-scoped
+     * delete methods below.
      *
      * @param string $where SQL predicate over {block_feedback_tracker_sub}.
      * @param array $params Named parameters for the predicate.
@@ -1390,13 +1306,9 @@ class submission_ledger {
     /**
      * Delete one user's ledger rows across every course.
      *
-     * For a deleted account. Note what this deliberately does NOT do: rows
-     * where the deleted user is the allocated marker (`allocmarkerid`) keep
-     * that id. Scrubbing it belongs to the privacy provider, which declares
-     * the column and today neither lists a marker among a context's users nor
-     * clears the field — closing that gap here would hide it in the wrong
-     * place and would silently move the allocation-coverage figure of courses
-     * the account merely marked in.
+     * For a deleted account. Rows where the deleted user is only the
+     * allocated marker (`allocmarkerid`) are kept with that id: scrubbing it
+     * belongs to the privacy provider, which does not handle markers yet.
      *
      * @param int $userid
      * @param string $reason A dirty_queue REASON_* constant.
@@ -1417,7 +1329,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger rows for one course-module (and cascade pause rows).
+     * Delete all ledger rows for one course-module and re-enqueue the tuples
+     * they belonged to.
      *
      * @param int $cmid
      * @return void
@@ -1447,7 +1360,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger + queue + rollup + trend rows for one course.
+     * Delete all ledger, rollup, trend, queue and backfill-cursor rows for one
+     * course.
      *
      * @param int $courseid
      * @return void
@@ -1499,8 +1413,8 @@ class submission_ledger {
     }
 
     /**
-     * Drop the per-request grader-filter memo. Test helper; not called by
-     * production code.
+     * Drop the per-request memos (grader filter and allocation-table probe).
+     * Called by tests and by long-running tasks such as reconcile_ledger.
      *
      * @return void
      */

@@ -14,8 +14,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * One card in the report page's hero metrics row. Used four-up at the top
- * of the pending report (Score / Effective / SLA / Trend).
+ * One card of a hero metrics row (.bft-hero-row).
  *
  * Children-driven: caller renders whatever main number / chip / spark it
  * wants; this component owns only the surrounding card chrome + eyebrow.
@@ -31,7 +30,8 @@ import {html} from 'block_feedback_tracker/lib/preact';
  * @param {object} props
  * @param {string} props.eyebrow  Uppercase label above the card body.
  * @param {string} [props.tip]    Optional tooltip text for an info dot.
- * @param {boolean} [props.wide]  When true, the card spans 1.5fr in its grid (use for the Score card).
+ * @param {boolean} [props.wide]  Adds the bft-hero-card-wide hook for the Score card; the 1.5fr width
+ *                                comes from the first column of .bft-hero-row, not from this class.
  * @param {*} props.children      Card body content.
  * @returns {object} vnode
  */

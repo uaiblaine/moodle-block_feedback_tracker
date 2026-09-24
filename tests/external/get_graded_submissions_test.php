@@ -151,10 +151,9 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * A graded row whose stored bucket is still the "pending" sentinel (e.g.
-     * graded before its effective hours were resolved, or graded entirely
-     * within a paused window) is reclassified from its frozen effective hours
-     * so the result band is never "pending". Hours mode.
+     * A graded row whose stored bucket is still the "pending" sentinel is
+     * reclassified from its stored effective hours, so the result band is
+     * never "pending". Hours mode.
      *
      * @return void
      */
@@ -176,10 +175,10 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * In business-days mode the displayed band is recomputed from the stored
-     * elapsed-day count, which is NULL on legacy / unbackfilled rows and would
-     * otherwise resolve to "pending". A graded row falls back to its frozen
-     * submit→grade business-day count instead, so it shows a real band.
+     * In business-days mode the displayed band comes from the stored
+     * elapsed-day count, which is NULL on rows never backfilled and would
+     * resolve to "pending". A graded row falls back to its submit-to-grade
+     * business-day count instead, so it shows a real band.
      *
      * @return void
      */
@@ -200,7 +199,8 @@ final class get_graded_submissions_test extends \advanced_testcase {
 
         $this->assertSame(1, (int) $result['total']);
         $this->assertNotSame('pending', $result['submissions'][0]['slabucket']);
-        // Same-day submit→grade ⇒ zero business days ⇒ excellent.
+        // One hour from submit to grade is at most one business day, inside the
+        // default Excellent threshold of two days.
         $this->assertSame('excellent', $result['submissions'][0]['slabucket']);
     }
 

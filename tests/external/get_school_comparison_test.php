@@ -74,8 +74,8 @@ final class get_school_comparison_test extends \advanced_testcase {
     }
 
     /**
-     * The window parameter is accepted and echoed back through the declared
-     * return shape.
+     * A custom window length is accepted and the result still validates
+     * against the declared return shape.
      *
      * @return void
      */
@@ -121,8 +121,8 @@ final class get_school_comparison_test extends \advanced_testcase {
     }
 
     /**
-     * Granting the capability at system context lets the same user through —
-     * the mutation check for this gate.
+     * Granting the capability at system context lets a plain user through,
+     * which shows the refusals above come from this gate.
      *
      * @return void
      */

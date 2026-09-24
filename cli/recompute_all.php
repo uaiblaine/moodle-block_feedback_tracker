@@ -17,13 +17,11 @@
 /**
  * CLI: recompute every existing (courseid, groupid) rollup in place.
  *
- * The scheduled tasks only revisit tuples with pending or freshly-graded
- * ledger activity, so a group with no submitted work is never recomputed
- * automatically — its rollup keeps whatever it was last written with. After
- * a scoring-rule change (notably empty groups moving from a charitable 100
- * to the neutral "nodata" band) this one-off pass rewrites every stored
- * rollup so the dashboard reflects the new rule without waiting for fresh
- * events.
+ * The scheduled tasks only recompute tuples marked dirty, by ledger activity
+ * or by a rule-changing setting ({@see block_feedback_tracker_invalidate_rollups()}),
+ * so after a code change to the rollup or score computation a group with no
+ * submitted work keeps whatever it was last written with. This pass rewrites
+ * every stored rollup without waiting for new events.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>

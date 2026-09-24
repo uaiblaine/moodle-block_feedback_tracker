@@ -31,20 +31,20 @@ use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\calendar\day_counter;
 
 /**
- * Pending submissions accumulate effective hours over time even without
- * being graded. Without periodic recomputation, an "excellent" pending
- * submission would still read excellent at hour 25 — the score would lie.
+ * Keeps the elapsed time of ungraded submissions current: without it a
+ * pending submission would keep the bucket it had when last written (still
+ * "excellent" at hour 25).
  *
  * Run hourly by the `recompute_pending` scheduled task. For each pending
  * ledger row whose `effectivecalver` is behind the current calver, or whose
  * `effectiveasof` is older than one hour, re-runs the academic-time engine
- * against `now` and updates effectivehours / slabucket / pause records in
- * place; then enqueues each touched (course, group) tuple for rollup
- * recompute.
+ * against `now` and updates the waiting/effective hours, effective days and
+ * slabucket in place; then enqueues each touched (course, group) tuple for
+ * rollup recompute.
  *
- * The recompute is per-row and skips the expensive cm/assign/grade reads of
- * `submission_ledger::upsert_for_cm_user_attempt()` since the source-of-truth
- * fields (timesubmitted etc.) don't change between hours.
+ * It skips the cm/assign/grade reads of
+ * `submission_ledger::upsert_for_cm_user_attempt()`: the source fields
+ * (timesubmitted etc.) do not change while a row waits.
  */
 class pending_recomputer {
     /**

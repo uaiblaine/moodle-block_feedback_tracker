@@ -31,14 +31,15 @@ use block_feedback_tracker\local\sla\dashboard_scope;
 use core_external\external_api;
 
 /**
- * The only one of the seventeen functions that never calls
- * require_capability(). It authorises through dashboard_scope instead — an
- * empty visible-course scope is the refusal — so that bespoke gate is exactly
- * what needs pinning.
+ * Tests for get_insights.
  *
- * Every test resets the scope memo: it is static and keyed by userid, and
- * PHPUnit recycles user ids between tests, so a stale entry silently answers
- * for a different user.
+ * Like get_dashboard and get_grader_priority_list, this function never calls
+ * require_capability(): it authorises through dashboard_scope, where an empty
+ * visible-course scope is the refusal. These tests pin that gate.
+ *
+ * Every test resets the scope memo: it is a PHP static keyed by userid, and
+ * user ids are reused between tests, so a stale entry would answer for a
+ * different user.
  *
  * @covers \block_feedback_tracker\external\get_insights
  */
@@ -88,10 +89,9 @@ final class get_insights_test extends \advanced_testcase {
     }
 
     /**
-     * With the setting off — the default — a site admin is deliberately
-     * scoped like any other user. An admin with no enrolments therefore sees
-     * nothing and is refused, which is the documented intent of
-     * dashboard_scope rather than an accident.
+     * With the setting off (the default) a site admin is scoped like any
+     * other user, so an admin with no enrolments sees nothing and is refused
+     * ({@see dashboard_scope::visible_course_ids()}).
      *
      * @return void
      */

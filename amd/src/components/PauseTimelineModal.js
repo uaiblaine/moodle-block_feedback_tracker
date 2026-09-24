@@ -19,13 +19,10 @@
  * effective-wait calculation.
  *
  * Public surface:
- *   - default export: PauseTimeline (Preact function component, testable
- *     in isolation; takes {submission, data, i18n} props).
+ *   - default export: PauseTimeline (Preact function component; takes
+ *     {submission, data, i18n} props, no modal needed).
  *   - named export: open({submission, i18n}) — opens the modal, fetches the
  *     timeline via get_pause_timeline, mounts the component into the body.
- *
- * The split lets unit tests render the component without instantiating a
- * Moodle modal, while production callers use open() and get the full UX.
  *
  * @module    block_feedback_tracker/components/PauseTimelineModal
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -39,9 +36,8 @@ import {formatHours, formatDate} from 'block_feedback_tracker/lib/format';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 
 /**
- * Translate a pause-reason slug to its localised label. Literal switch so
- * the string-checker can verify every key exists (mirrors the PHP-side
- * band_label() pattern from CLAUDE.md).
+ * Translate a pause-reason slug to its localised label. A literal switch,
+ * not a computed key, so every i18n key used is greppable.
  *
  * @param {string} reason
  * @param {object} i18n
@@ -71,14 +67,13 @@ const reasonLabel = (reason, i18n) => {
 const formatRange = (start, end) => formatDate(start) + ' → ' + formatDate(end);
 
 /**
- * Pure component: renders the submission summary + pause timeline. No
- * side effects — testable in any DOM-bearing JS runtime.
+ * Renders the submission summary + pause timeline. No side effects.
  *
  * @param {object} props
  * @param {object} props.submission  Row data (studentname, activityname,
  *                                    timesubmitted, slabucket, ...).
  * @param {object} props.data        get_pause_timeline WS payload
- *                                    (effectivehours, pauses[]).
+ *                                    (effectivehours, waitinghours, pauses[]).
  * @param {object} props.i18n        Localised labels.
  * @returns {object} vnode
  */
@@ -124,15 +119,13 @@ export default function PauseTimeline({submission, data, i18n}) {
 }
 
 /**
- * Open the modal for one submission row. Creates a Moodle `core/modal`
- * (the modern non-deprecated API; `core/modal_factory` was deprecated in
- * 4.3 — see https://moodledev.io/docs/5.2/guides/javascript/modal), shows
- * a loading placeholder, fetches the timeline, then mounts the Preact
- * tree into the modal body.
+ * Open the modal for one submission row. Creates a `core/modal`
+ * (`core/modal_factory` is deprecated since Moodle 4.3), shows a loading
+ * placeholder, fetches the timeline, then mounts the Preact tree into the
+ * modal body.
  *
- * `removeOnClose: true` lets Moodle tear down the modal DOM when the user
- * dismisses it — the Preact tree inside is garbage-collected with it, so
- * no explicit unmount is needed.
+ * `removeOnClose: true` removes the modal DOM on dismiss; the Preact tree
+ * inside holds no effects, so it needs no explicit unmount.
  *
  * @param {object} options
  * @param {object} options.submission  Row data from get_pending_submissions

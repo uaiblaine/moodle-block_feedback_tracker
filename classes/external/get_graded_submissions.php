@@ -35,11 +35,11 @@ use core_external\external_value;
 
 /**
  * Lists graded submissions (submitted work that now carries a timegraded) for
- * one course — the report page's "Já avaliados" view. Each row shows the SLA
- * result band (slabucket) recorded at grading time; the response carries the
- * result-band distribution counts for the whole filtered set. Shares the
- * query, visibility scoping, search, and sort with the pending list via
- * {@see submission_browser}.
+ * one course: the report page's "Graded" view. Each row carries its SLA result
+ * band and the response carries the result-band distribution for the whole
+ * filtered set. Graded results use three bands: critical folds into regular,
+ * so `counts['critical']` is always 0. Shares the query, visibility scoping,
+ * search, sort and banding with the pending list via {@see submission_browser}.
  */
 class get_graded_submissions extends external_api {
     /** Default page size. */

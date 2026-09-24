@@ -17,10 +17,11 @@
 /**
  * Event observer registrations.
  *
- * Wires assign / group / course events to the SLA observer, and the three
- * plugin custom events to the calendar observer. Observers are lightweight:
- * they upsert one ledger row plus enqueue one dirty-queue entry; the rollup
- * recompute happens out-of-band.
+ * Assign, gradebook, course, enrolment, user and group events go to the SLA
+ * observer, and the plugin's three calendar events to the calendar observer.
+ * The SLA observer keeps the ledger in step, dispatching bulk re-derivations
+ * as adhoc tasks; rollups are recomputed out of band. Why each event matters
+ * is documented on its handler in {@see \block_feedback_tracker\local\sla\observer}.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -47,12 +48,11 @@ $observers = [
         'eventname' => '\assignsubmission_file\event\submission_created',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
     ],
-    /* The *_updated twins. Without them a student editing an existing
-     * submission is invisible whenever submissiondrafts is on (no
-     * assessable_submitted fires), so the ledger keeps a stale hand-in time.
-     * NOTE: do not register \mod_assign\event\submission_created or
-     * \mod_assign\event\submission_updated — both are abstract base classes
-     * that core never instantiates, so an observer on them catches nothing. */
+    /* Edits to an existing submission. With submissiondrafts on, saving fires
+     * no assessable_submitted, so without these the ledger keeps a stale
+     * hand-in time. Do not register \mod_assign\event\submission_created or
+     * \mod_assign\event\submission_updated: both are abstract base classes
+     * that core never instantiates. */
     [
         'eventname' => '\assignsubmission_onlinetext\event\submission_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
@@ -75,36 +75,29 @@ $observers = [
         'eventname' => '\mod_assign\event\submission_graded',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_graded',
     ],
-    /* The gradebook, which mod_assign never learns about. A grade typed
-     * straight into the grader report reaches the student without any assign
-     * event firing at all, and once it is an override mod_assign stops firing
-     * submission_graded for that student for ever. Registered alone: its twin
-     * grade_deleted has nothing to do under the earliest-wins rule, and fires
-     * unreliably besides. The callback exits early on an already-closed cycle,
-     * which is the branch the ordinary grading path takes. */
+    /* Grades entered in the gradebook, which fire no assign event. While a
+     * gradebook override or lock stands, assign::grading_disabled() also stops
+     * submission_graded for that student. grade_deleted is deliberately not
+     * registered; see observer::gradebook_changed(). */
     [
         'eventname' => '\core\event\user_graded',
         'callback' => '\block_feedback_tracker\local\sla\observer::gradebook_changed',
     ],
-    /* Marking workflow. The release transition is the only signal that a grade
-     * became visible to the student, and mod_assign persists no timestamp for
-     * it, so an unobserved release is unrecoverable. */
+    /* Marking workflow: the release is recorded nowhere else. See
+     * observer::workflow_state_changed(). */
     [
         'eventname' => '\mod_assign\event\workflow_state_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::workflow_state_changed',
     ],
-    /* Marking allocation. Only the batch "Set allocated marker" operation
-     * fires this on 4.5 and 5.1 — the grading form and quick grading write
-     * assign_user_flags.allocatedmarker with no event — so coverage is partial
-     * by construction. Core stores no allocation timestamp either, which is
-     * why the moment has to be captured here or lost. */
+    /* Marker allocation, which core stores no timestamp for. On Moodle 4.5 and
+     * 5.1 only the batch "Set allocated marker" operation fires it. See
+     * observer::marker_changed(). */
     [
         'eventname' => '\mod_assign\event\marker_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::marker_changed',
     ],
-    /* Blind marking suppresses submission_graded outright: gradebook_item_update()
-     * returns false before doing anything, so every grading on the activity is
-     * invisible until identities are revealed. This is that moment. */
+    /* Blind marking suppresses submission_graded until identities are revealed.
+     * See observer::identities_revealed(). */
     [
         'eventname' => '\mod_assign\event\identities_revealed',
         'callback' => '\block_feedback_tracker\local\sla\observer::identities_revealed',
@@ -123,10 +116,10 @@ $observers = [
         'eventname' => '\mod_assign\event\group_override_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
     ],
-    /* User-level overrides and extensions. Both move the dates one student is
-     * judged against, and neither is visible in any other signal — the
-     * reconciler's rule-drift sweep compares against assign_user_flags and the
-     * activity's own dates, so it cannot see an {assign_overrides} row at all. */
+    /* User-level overrides and extensions move the dates one student is judged
+     * against. The reconciler's rule-drift sweep compares only against
+     * {assign_user_flags} and the activity's own dates, so it cannot see an
+     * {assign_overrides} row. */
     [
         'eventname' => '\mod_assign\event\user_override_created',
         'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
@@ -145,12 +138,9 @@ $observers = [
     ],
 
     // Course / cm lifecycle.
-    /* An assign's settings save. markingworkflow, markingallocation and
-     * teamsubmission change the MEANING of rows already written rather than
-     * any value in them, so no reconciler sweep can detect the drift — the
-     * divergence sweep keys on the mark and the rule sweep keys on dates, and
-     * both find the stored rows entirely consistent with a definition that no
-     * longer applies. */
+    /* An assign's settings save: markingworkflow, markingallocation and
+     * teamsubmission change what stored rows mean, which no reconciler sweep
+     * detects. See observer::course_module_updated(). */
     [
         'eventname' => '\core\event\course_module_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::course_module_updated',
@@ -164,11 +154,10 @@ $observers = [
         'callback' => '\block_feedback_tracker\local\sla\observer::course_deleted',
     ],
 
-    /* Participant lifecycle. Both are cleanup: rows for someone who left, or
-     * whose account is gone, are a response owed to nobody. The reconciler's
-     * departed-participant sweep covers the same ground but visits one course
-     * per tick on a two-hourly task, so these exist to collapse a latency
-     * measured in days on a large site down to the request that caused it. */
+    /* Participant lifecycle, cleanup only: rows for someone who left, or whose
+     * account is gone, are a response owed to nobody. The reconciler's
+     * departed-participant sweep removes them too, but visits a limited number
+     * of courses per two-hourly run; these remove them at once. */
     [
         'eventname' => '\core\event\user_enrolment_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::enrolment_changed',

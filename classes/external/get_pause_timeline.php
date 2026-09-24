@@ -36,16 +36,13 @@ use core_external\external_value;
 
 /**
  * Returns the ordered list of pause windows that contributed to one
- * submission's effectivehours. Powers the design mock's "graded during
- * weekend" / "paused: holiday" detail view.
+ * submission's effectivehours, for the per-submission pause timeline
+ * (amd/src/components/PauseTimelineModal.js).
  *
- * Since v2.0.0 the pause windows are recomputed on demand by
- * `academic_time::elapsed_with_audit()` rather than read from a
- * persisted table — the old per-submission persistence was producing
- * gigabytes of data for a rarely-clicked drill-down view. The trade-off
- * is that retroactive calendar edits now affect what graded submissions
- * show here (the prior approach silently kept stale data for graded
- * rows because nothing ever updated them post-grading).
+ * Nothing is persisted: the windows are recomputed on every call by
+ * {@see academic_time::elapsed_with_audit()} against the current calendar,
+ * so a retroactive calendar edit changes the timeline of an already graded
+ * submission while its stored effectivehours stays as it was.
  */
 class get_pause_timeline extends external_api {
     /**
@@ -91,9 +88,9 @@ class get_pause_timeline extends external_api {
             );
         }
 
-        // Recompute the pause timeline from the calendar engine — same
-        // method the write paths call internally. Endpoint is rarely hit
-        // (per-submission drill-down only), so per-call cost is fine.
+        // Same engine as the write paths, which call elapsed_effective_hours()
+        // for the hours alone. Only the per-submission drill-down calls this
+        // endpoint, so building the audit trail per call is acceptable.
         $tsfrom = (int) $sub->timesubmitted;
         $tsto = $sub->timegraded !== null ? (int) $sub->timegraded : time();
         $audit = academic_time::elapsed_with_audit(

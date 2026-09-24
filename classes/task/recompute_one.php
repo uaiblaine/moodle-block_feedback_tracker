@@ -29,13 +29,12 @@ namespace block_feedback_tracker\task;
 use block_feedback_tracker\local\sla\rollup_service;
 
 /**
- * Queued by the submission_graded observer for fast turnaround on freshly
- * graded submissions. Calls rollup_service::recompute_group() directly and
- * removes the queue entry if one was waiting for the same tuple, so the
- * 5-minute drain task doesn't redo the work.
+ * Recomputes one (courseid, groupid) rollup and retires its queue row.
  *
- * `core\task\manager::queue_adhoc_task($task, true)` deduplicates bursts of
- * grading events on the same tuple.
+ * Queued by `drain_queue` for every dirty tuple, and by the submission_graded
+ * observer for a fast turnaround on freshly graded work. Both producers queue
+ * with `queue_adhoc_task($task, true)` and identical custom data, so bursts on
+ * one tuple collapse into a single pending task.
  */
 class recompute_one extends \core\task\adhoc_task {
     /**

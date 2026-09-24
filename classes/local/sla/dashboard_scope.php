@@ -31,20 +31,14 @@ namespace block_feedback_tracker\local\sla;
  * groups) a user may see on the teacher dashboard and its web services.
  *
  * Rules:
- *   - A full-site grant sees every course and group —
- *     {@see self::visible_course_ids()} returns `null` ("no restriction").
- *     Two ways to hold it ({@see self::sees_all()}): any role granting
- *     `block/feedback_tracker:viewalldata` at system context, or the legacy
- *     escape hatch of a site admin with the `enable_admin_view_all` setting on.
- *   - Everyone else — including a site admin with neither grant — is
- *     scoped to courses where they hold an ACTIVE enrolment AND a role that
- *     grants `block/feedback_tracker:viewdashboard` (teacher or higher).
- *     `doanything` is deliberately suppressed so a site admin without the
- *     grant is treated exactly like a normal user.
+ *   - A full-site grant ({@see self::sees_all()}) sees every course and
+ *     group: {@see self::visible_course_ids()} returns null.
+ *   - Everyone else, including a site admin without that grant, sees the
+ *     courses where they hold an active enrolment and a real role granting
+ *     `block/feedback_tracker:viewdashboard` (teacher and up by default).
+ *     `doanything` is suppressed so a site admin is scoped like anyone else.
  *
- * Centralised so the page entrypoint and all three dashboard web services
- * (get_dashboard / get_grader_priority_list / get_insights) share one
- * decision point instead of three near-identical capability sweeps.
+ * The dashboard pages and web services share this one decision point.
  */
 class dashboard_scope {
     /** WHERE fragment matching every row (admin view-all). */
@@ -53,17 +47,16 @@ class dashboard_scope {
     /** WHERE fragment matching no row (user sees nothing). */
     public const MATCH_NONE = '1 = 0';
 
-    /** @var array<int, int[]|null> Per-request memo of visible_course_ids() keyed by userid. */
+    /** @var array<int, int[]|null> Per-process memo of visible_course_ids() keyed by userid. */
     private static array $coursememo = [];
 
     /**
      * True when the user may see every course and group on the site, bypassing
      * enrolment/role scoping. Two independent grants:
      *
-     *   - any role granting block/feedback_tracker:viewalldata at system
-     *     context. doanything is suppressed, so a plain site admin does NOT
-     *     auto-pass — the grant must be a real role assignment, which is what
-     *     lets a coordinator role be given the full-site view; or
+     *   - a role granting block/feedback_tracker:viewalldata at system context,
+     *     checked with doanything suppressed so a plain site admin does not
+     *     pass: the grant must be a real role assignment (e.g. a coordinator); or
      *   - the legacy escape hatch: a site admin with the enable_admin_view_all
      *     setting on.
      *
@@ -71,9 +64,7 @@ class dashboard_scope {
      * @return bool
      */
     public static function sees_all(int $userid): bool {
-        // A role granting viewalldata at system context is the assignable
-        // full-site view. doanything is suppressed so a plain site admin does
-        // not auto-pass — the grant must be a real role assignment.
+        // With doanything off a plain site admin does not pass; see the docblock.
         $hascap = has_capability(
             'block/feedback_tracker:viewalldata',
             \context_system::instance(),
@@ -103,9 +94,8 @@ class dashboard_scope {
         if (self::sees_all($userid)) {
             return self::$coursememo[$userid] = null;
         }
-        // Active enrolment intersected with a real role granting the
-        // dashboard capability (teacher or higher). doanything is suppressed
-        // so a site admin with the setting OFF is treated as a normal user.
+        // Active enrolments filtered by a real role granting the dashboard
+        // capability; doanything off so a site admin is scoped like anyone else.
         $courses = enrol_get_users_courses($userid, true, 'id');
         $out = [];
         foreach ($courses as $course) {
@@ -120,13 +110,10 @@ class dashboard_scope {
     /**
      * Whether the user can see every group in the given course context.
      *
-     * A full-site grant ({@see self::sees_all()} — the viewalldata capability
-     * or a site admin with enable_admin_view_all on) lifts the group-mode
-     * restriction regardless of role. Everyone else follows the real
-     * `moodle/site:accessallgroups` capability, honoured at course, category or
-     * system context through normal Moodle inheritance — so a role granting it
-     * higher up still applies, and a standard admin keeps Moodle's default
-     * behaviour.
+     * A full-site grant ({@see self::sees_all()}) lifts the group-mode
+     * restriction regardless of role. Everyone else follows
+     * `moodle/site:accessallgroups` with the normal context inheritance and
+     * doanything, so a site admin keeps Moodle's default behaviour.
      *
      * @param \context_course $ctx
      * @param int $userid
@@ -185,7 +172,7 @@ class dashboard_scope {
     }
 
     /**
-     * Drop the per-request memo. Test helper.
+     * Drop the memo. Test helper.
      *
      * @return void
      */

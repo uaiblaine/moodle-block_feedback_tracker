@@ -35,19 +35,21 @@ use core_external\external_value;
 
 /**
  * Aggregates {block_feedback_tracker_group} rows into a per-course summary
- * for the admin dashboard. One row per course with pending/critical totals,
- * group count, median-of-medians, and an aggregate score band.
+ * for the teacher dashboard. One row per course with pending/critical totals,
+ * group count, the mean of the groups' medians and scores, and a band derived
+ * from that mean score.
+ *
+ * amd/src/views/DashboardView.js aggregate() reads the per-course shape key by
+ * key; a key it reads that is missing here is silently treated as no data.
  */
 class get_dashboard extends external_api {
     /** Cache TTL in seconds. */
     public const CACHE_TTL = 900;
 
     /**
-     * Cache-key version. Bumped whenever the SQL or filtering logic
-     * changes shape so stale entries from prior plugin versions are
-     * naturally invalidated without a separate purge step. Bump this
-     * before deploying any change to execute()'s WHERE clause or
-     * aggregate columns.
+     * Cache-key version. Bump it with any change to execute()'s WHERE clause,
+     * aggregate columns or returned shape, so entries cached by an earlier
+     * plugin version stop matching without a purge.
      */
     public const CACHE_KEY_VERSION = 7;
 
@@ -77,11 +79,8 @@ class get_dashboard extends external_api {
         $sysctx = \context_system::instance();
         self::validate_context($sysctx);
 
-        // Authorisation + result scope are centralised in dashboard_scope:
-        // active enrolment with a teacher-or-higher role, unless the user holds
-        // a full-site grant — the viewalldata capability at system context, or a
-        // site admin with enable_admin_view_all on (then the whole site).
-        // A non-admin with zero visible courses has no dashboard access.
+        // Authorisation and result scope both come from dashboard_scope; a user
+        // with no visible course has no dashboard access.
         $userid = (int) $USER->id;
         $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids($userid);
         if ($scope !== null && empty($scope)) {
@@ -92,9 +91,10 @@ class get_dashboard extends external_api {
                 'error'
             );
         }
-        // Cache key includes the user (so per-user filtering doesn't leak
-        // across teachers), the band, and whether the user is in full-site
-        // view-all mode (so gaining or losing that grant re-keys at once).
+        // The key carries the user (so per-user filtering doesn't leak across
+        // teachers), whether the user is in full-site view-all mode (so gaining
+        // or losing that grant re-keys at once), the calendar version, the band
+        // filter and the display unit.
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
         $key = 'v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
@@ -111,11 +111,8 @@ class get_dashboard extends external_api {
             return $cached;
         }
 
-        // Per-course / per-group visibility, centralised in dashboard_scope.
-        // Returns MATCH_ALL (admin view-all), MATCH_NONE (nothing visible),
-        // or an OR-joined clause over the user's courses + allowed groups —
-        // so a SEPARATEGROUPS teacher never sees SUM() across groups they
-        // don't belong to.
+        // Filtering by (course, group) pair, not by course, keeps a teacher in
+        // separate groups mode from seeing SUM() across groups they cannot see.
         [$where, $sqlparams] = \block_feedback_tracker\local\sla\dashboard_scope::sql_visibility(
             $userid,
             'g.courseid',
@@ -166,8 +163,8 @@ class get_dashboard extends external_api {
         $courseids = array_map(static fn ($r) => (int) $r->courseid, $rows);
         $trendseries = self::trend_series_for_courses($courseids);
         // Counts follow the banding ruler: business-days mode serves the
-        // day-ruler twins, falling back to the hour counts until the rollup
-        // has been recomputed with the new columns.
+        // day-ruler twins, falling back to the hour counts while the rollup
+        // has not yet filled critical_days for the course.
         $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         foreach ($rows as $r) {
             $avg = $r->avgscore !== null ? (float) $r->avgscore : null;
@@ -219,10 +216,10 @@ class get_dashboard extends external_api {
     }
 
     /**
-     * Trend-series fetcher for the courses-table sparkline. Sums effective
-     * median across each course's groups per day for the last 30 days,
-     * aligned to a YYYYMMDD window. Cross-DB safe — uses the same
-     * pattern as responsiveness_payload's per-group fetcher.
+     * Trend-series fetcher for the courses-table sparkline. Averages the
+     * groups' effective-hours medians per course and day over the last 14
+     * days, one entry per YYYYMMDD in the window (value null on days with
+     * no data).
      *
      * @param int[] $courseids
      * @return array<int, array<int, array{day:int, value:float|null}>>

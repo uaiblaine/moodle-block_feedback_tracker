@@ -36,20 +36,14 @@ if ($ADMIN->fulltree) {
         get_string('settings_scoring_desc', $plugin)
     ));
 
-    // The five score-formula weights. Saved values may sum to anything; the
-    // score calculator normalises at read time via load_weights(). Save-time
-    // normalisation is intentionally NOT performed, because it would fire
-    // partway through admin_apply_default_settings() (which writes each
-    // default one-by-one) and corrupt the values.
+    // The five score-formula weights. Saved values may sum to anything:
+    // responsiveness_calculator::load_weights() normalises at read time. Do not
+    // normalise on save; the callback would fire partway through
+    // admin_apply_default_settings(), which writes the defaults one by one.
     //
-    // Paramtype is a regex (admin_setting_configtext recognises /.../ as a
-    // regex pattern) rather than PARAM_FLOAT. Reason: PARAM_FLOAT's validator
-    // runs clean_param() and compares the result strictly against the input
-    // string — so "0.40" gets normalised to (float) 0.4, stringified to
-    // "0.4", and the strict comparison "0.40" === "0.4" fails. Admin would
-    // see "value is not valid" whenever they typed (or defaulted to) a
-    // trailing-zero float. The regex variant stores the entered string
-    // verbatim; load_weights() does the (float) cast at read time.
+    // The paramtype is a regex, not PARAM_FLOAT: admin_setting_configtext
+    // compares clean_param() output strictly with the input, so PARAM_FLOAT
+    // rejects "0.40" (cleaned to "0.4"), including the defaults below.
     $weights = [
         'weight_compliance' => '0.40',
         'weight_median'     => '0.25',
@@ -100,9 +94,8 @@ if ($ADMIN->fulltree) {
     $settings->add($s);
 
     // Day-ruler band cutoffs, used instead of the hour thresholds when the
-    // display unit (Views section) is business days: excellent <= first,
-    // good <= second, regular <= third, critical above. Inclusive bounds —
-    // "up to 2 business days" is still excellent. Feeds the rollup's
+    // display unit (Views section) is business days. Bounds are inclusive
+    // (see bucket::for_effective_days()). Feeds the rollup's
     // critical_days/overgoal_days twins, hence the invalidate callback.
     $s = new admin_setting_configtext(
         $plugin . '/bucket_thresholds_days',
@@ -120,11 +113,9 @@ if ($ADMIN->fulltree) {
         'business_days'
     );
 
-    // SLA goal in business days — the day-mode twin of sla_goal_hours. It
-    // feeds only the display-only compliance_pct_days figure; the score keeps
-    // using sla_goal_hours, so switching the display unit never moves the
-    // score. Shown only when the display unit is business days, mirroring
-    // bucket_thresholds_days.
+    // SLA goal in business days, the day-mode twin of sla_goal_hours. It feeds
+    // only the display-only compliance_pct_days; the score keeps sla_goal_hours,
+    // so switching the display unit never moves the score.
     $s = new admin_setting_configtext(
         $plugin . '/sla_goal_days',
         get_string('settings_sla_goal_days', $plugin),
@@ -142,10 +133,9 @@ if ($ADMIN->fulltree) {
     );
 
     // Score-band thresholds: three CSV cutoffs that map a 0-100 score to one
-    // of the four bands. Defaults 90/70/40 match the design palette. Stored
-    // values are clamped + ordered at read time in
-    // responsiveness_calculator::parse_thresholds_band(); admin can type any
-    // numeric values and the calculator copes.
+    // of the four bands. Parsed by responsiveness_calculator::parse_thresholds_band():
+    // a missing or non-numeric cutoff falls back to its default, but the values
+    // are neither clamped nor sorted, so they must be entered in descending order.
     $s = new admin_setting_configtext(
         $plugin . '/score_thresholds_band',
         get_string('settings_score_thresholds_band', $plugin),
@@ -156,10 +146,8 @@ if ($ADMIN->fulltree) {
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
 
-    // Score simulator launcher — sits directly under the scoring weights so
-    // the admin can open the interactive sandbox and see how the weights
-    // behave before committing the values above. Rendered via the shared
-    // tools_links template (same pattern as the Tools section below).
+    // Score simulator launcher, directly under the scoring settings so the
+    // admin can try weights before saving them.
     global $OUTPUT;
     $simulatorlink = $OUTPUT->render_from_template('block_feedback_tracker/tools_links', [
         'links' => [
@@ -239,11 +227,9 @@ if ($ADMIN->fulltree) {
         get_string('settings_processing_scope_desc', $plugin)
     ));
 
-    // Hidden-course processing toggle. No updated-callback: flipping it
-    // has no retroactive effect on existing ledger rows / rollups — the
-    // new rule applies from the next event onward. Existing data for
-    // hidden courses stays in the tables until course_deleted fires or
-    // the admin runs the reset tool.
+    // Hidden-course processing toggle. No updated callback: the change is not
+    // retroactive. The new rule applies to later writes; rows already stored
+    // for hidden courses stay as they are.
     $settings->add(new admin_setting_configcheckbox(
         $plugin . '/process_hidden_courses',
         get_string('settings_process_hidden_courses', $plugin),
@@ -251,11 +237,10 @@ if ($ADMIN->fulltree) {
         0
     ));
 
-    // Backfill master switch. Off by default so install doesn't
-    // immediately scan {assign_submission} on sites with millions of
-    // rows. Turn on once the block is on every course you want
-    // tracked. The dispatcher reads this flag on each tick — no
-    // updated-callback needed.
+    // Backfill master switch. Off by default so install does not scan
+    // {assign_submission} on a large site; turn it on once the block is on
+    // every course to track. backfill_history reads it on each tick, so no
+    // updated callback is needed.
     $settings->add(new admin_setting_configcheckbox(
         $plugin . '/backfill_active',
         get_string('settings_backfill_active', $plugin),
@@ -301,10 +286,8 @@ if ($ADMIN->fulltree) {
         ''
     ));
 
-    // Note: 'exclude_grader_submissions' deliberately has no updated-callback.
-    // Flipping it has no retroactive effect — existing rows in the ledger
-    // are kept as-is. The new behaviour kicks in on the next submission
-    // event for an affected user.
+    // The exclude_grader_submissions toggle deliberately has no updated callback:
+    // it is applied when a ledger row is written, so flipping it is not retroactive.
     $viewbools = [
         'enable_admin_view_all'       => 0,
         'enable_school_comparison'    => 1,
@@ -339,12 +322,10 @@ if ($ADMIN->fulltree) {
         \block_feedback_tracker\local\sla\removal_grace::DEFAULT_SECONDS
     ));
 
-    // Display unit for the wait-time metrics. 'hours' (default) keeps the
-    // existing effective/wall-clock hour figures; 'business_days' switches to
-    // date-based elapsed-day counts (business days skip weekends, holidays and
-    // recesses; the time of day is ignored). Both representations are computed
-    // and stored by the rollup, so this toggle is display-only — no rollup
-    // callback, no recompute on change.
+    // Display unit for the wait-time metrics: 'hours' (effective / wall-clock
+    // hours) or 'business_days' (date-based day counts that skip weekends,
+    // holidays and recesses and ignore the time of day). The rollup stores
+    // both, so this is display-only: no updated callback, no recompute.
     $settings->add(new admin_setting_configselect(
         $plugin . '/display_time_unit',
         get_string('settings_display_time_unit', $plugin),
@@ -356,9 +337,9 @@ if ($ADMIN->fulltree) {
         ]
     ));
 
-    // Group-card title composition from custom group fields. Empty = real group
-    // name. Display-only — no rollup callback; the 15-min payload cache (or the
-    // block's refresh button) picks up changes.
+    // Group-card title composition from custom group fields; empty means the
+    // group name. Display-only, no updated callback: the block payload cache
+    // (15 minutes) or the block's refresh button picks up changes.
     $s = new admin_setting_configtext(
         $plugin . '/group_title_fields',
         get_string('settings_group_title_fields', $plugin),

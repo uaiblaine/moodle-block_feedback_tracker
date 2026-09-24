@@ -27,9 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Wraps {block_feedback_tracker_bfcursor}. Get-or-create / advance /
- * reset / enable / disable / delete primitives that the
- * backfill_history dispatcher and the per-course CLI tool consume.
+ * Covers the {block_feedback_tracker_bfcursor} primitives used by the
+ * backfill_history task and cli/backfill_course.php.
  *
  * @covers \block_feedback_tracker\local\sla\backfill_cursor
  */
@@ -135,8 +134,7 @@ final class backfill_cursor_test extends \advanced_testcase {
     }
 
     /**
-     * delete() removes the row. Called from the course_deleted cleanup
-     * chain so a deleted course doesn't leave orphaned cursor rows.
+     * delete() removes the row.
      */
     public function test_delete_removes_row(): void {
         $this->resetAfterTest();
@@ -153,11 +151,9 @@ final class backfill_cursor_test extends \advanced_testcase {
     /**
      * Bulk creation adds the missing rows and leaves the existing ones alone.
      *
-     * The second half is the part that matters. The dispatcher calls this once
-     * a tick for every tracked course, so a version that wrote over rows it
-     * found would restart the backfill of every completed course on the next
-     * tick, for ever — and it would look like the backfill simply never
-     * finishing rather than like a bug.
+     * Leaving existing rows alone is what matters: backfill_history calls this
+     * every tick for every tracked course, so overwriting a found row would
+     * restart the backfill of every completed course on every tick.
      *
      * @return void
      */

@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Tests for upcoming_pauses (the "Pausa prevista" scheduled-pause lookup).
+ * Tests for upcoming_pauses (the "Upcoming pause" scheduled-pause lookup).
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -172,7 +172,7 @@ final class upcoming_pauses_test extends \advanced_testcase {
         $this->assertSame('Optional', $result[0]['typelabel']);
         $this->assertStringContainsString('16:00', $result[0]['when']);
         $this->assertStringContainsString('17:00', $result[0]['when']);
-        // Decorated entries drop the raw start/end internals but keep the label.
+        // Decorated entries drop the raw end and subday fields but keep the label.
         $this->assertSame('World Cup', $result[0]['label']);
     }
 

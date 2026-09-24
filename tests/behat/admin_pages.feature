@@ -18,8 +18,10 @@ Feature: The plugin's admin and drill-down pages render for authorised users
     And the following "role assigns" exist:
       | user     | role    | contextlevel | reference |
       | manager1 | manager | System       |           |
-    # Archetype defaults for plugin-defined capabilities can propagate
-    # unevenly in Behat, so the ones these pages gate on are set explicitly.
+    # These rows repeat the editingteacher archetype defaults in db/access.php, so
+    # on a standard install they change nothing (role_change_permission() skips a
+    # permission the role already has); they keep the scenarios independent of
+    # those defaults.
     And the following "permission overrides" exist:
       | capability                                | permission | role           | contextlevel | reference |
       | block/feedback_tracker:viewdashboard      | Allow      | editingteacher | System       |           |

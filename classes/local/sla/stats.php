@@ -27,11 +27,12 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Pure stat functions used by the rollup and trend services.
+ * Pure stat functions (no DB access).
  *
- * All accept a list of numbers and return null when the list is empty.
- * Median and percentile use linear interpolation between adjacent
- * order-statistics (the "C=1" / Excel-style definition).
+ * All accept a list of numbers, return null when the list is empty and round
+ * the result to 2 decimal places. Median and percentile use linear
+ * interpolation between adjacent order statistics (the "C=1" definition,
+ * Excel's PERCENTILE.INC).
  */
 class stats {
     /**

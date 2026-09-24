@@ -59,13 +59,9 @@ $capabilities = [
     ],
 
     'block/feedback_tracker:viewdashboard' => [
-        // Cross-course dashboard. Granted at COURSE level (and inherited
-        // from category/system) because editing teachers, who hold this
-        // archetype, are role-assigned at course context — a system-only
-        // contextlevel here would mismatch the archetype grant and confuse
-        // the role-definition UI. Pages/teacher_dashboard.php uses
-        // get_user_capability_course() to enumerate exactly the courses
-        // the caller is entitled to.
+        // Cross-course dashboard. Course level, not system: teachers hold it
+        // through their course role assignments, and the dashboard lists the
+        // courses where they do. See dashboard_scope::visible_course_ids().
         'captype' => 'read',
         'contextlevel' => CONTEXT_COURSE,
         'archetypes' => [
@@ -77,12 +73,11 @@ $capabilities = [
 
     'block/feedback_tracker:viewalldata' => [
         // Full-site dashboard view: holders see every course and group on the
-        // teacher dashboard regardless of their own enrolments — the same scope
-        // a site admin gets through the enable_admin_view_all setting. Granted
-        // at SYSTEM context with no archetype so it is strictly opt-in: assign
-        // it to the role (coordinator, head of department, …) that should see
-        // everything. dashboard_scope checks it with doanything suppressed, so
-        // it never auto-applies to a plain site admin.
+        // teacher dashboard regardless of their own enrolments, the scope a site
+        // admin gets through the enable_admin_view_all setting. System context
+        // and no archetype, so it is opt-in: assign it to the role (coordinator,
+        // head of department) that should see everything. dashboard_scope checks
+        // it with doanything off, so it never applies to a plain site admin.
         'captype' => 'read',
         'contextlevel' => CONTEXT_SYSTEM,
         'archetypes' => [],
@@ -125,10 +120,10 @@ $capabilities = [
     ],
 
     /* Removing the block from many courses at once, and optionally discarding
-     * their measured history. Separate from :resetdata (which wipes the whole
-     * site) and from :managecalendar (configuration, not destruction) so that
-     * being able to edit term dates never implies being able to clear a
-     * semester's worth of courses. */
+     * their measured history. Separate from :resetdata (which wipes the
+     * plugin's data site-wide) and from :managecalendar (configuration, not
+     * destruction) so that being able to edit term dates never implies being
+     * able to clear a semester's worth of courses. */
     'block/feedback_tracker:bulkmanageblocks' => [
         'captype' => 'write',
         'contextlevel' => CONTEXT_SYSTEM,

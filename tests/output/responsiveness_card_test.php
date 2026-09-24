@@ -36,8 +36,10 @@ namespace block_feedback_tracker\output;
  */
 final class responsiveness_card_test extends \advanced_testcase {
     /**
-     * A complete group payload (mirrors responsiveness_payload::group_payload()),
-     * with optional per-test overrides.
+     * A group payload in the shape of responsiveness_payload::group_payload(),
+     * with optional per-test overrides. It holds every key the card reads, not
+     * the whole payload: the allocation-queue figures, which the card ignores,
+     * are left out.
      *
      * @param array $overrides Keys to replace in the base payload.
      * @return array
@@ -203,7 +205,7 @@ final class responsiveness_card_test extends \advanced_testcase {
 
     /**
      * In business-days display mode the compliance metric reads the day-ruler
-     * twin (compliance_pct_days), not the hour-based compliance_pct \u2014 the two
+     * twin (compliance_pct_days), not the hour-based compliance_pct; the two
      * are independent rulers. Display-only; the score is unaffected.
      *
      * @return void

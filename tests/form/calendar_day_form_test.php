@@ -41,7 +41,7 @@ final class calendar_day_form_test extends \advanced_testcase {
     /**
      * Validate a day definition.
      *
-     * @param array $data Overrides for daydate, daytype, starttime, endtime.
+     * @param array $data Overrides for daydate (YYYYMMDD integer), daytype, starttime, endtime ('HH:MM').
      * @return array Validation errors.
      */
     private function validate(array $data): array {
@@ -86,7 +86,7 @@ final class calendar_day_form_test extends \advanced_testcase {
     }
 
     /**
-     * A leap day in a leap year is real and must pass.
+     * A leap day in a leap year is real and must pass; one in a common year must not.
      *
      * @return void
      */

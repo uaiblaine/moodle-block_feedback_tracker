@@ -28,20 +28,17 @@ namespace block_feedback_tracker\local\output;
 
 /**
  * Static helpers that build the JSON bundle every React-driven view
- * (block, pending report, teacher dashboard) embeds in its mount-point
- * `<script type="application/json" data-bft-init>` tag.
+ * (block, pending report, teacher dashboard, score simulator) embeds in its
+ * mount-point `<script type="application/json" data-bft-init>` tag.
  *
- * Kept in classes/local/output/ so PSR-style autoloading picks them up
- * from standalone pages — the block class itself isn't autoloaded by
- * Moodle's class loader (block classes only load when the blocks
- * subsystem renders one).
+ * An autoloaded class rather than methods on the block class, which Moodle
+ * loads only when it renders a block, so standalone pages can use it.
  */
 class bootstrap {
     /**
-     * Localised label bundle used by every React view. Keys mirror the
-     * Mustache template contexts so a server-rendered fallback (the
-     * existing responsiveness_card.mustache, drilldown.mustache, …) and
-     * the React tree consume identical strings.
+     * Localised label bundle used by every React view. Keys are the lang
+     * string ids (band labels nested under `bands`), so the React tree and
+     * the server-rendered card show the same strings.
      *
      * @return array
      */
@@ -74,13 +71,14 @@ class bootstrap {
             'block_refresh_error' => get_string('block_refresh_error', 'block_feedback_tracker'),
             'block_loading' => get_string('block_loading', 'block_feedback_tracker'),
             'block_loadmore' => get_string('block_loadmore', 'block_feedback_tracker'),
+            // The next two keep their placeholders for the JS to fill in.
             'block_capnotice' => get_string(
                 'block_capnotice',
                 'block_feedback_tracker',
                 (object) ['shown' => '{shown}', 'total' => '{total}']
             ),
             'sparkline_zone_label' => get_string('sparkline_zone_label', 'block_feedback_tracker', '{$a}'),
-            // Phase 3B additions — block recomposition (hero, KPI tiles, trend row, peer, paused note, activities).
+            // Block card: hero, KPI tiles, trend row, peer context, pause notice, activities.
             'card_activities_head' => get_string('card_activities_head', 'block_feedback_tracker'),
             'card_effective' => get_string('card_effective', 'block_feedback_tracker'),
             'card_effective_sub' => get_string('card_effective_sub', 'block_feedback_tracker'),
@@ -114,9 +112,9 @@ class bootstrap {
     }
 
     /**
-     * Score-formula config bundle. Defaults match settings.php fallbacks
-     * so a freshly-installed site renders correctly even before the admin
-     * visits the settings page.
+     * Config bundle: score weights, SLA goal, band thresholds, feature
+     * toggles and the thousands separator. Fallbacks match the settings.php
+     * defaults, for a site where a setting is not stored yet.
      *
      * @return array
      */
@@ -128,7 +126,8 @@ class bootstrap {
         // mis-handle the off case because '0' is falsy in PHP.
         $peercfg = get_config('block_feedback_tracker', 'show_peer_context');
         $showpeer = ($peercfg === false || $peercfg === null) ? true : ((string) $peercfg !== '0');
-        // Scheduled-pause notice toggle — same default-ON read as above.
+        // Upcoming-pause notice toggle, stored under the older name
+        // show_paused_today_indicator; same default-ON read as above.
         $pausecfg = get_config('block_feedback_tracker', 'show_paused_today_indicator');
         $showpause = ($pausecfg === false || $pausecfg === null) ? true : ((string) $pausecfg !== '0');
         return [
@@ -154,10 +153,8 @@ class bootstrap {
                 (string) (get_config('block_feedback_tracker', 'display_time_unit') ?: 'hours'),
             'show_peer_context' => $showpeer,
             'show_scheduled_pauses' => $showpause,
-            // Active-language thousands separator (langconfig) so the React
-            // surfaces group large submission counts exactly like the PHP
-            // server card does — a comma in English, a dot in pt_br. Mirrors
-            // \block_feedback_tracker\local\output\numfmt::count().
+            // Active language's thousands separator, so the React surfaces
+            // group counts exactly as numfmt::count() does on the server.
             'thousandssep' => get_string('thousandssep', 'langconfig'),
         ];
     }
@@ -207,7 +204,7 @@ class bootstrap {
             'gradenow_loading' => get_string('gradenow_loading', 'block_feedback_tracker'),
             'gradenow_error' => get_string('gradenow_error', 'block_feedback_tracker'),
             'gradenow_open' => get_string('gradenow_open', 'block_feedback_tracker'),
-            // Phase 3E additions — hero, slim toggle, insights, priority, columns.
+            // Hero, slim-hero toggle, insights, priority list, table columns.
             'dashboard_brandtag' => get_string('dashboard_brandtag', 'block_feedback_tracker'),
             'dashboard_business_chip' => $daysmode
                 ? get_string('dashboard_business_chip_days', 'block_feedback_tracker')
@@ -308,7 +305,7 @@ class bootstrap {
             'pause_reason_coursepaused' => get_string('pause_reason_coursepaused', 'block_feedback_tracker'),
             'pause_reason_grouppaused' => get_string('pause_reason_grouppaused', 'block_feedback_tracker'),
             'pause_reason_sitepaused' => get_string('pause_reason_sitepaused', 'block_feedback_tracker'),
-            // Phase 3D additions — hero metrics, paused callout, status distribution, segmented filter.
+            // Hero metrics, paused callout, status distribution, segmented filter.
             'distribution_hint' => get_string('distribution_hint', 'block_feedback_tracker'),
             'distribution_title' => get_string('distribution_title', 'block_feedback_tracker'),
             'distribution_title_result' => get_string('distribution_title_result', 'block_feedback_tracker'),
@@ -365,8 +362,8 @@ class bootstrap {
             'pendingreport_row_paused_tip' => $daysmode
                 ? get_string('pendingreport_row_paused_tip_days', 'block_feedback_tracker')
                 : get_string('pendingreport_row_paused_tip', 'block_feedback_tracker'),
-            // MVP3 report redesign — hero (reused from the dashboard), academic-days
-            // strip, graded view, action column, and the collapse toggle.
+            // Academic-days strip, graded view, action column, collapse toggle,
+            // and hero strings shared with the dashboard.
             'acaday_holiday_one' => get_string('acaday_holiday_one', 'block_feedback_tracker'),
             'acaday_legend_good' => get_string('acaday_legend_good', 'block_feedback_tracker'),
             'acaday_legend_ongoal' => get_string('acaday_legend_ongoal', 'block_feedback_tracker'),

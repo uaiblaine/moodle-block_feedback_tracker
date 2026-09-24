@@ -39,8 +39,9 @@ use core_external\external_value;
  * SLA bucket / pending band, and a free-text name search, sorted by any
  * column. Returns student names, activity names, group, submission timestamp,
  * current effective/wall-clock waits, plus the pending-band distribution
- * counts for the whole filtered set. Delegates the query to
- * {@see submission_browser}.
+ * counts for the whole filtered set. With status 'draft' it lists saved but
+ * unsubmitted work instead, which never counts toward the SLA. Delegates the
+ * query to {@see submission_browser}.
  */
 class get_pending_submissions extends external_api {
     /** Default page size. */

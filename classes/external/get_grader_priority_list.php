@@ -34,17 +34,11 @@ use core_external\external_value;
 use block_feedback_tracker\local\calendar\day_counter;
 
 /**
- * Returns the top-N most-urgent pending submissions across every course
- * the caller can view the dashboard for. Powers the dashboard's "Grade
- * Now" triage panel — one cheap call replaces a per-course fan-out of
- * get_pending_submissions, and the underlying SQL sorts by effective wait
- * time so the rows surfaced are genuinely the worst-offenders.
+ * Returns the top-N pending submissions by effective wait across every course
+ * the caller can view the dashboard for: the dashboard's "Grade Now" panel, in
+ * one query instead of a get_pending_submissions call per course.
  *
- * Capability scope mirrors get_dashboard:
- * `block/feedback_tracker:viewdashboard` resolved per-course via
- * `get_user_capability_course()` so editing teachers see only their own
- * courses, category managers see all category courses (inherited), and
- * site admins see everything.
+ * Authorisation and scope are get_dashboard's, from {@see \block_feedback_tracker\local\sla\dashboard_scope}.
  */
 class get_grader_priority_list extends external_api {
     /** Default number of submissions to return. */
@@ -94,9 +88,8 @@ class get_grader_priority_list extends external_api {
         $sysctx = \context_system::instance();
         self::validate_context($sysctx);
 
-        // Authorisation + scope via dashboard_scope — same rules as
-        // get_dashboard, since the priority list is a slice of the same
-        // data. A non-admin with zero visible courses has no access.
+        // Same rules as get_dashboard, since the priority list is a slice of
+        // the same data. A user with no visible course has no access.
         $userid = (int) $USER->id;
         $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids($userid);
         if ($scope !== null && empty($scope)) {
@@ -165,8 +158,7 @@ class get_grader_priority_list extends external_api {
             }
         }
 
-        // Top-N by effective wait descending; ties broken by oldest
-        // submission first so the absolute worst-offender row floats up.
+        // Top-N by effective wait descending; ties go to the oldest submission.
         $sql = "SELECT sub.id, sub.cmid, sub.userid, sub.courseid, sub.groupid,
                        sub.timesubmitted, sub.waitinghours, sub.effectivehours,
                        sub.effectivedays, sub.slabucket,
@@ -182,8 +174,7 @@ class get_grader_priority_list extends external_api {
 
         $rows = $DB->get_records_sql($sql, $sqlparams, 0, $limit);
 
-        // Two follow-up reads to enrich with activity + group names —
-        // O(1) each because the result set is bounded by $limit.
+        // One query each for activity and group names, over at most $limit rows.
         $assignids = array_unique(array_map(static fn($r) => (int) $r->assignid, $rows));
         $assignnames = [];
         if (!empty($assignids)) {

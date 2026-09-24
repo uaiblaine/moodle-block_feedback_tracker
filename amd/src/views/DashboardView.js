@@ -14,20 +14,21 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Teacher dashboard view (Phase 3E redesign) — warm, supportive
- * cross-course overview.
+ * Teacher dashboard view — cross-course overview.
  *
  * Composition (top → bottom):
- *   1. Brand-tag eyebrow ("FEEDBACK TRACKER")
+ *   1. Brand-tag eyebrow
  *   2. Greeting H1 (time-of-day aware) + WaveMark
- *   3. Subline (pending count · critical count · business-time chip)
+ *   3. Subline (pending count · critical count · business-time chip · latest event)
  *   4. ResponsivenessModule — full hero ↔ slim strip (collapsible)
- *   5. Insights row (Bright spot / Most improved / Gentle watch)
- *   6. "Grade now · picked for you" — 3 priority cards
- *   7. "Your courses" table with inline ScoreRing + sparkline + Open link
+ *   5. Scheduled-pause notice
+ *   6. Insights row (Bright spot / Most improved / Gentle watch)
+ *   7. "Grade now · picked for you" — 3 priority cards
+ *   8. "Your courses" table with inline ScoreRing + sparkline + Open link
  *
- * Initial payload comes from the mount-point JSON so the first paint is
- * data-rich. Insights lazy-load on mount.
+ * The mount-point JSON carries strings, config, the collapse preference and
+ * the pause / event sidecars only; course rows, the grade-now list and the
+ * insights load through web services after mount.
  *
  * @module    block_feedback_tracker/views/DashboardView
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -55,11 +56,17 @@ const PREF_DASHBOARD_COLLAPSED = 'block_feedback_tracker_dashboard_collapsed';
 /**
  * Aggregate per-course rows into a single hero score + total counters.
  *
+ * The score is weighted by pending count (minimum 1); the medians, compliance
+ * and trend are plain means of the per-course values. Reads get_dashboard's
+ * per-course keys one by one, so a key the WS stops returning silently reads
+ * as null.
+ *
  * @param {Array<object>} courses
  * @returns {{pending: number, critical: number, overgoal: number,
  *            avgscore: number|null, effective: number|null,
- *            perceived: number|null, compliance: number|null,
- *            trendpct: number|null}}
+ *            perceived: number|null, effectivedays: number|null,
+ *            perceiveddays: number|null, compliance: number|null,
+ *            compliancedays: number|null, trendpct: number|null}}
  */
 const aggregate = (courses) => {
     let pending = 0;
@@ -186,8 +193,8 @@ const greetingKey = () => {
 /**
  * Perceived calendar-days from the raw (wall-clock) median wait. The raw
  * median already includes weekends and holidays, so it converts straight to
- * calendar days with no inflation factor. Returns a string suffix like "4d"
- * or "—" when there is nothing to show.
+ * calendar days with no inflation factor. Returns e.g. "4d" (never below
+ * "1d"), or "—" when there is nothing to show.
  *
  * @param {number|null|undefined} rawhours  Median raw (wall-clock) hours.
  * @returns {string}
@@ -245,13 +252,15 @@ const groupLabel = (insight, i18n) => {
 };
 
 /**
+ * Top-level dashboard view.
+ *
  * @param {object} props
- * @param {object} props.initial   Mount-point payload: {greeting, dashboard,
- *                                 gradenow, cancompare, i18n, config}.
+ * @param {object} props.initial   Mount-point payload: {greeting_firstname,
+ *                                 dashboard, gradenow, insights, events, upcoming,
+ *                                 cancompare, dashboard_collapsed, i18n, config}.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function DashboardView({initial}) {
     const i18n = initial.i18n || {};
@@ -269,22 +278,21 @@ export default function DashboardView({initial}) {
     const [gradenow, setGradenow] = useState(initial.gradenow || null);
     const [gradenowError, setGradenowError] = useState(null);
     const [insights, setInsights] = useState(initial.insights || null);
-    // True until the first course-rows fetch resolves. The page ships an
-    // empty shell now, so unless the server happened to inline rows (it no
-    // longer does) we start in the loading state.
+    // True until the first course-rows fetch settles. The page ships no rows,
+    // so this starts true unless the payload inlined some.
     const [loadingcourses, setLoadingCourses] = useState(
         !(Array.isArray(dashboard.courses) && dashboard.courses.length > 0)
     );
-    // V1.0.11 — site-scope paused events sidecar, preloaded by
-    // teacher_dashboard.php so the dashboard subline can show the most
-    // recent named optional event (e.g. "⚽ Brasil vs França · 21/05 16:00-18:00").
+    // Site-scope sub-day optional events of the last 30 days, preloaded by
+    // teacher_dashboard.php so the subline can show the most recent named
+    // one (e.g. "Recent event: Match day · 21/05 16:00-18:00").
     const [events] = useState(Array.isArray(initial.events) ? initial.events : []);
     // Scheduled-pause notice — preloaded site-scope by teacher_dashboard.php,
     // already decorated + visibility-filtered server-side. Gated by the admin
     // toggle (default ON).
     const [upcoming] = useState(Array.isArray(initial.upcoming) ? initial.upcoming : []);
     /*
-     * V1.0.8 — collapsed state for the combined Responsiveness hero +
+     * Collapsed state for the combined Responsiveness hero +
      * Insights block. Initial value comes from the user preference
      * preloaded by teacher_dashboard.php so the first paint already
      * matches the user's saved choice; toggling writes back through
@@ -303,11 +311,10 @@ export default function DashboardView({initial}) {
     const greeting = greetingTemplate.replace('{$a->firstname}', initial.greeting_firstname || '');
 
     /**
-     * Toggle the hero+insights collapsed state. Optimistic — local state
-     * flips immediately so the UI is responsive; the preference write is
-     * fire-and-forget. On failure we revert state and route the error
-     * through core/notification so the user knows the choice didn't
-     * persist (page reload would show the old value).
+     * Toggle the hero+insights collapsed state. Optimistic: local state
+     * flips at once and the preference is written in the background; if the
+     * write fails the state reverts and core/notification reports that the
+     * choice was not saved.
      *
      * @param {boolean} next
      */
@@ -364,14 +371,11 @@ export default function DashboardView({initial}) {
         }
     };
 
-    // Initial async load. teacher_dashboard.php no longer runs the web
-    // services inline, so the first byte ships immediately and the page never
-    // blocks on per-course / per-group aggregation (previously thousands of
-    // ledger queries ran before the page was sent). Course rows load first —
-    // the hero / global score is derived from them client-side via
-    // aggregate() — with the grade-now list alongside; insights lazy-load in
-    // the effect below. Each fetch re-applies the same server-side
-    // dashboard_scope gate, so this does not widen visibility.
+    // Initial async load. teacher_dashboard.php ships no data, so the page
+    // never blocks on per-course aggregation. Course rows (from which
+    // aggregate() derives the hero score) and the grade-now list are fetched
+    // here; insights lazy-load in the effect below. Each WS re-applies the
+    // server-side dashboard_scope gate, so this does not widen visibility.
     useEffect(() => {
         let cancelled = false;
         getDashboard({})
@@ -492,7 +496,7 @@ export default function DashboardView({initial}) {
                         ${events.length > 0 && (() => {
                             // Latest named optional event from the past 30
                             // days site-scope. paused_aggregator emits in
-                            // date order, so .pop() is the most recent.
+                            // date order, so the last entry is the most recent.
                             const latest = events[events.length - 1];
                             const head = fmtEventYmd(latest.date) + ' '
                                 + fmtEventMin(latest.starttime) + '-'

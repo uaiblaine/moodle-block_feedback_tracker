@@ -27,19 +27,16 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\score;
 
 /**
- * Aggregates the per-group rollup table into "department median" and
- * "top 10%" benchmarks shown in the design's Peer Context panel.
+ * Aggregates the per-group rollup table into the "department median" and
+ * "top 10%" benchmarks shown in the block's peer-context panel.
  *
- * Departments aren't a first-class concept in this plugin — the design's
- * label is aspirational; for the MVP we treat "department" as "all groups
- * the caller can see, excluding the current one". Sites can refine the
- * scope later (course category, custom field) by adding a filter in
- * {@see self::source_rows()} without changing the API shape.
+ * There is no department concept: the pool is every scored rollup row on the
+ * site, in every course, minus the group being compared. A narrower scope
+ * (course category, custom field) is a filter in {@see self::source_rows()}
+ * and needs no API change.
  *
- * All math is done in PHP after pulling rollup rows from the database —
- * PostgreSQL and MariaDB have wildly different percentile syntax, and
- * the row count site-wide is small enough (one row per group) that
- * fetching them is cheaper than synthesising portable SQL.
+ * Percentiles are computed in PHP because Moodle's supported databases have no
+ * common percentile syntax, and the pool is only one row per (course, group).
  */
 class peer_stats {
     /** Minimum sample size required to publish peer benchmarks. */
@@ -50,8 +47,8 @@ class peer_stats {
 
     /**
      * Peer benchmarks excluding one group. Returns nulls when fewer than
-     * {@see self::MIN_SAMPLE} other groups have a score — the design's
-     * Peer Context component hides itself when both benchmarks are null.
+     * {@see self::MIN_SAMPLE} other groups have a score; the PeerContext
+     * component hides itself when both benchmarks are null.
      *
      * @param int $excludegroupid Skip this group when computing the
      *                            benchmark; 0 = include all rows.

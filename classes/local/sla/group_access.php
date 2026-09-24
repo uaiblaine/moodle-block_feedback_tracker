@@ -28,12 +28,12 @@ namespace block_feedback_tracker\local\sla;
 
 /**
  * Resolves which group rows a given user is allowed to see in a course,
- * honouring Moodle's three group modes + the accessallgroups capability.
+ * honouring the course's group mode and the accessallgroups capability.
  *
- * Shared by `responsiveness_payload::for_course()`, the pending-report WS,
- * the cross-course Grade Now WS, and the dashboard aggregate. Centralising
- * the rules here prevents the "block correctly hides other groups but the
- * report page leaks them" class of bugs.
+ * The single decision point for every surface that lists group rows (the
+ * block payload, the dashboard via {@see dashboard_scope::sql_visibility()},
+ * the reports and their web services), so no surface can show a group
+ * another one hides.
  *
  * Returned shapes:
  *   - `null`    → unrestricted. NOGROUPS course, or the user holds
@@ -46,7 +46,7 @@ namespace block_feedback_tracker\local\sla;
  *                 must short-circuit to an empty result.
  */
 class group_access {
-    /** @var array Per-request memo keyed by "courseid:userid". */
+    /** @var array Per-process memo keyed by "courseid:userid". */
     private static array $memo = [];
 
     /**
@@ -66,10 +66,8 @@ class group_access {
         $course = $DB->get_record('course', ['id' => $courseid], '*', MUST_EXIST);
         $ctx = \context_course::instance($courseid);
         $groupmode = (int) groups_get_course_groupmode($course);
-        // The accessallgroups capability is resolved through dashboard_scope
-        // so the enable_admin_view_all setting governs site admins
-        // consistently (a real teacher/manager role still grants it via
-        // context inheritance at course / category / system level).
+        // Resolved through dashboard_scope so a full-site grant also lifts the
+        // group restriction, on top of moodle/site:accessallgroups.
         $canaccessall = dashboard_scope::can_access_all_groups($ctx, $userid);
 
         if ($groupmode === NOGROUPS || $canaccessall) {
@@ -106,7 +104,7 @@ class group_access {
 
     /**
      * True when the user can see the given group in the course.
-     * `groupid = 0` ("ungrouped") is admin-only — only unrestricted users see it.
+     * `groupid = 0` ("ungrouped") is visible to unrestricted users only.
      *
      * @param int $courseid
      * @param int $userid
@@ -122,7 +120,7 @@ class group_access {
     }
 
     /**
-     * Drop the per-request memo. Test helper.
+     * Drop the memo. Test helper.
      *
      * @return void
      */

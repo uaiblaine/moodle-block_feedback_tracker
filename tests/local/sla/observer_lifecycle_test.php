@@ -30,8 +30,8 @@ namespace block_feedback_tracker\local\sla;
  * The lifecycle events cover the three ways a ledger row stops describing
  * reality without any of its own values changing: the student left, the
  * account is gone, or the activity's settings changed what the stored row
- * means. Each is pinned against the real core event, fired the way core fires
- * it, rather than against a hand-built payload.
+ * means. Each is pinned against the real core event carrying the payload core
+ * builds for it.
  *
  * @covers \block_feedback_tracker\local\sla\observer
  * @covers \block_feedback_tracker\local\sla\submission_ledger
@@ -52,7 +52,8 @@ final class observer_lifecycle_test extends \advanced_testcase {
 
     /**
      * Unenrolling a student drops their rows in that course at once, rather
-     * than leaving them for the reconciler's one-course-per-tick sweep.
+     * than leaving them for the reconciler's departed-participant sweep, which
+     * reaches each tracked course only in rotation.
      *
      * @return void
      */
@@ -83,9 +84,9 @@ final class observer_lifecycle_test extends \advanced_testcase {
 
     /**
      * A student holding two enrolments keeps their rows when only one is
-     * removed. Core has already decided this and ships the answer as
-     * `lastenrol`; getting it wrong would destroy a still-enrolled student's
-     * whole measured history.
+     * removed. Core reports whether it was the last one as `lastenrol` in the
+     * event payload; misreading it would delete a still-enrolled student's
+     * measured history.
      *
      * @return void
      */
@@ -153,10 +154,10 @@ final class observer_lifecycle_test extends \advanced_testcase {
     /**
      * A settings save re-derives every attempt, not just the newest one.
      *
-     * The dispatch list is de-duplicated on (userid, attemptnumber); building
-     * it through a DISTINCT projection keyed on userid would silently collapse
-     * a resubmitting student's attempts into one, so this asserts on the
-     * number of descriptors rather than merely that something was queued.
+     * Descriptors are de-duplicated on (userid, attemptnumber). A
+     * get_records_sql() result keyed on userid would collapse a resubmitting
+     * student's attempts into one, so this asserts the number of descriptors,
+     * not merely that something was queued.
      *
      * @return void
      */
@@ -188,11 +189,9 @@ final class observer_lifecycle_test extends \advanced_testcase {
     /**
      * A team activity dispatches once per group, not once per member.
      *
-     * mod_assign's DEFAULT group is groupid 0, so rows for it are stored with
-     * teamgroupid = 0 — indistinguishable from an individual row. Routing on
-     * the stored value would send each member back through the whole-group
-     * fan-out, which is quadratic in group size; routing on the live
-     * teamsubmission flag is what keeps it linear.
+     * The fixture uses mod_assign's default group, groupid 0, whose rows look
+     * exactly like individual rows; only routing on the live teamsubmission
+     * flag collapses them. See observer::course_module_updated().
      *
      * @return void
      */
@@ -203,8 +202,8 @@ final class observer_lifecycle_test extends \advanced_testcase {
         [$course, , $cm, $assign] = $this->build_environment(['teamsubmission' => 1]);
 
         /* build_environment() already enrolled one student, and the default
-         * group is every participant not in exactly one group of the activity's
-         * grouping — so these three make four members of group 0. */
+         * group holds every participant not in exactly one group of the
+         * activity's grouping, so these three make four members of group 0. */
         for ($i = 0; $i < 3; $i++) {
             $this->getDataGenerator()->create_and_enrol($course, 'student');
         }
@@ -243,15 +242,11 @@ final class observer_lifecycle_test extends \advanced_testcase {
      * With team submission off, rows that still carry a team shape are
      * re-derived per member.
      *
-     * Reachability, stated honestly: core freezes the `teamsubmission` field
-     * once the activity has any submission or grade
-     * (`mod/assign/mod_form.php`), and ledger rows only exist once it does, so
-     * the settings form cannot get here — a restore or a direct write can.
-     * The test sets the field directly for that reason. What it pins is the
-     * routing rule itself: read the live flag, not the stored `teamgroupid`. A
-     * team descriptor built from the stale value would be a guaranteed no-op,
-     * because `upsert_for_team_attempt()` returns immediately once the
-     * activity is no longer a team one.
+     * mod/assign/mod_form.php freezes `teamsubmission` once the activity has a
+     * submission or grade, so only a restore or a direct write reaches this
+     * state; the test writes the field directly. It pins the routing rule: a
+     * team descriptor built from the stored `teamgroupid` would be a no-op,
+     * because `upsert_for_team_attempt()` returns early for a non-team activity.
      *
      * @return void
      */
@@ -303,13 +298,11 @@ final class observer_lifecycle_test extends \advanced_testcase {
     /**
      * A settings save on any other module type dispatches nothing.
      *
-     * Note what this does NOT pin: remove the module-name filter and the test
-     * still passes, because the ledger existence check rejects a page
-     * course-module just as firmly. The filter earns its place on cost — it
-     * rejects before any query, and hiding a section fires this event once per
-     * contained module — and cost is not assertable here, since triggering the
-     * event writes to the logstore and moves the query counter on its own. The
-     * test guards the outcome; the filter's value is argued in the callback.
+     * This pins the outcome only: without the modulename filter the ledger
+     * existence check still rejects a page module. The filter's value is cost:
+     * it rejects before any query, and hiding a section fires this event once
+     * per module. A query count cannot show that here, because triggering the
+     * event writes to the logstore.
      *
      * @return void
      */

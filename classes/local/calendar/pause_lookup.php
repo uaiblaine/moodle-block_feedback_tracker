@@ -116,7 +116,7 @@ class pause_lookup {
     }
 
     /**
-     * Drop the per-request memo (test helper).
+     * Drop the per-request memo. {@see academic_time::reset_memos()}
      *
      * @return void
      */

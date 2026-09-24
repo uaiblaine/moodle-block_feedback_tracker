@@ -55,10 +55,10 @@ final class stats_test extends \advanced_testcase {
 
     public function test_percentile_linear_interpolation(): void {
         /*
-         * The implementation uses the C=1 / Excel-style formula:
+         * The implementation uses the C=1 formula (Excel's PERCENTILE.INC):
          *   rank = (p/100) * (n - 1), interpolate between sorted[floor] and sorted[ceil].
          * For [1,2,3,4,5] (n=5): p=25 → rank=1.0 → sorted[1]=2.0 (no interpolation).
-         * R's type-6 algorithm would give 2.5 here, but that's not what we use.
+         * PERCENTILE.EXC (R's type 6) would give 1.5 here.
          */
         $this->assertSame(2.0, stats::percentile([1, 2, 3, 4, 5], 25.0));
         $this->assertSame(3.0, stats::percentile([1, 2, 3, 4, 5], 50.0));

@@ -32,7 +32,10 @@ namespace block_feedback_tracker\output;
  * see templates/score_gauge.mustache.
  */
 class score_gauge implements \renderable, \templatable {
-    /** Band → primary stroke / chip colour. Kept in lockstep with amd/src/lib/bands.js::BAND_COLOURS. */
+    /**
+     * Band → primary stroke / chip colour. Kept in lockstep with amd/src/lib/bands.js::BAND_COLOURS;
+     * tests/lockstep/js_php_lockstep_test.php fails on drift.
+     */
     public const BAND_COLOURS = [
         'excellent' => '#047857',
         'good'      => '#0e7490',

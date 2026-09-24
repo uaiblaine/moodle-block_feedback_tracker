@@ -35,13 +35,12 @@ use core_external\external_api;
  */
 final class get_dashboard_test extends \advanced_testcase {
     /**
-     * Reset the per-request dashboard_scope AND group_access memos before
-     * each test. Both static caches survive resetAfterTest (PHP statics
-     * aren't rolled back with the DB); on MariaDB course / user IDs recycle
-     * across tests, so a stale entry could otherwise serve the wrong course
-     * scope (dashboard_scope, keyed by userid) or a stale group filter
-     * (group_access, keyed "courseid:userid") that excludes the seeded
-     * groupid=0 rollups and makes an enrolled course vanish from the result.
+     * Reset the per-request dashboard_scope and group_access memos.
+     *
+     * Both are PHP statics, which resetAfterTest does not clear, while course
+     * and user ids are reused across tests. A stale entry would serve another
+     * test's course scope (keyed by userid) or group filter (keyed
+     * "courseid:userid") and make an enrolled course vanish from the result.
      *
      * @return void
      */
@@ -103,9 +102,9 @@ final class get_dashboard_test extends \advanced_testcase {
 
     /**
      * Editing teacher in one course sees only that course's row, even though
-     * rollup rows exist for two others. The `viewdashboard` cap is granted by
-     * the editingteacher archetype at course context, and the WS's
-     * get_user_capability_course filter narrows the result accordingly.
+     * rollup rows exist for two others. The editingteacher archetype grants
+     * `viewdashboard` at course context, and dashboard_scope limits the
+     * result to enrolled courses where the user holds it.
      */
     public function test_teacher_sees_only_enrolled_course(): void {
         $this->resetAfterTest();
@@ -179,10 +178,10 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
-     * SEPARATEGROUPS regression: a teacher in only group A of a multi-group
-     * course must see numgroups=1 + only group-A's aggregates (not the
-     * unrestricted SUM across the whole course). Locks in the
-     * group_access::visible_group_ids() filter inside execute().
+     * Under SEPARATEGROUPS a teacher in only group A of a multi-group course
+     * sees numgroups=1 and only group A's aggregates, not the SUM across the
+     * whole course. Pins the group_access::visible_group_ids() filter that
+     * dashboard_scope::sql_visibility() applies.
      */
     public function test_separategroups_filters_numgroups_and_aggregates(): void {
         global $DB;
@@ -196,21 +195,15 @@ final class get_dashboard_test extends \advanced_testcase {
         $groupa = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
         $groupb = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
 
-        // Two rollup rows — one per group — plus the admin-only
-        // groupid=0 ("Ungrouped") row that SEPARATEGROUPS hides.
+        // One rollup row per group, plus the groupid=0 ("Ungrouped") row that
+        // only unrestricted users see.
         $this->seed_rollup($course, 3, 1, 1, 75, 'good', (int) $groupa->id);
         $this->seed_rollup($course, 10, 5, 4, 30, 'critical', (int) $groupb->id);
         $this->seed_rollup($course, 0, 0, 0, 95, 'excellent', 0);
 
-        // Use a CUSTOM role rather than the built-in editingteacher.
-        // The editingteacher archetype grants moodle/site:accessallgroups
-        // by default, which would short-circuit the SEPARATEGROUPS rule.
-        // Modifying its capabilities mid-test (assign_capability with
-        // CAP_PREVENT) pollutes accesslib's static role-capability cache
-        // and breaks later tests in this class (e.g.
-        // test_band_filter_narrows_courses) — the cache survives
-        // resetAfterTest because PHP statics aren't in scope for Moodle's
-        // DB rollback. Touching a fresh custom role isolates the change.
+        // A custom role holding viewdashboard but not accessallgroups: the
+        // editingteacher archetype grants moodle/site:accessallgroups, which
+        // would lift the SEPARATEGROUPS restriction.
         $coursectx = \context_course::instance($course->id);
         $roleid = create_role(
             'Test teacher (no allgroups)',
@@ -269,9 +262,9 @@ final class get_dashboard_test extends \advanced_testcase {
 
     /**
      * The per-course row carries the include-pending headline medians
-     * (cur_median_eff_h / cur_median_raw_h) plus the aggregate trend and
-     * compliance the hero needs — previously these were missing, leaving the
-     * dashboard's global trend and SLA permanently blank.
+     * (cur_median_eff_h / cur_median_raw_h) plus the trend and compliance
+     * figures DashboardView's aggregate() reads for the hero; a key the WS
+     * omits leaves the hero's trend and SLA blank without any error.
      */
     public function test_returns_headline_trend_and_compliance(): void {
         $this->resetAfterTest();
@@ -319,8 +312,9 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
-     * Insert one rollup row for (courseid, groupid=0). One row is enough to
-     * exercise the aggregate path since the SQL groups by courseid.
+     * Insert one rollup row for (courseid, groupid), groupid 0 by default.
+     * One row per course is enough to exercise the aggregate path since the
+     * SQL groups by courseid.
      *
      * @param \stdClass $course
      * @param int $pending

@@ -14,10 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Priority card — used three-up on the dashboard for "GRADE NOW · PICKED
- * FOR YOU" (top-3 urgent pending submissions across all courses).
+ * Priority card — used three-up on the dashboard for "Grade now · picked
+ * for you" (the most urgent pending submissions across the dashboard's
+ * courses).
  *
- * Driven by the existing get_grader_priority_list WS shape.
+ * Takes one row of the get_grader_priority_list WS response.
  *
  * @module    block_feedback_tracker/components/PriorityCard
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -46,9 +47,8 @@ const initialsOf = (name) => {
 };
 
 /**
- * Perceived calendar wait as "Nd". Uses the server's date-based elapsed
- * calendar days (perceived_days) — the previous heuristic derived it from
- * effective hours and drifted badly on long waits.
+ * Perceived calendar wait as "Nd", from the server's date-based
+ * perceived_days; never derive days from hours.
  *
  * @param {number|null|undefined} days
  * @returns {string}
@@ -59,12 +59,11 @@ const perceivedDays = (days) => {
 };
 
 /**
- * Label for a priority card's band badge. The priority list is pending work,
- * so it uses the Waiting / Attention / Priority vocabulary shared with the
- * group-card stat tiles rather than the score-gauge words — "Excellent" /
- * "Good" never read right on a "grade now" card and stay reserved for the
- * score gauge. The band slug still drives the badge colour; only the text
- * changes. Falls back to the score band label for non-bucket bands.
+ * Label for a priority card's band badge. The list is pending work, so it
+ * uses the Waiting / Attention / Priority strings of the group-card stat
+ * tiles; the score-gauge words ("Excellent", "Good") stay on the gauge. The
+ * band slug still drives the badge colour. Other slugs fall back to the
+ * score band label.
  *
  * @param {string} band   SLA bucket slug (excellent|good|regular|critical|…).
  * @param {object} i18n   Label bundle.

@@ -30,19 +30,21 @@ namespace block_feedback_tracker\local\score;
  * Five-term weighted score on a 0-100 scale, mapped to a four-band label.
  *
  * Terms (all in [0, 1]):
- *  - compliance: % of last-30d graded within SLA goal hours
+ *  - compliance: compliance_pct / 100, the share of last-30d grades within the SLA goal
  *  - median:     1 - median_eff_h / (2 * sla_goal); 0.5 at goal, 0 at 2x goal
  *  - critical:   1 - critical / max(pending, 1)
  *  - pending:    1 - pending / max(numgraded30d, 20)
  *  - trend:      0.5 - trend_pct_30d / 200 (negative trend = improvement)
  *
- * Weights default to (0.40, 0.25, 0.15, 0.10, 0.10) summing to 1.0; admin
- * tunable via config_plugins. Partial data is treated charitably (term = 1.0
- * for compliance/median) so a group that has started work but not finished
- * grading isn't penalised. The one exception is a group with NO submitted
- * work at all (nothing graded, nothing pending): that scores null / 'nodata'
- * rather than a misleading ~100, so empty groups never top the dashboard or
+ * Weights default to (0.40, 0.25, 0.15, 0.10, 0.10) and are admin tunable.
+ * Missing data is treated charitably (compliance and median score 1.0) so a
+ * group that has started work but not finished grading is not penalised. A
+ * group with no submitted work at all (nothing graded, nothing pending)
+ * scores null / 'nodata' instead, so empty groups never top the dashboard or
  * skew averages.
+ *
+ * amd/src/lib/score.js mirrors this formula for the score simulator; keep the
+ * two in step.
  */
 class responsiveness_calculator {
     /** Default weight for the compliance term. */
@@ -58,7 +60,7 @@ class responsiveness_calculator {
 
     /** Default SLA goal hours. */
     public const DEFAULT_SLA_GOAL_HOURS = 24.0;
-    /** Default pending soft cap (used when numgraded30d is small). */
+    /** Minimum denominator of the pending term, used when numgraded30d is smaller. */
     public const PENDING_SOFT_CAP_MIN = 20;
     /** Minimum grades per week required to compute a meaningful momentum signal. */
     public const MOMENTUM_MIN_GRADES = 5;
@@ -95,12 +97,8 @@ class responsiveness_calculator {
         $medianeff = isset($metrics['median_eff_h']) ? (float) $metrics['median_eff_h'] : null;
         $trendpct = isset($metrics['trend_pct_30d']) ? (float) $metrics['trend_pct_30d'] : null;
 
-        // A group with no submitted work at all — nothing graded and nothing
-        // pending — has no responsiveness to measure. A charitable ~100 here
-        // would let an empty group masquerade as the dashboard "bright spot"
-        // and inflate course / department averages. Surface a neutral "no
-        // data" state instead: a null score (skipped by AVG(), peer_stats and
-        // every insight pick, which all ignore null scores) plus 'nodata'.
+        // Nothing to measure. A null score is ignored by AVG(), peer_stats and
+        // the insight picks, where a charitable ~100 would top the dashboard.
         if ($numgraded === 0 && $pending === 0) {
             return [
                 'score' => null,
@@ -128,16 +126,10 @@ class responsiveness_calculator {
         $softcap = max($numgraded, self::PENDING_SOFT_CAP_MIN);
         $pendingterm = self::clamp01(1.0 - $pending / $softcap);
 
-        /*
-         * v1.0.7 — adaptive trend weight. When the rollup has no prior
-         * 30-day window to compare against (typically: course just started),
-         * trendpct is null. Previously we substituted 0.5 (neutral) which
-         * dragged a fresh-course's theoretical maximum from 100 to 95.
-         * Now we mark the term unavailable, drop weight_trend, and
-         * renormalise the remaining weights so the score can legitimately
-         * reach 100. The breakdown panel skips the trend row entirely
-         * when the term is null — see GroupCard.buildBreakdown().
-         */
+        // Without a prior 30-day window (typically a course that has just
+        // started) there is no trend. The term is dropped and the other
+        // weights renormalised; a neutral 0.5 would cap such a course below 100
+        // (at 95 with the default weights).
         $trend = $trendpct === null
             ? null
             : self::clamp01(0.5 - $trendpct / 200.0);
@@ -178,22 +170,20 @@ class responsiveness_calculator {
 
     /**
      * Week-over-week change in median effective hours for one group, used
-     * by the dashboard's "Momentum" insight to celebrate sharp recoveries
-     * (e.g. a new teacher inheriting a low-scoring class who turns it
-     * around in days).
+     * by the dashboard's "Most improved" insight to spot sharp recoveries
+     * before the 30-day trend catches up. Never feeds the score.
      *
-     * Both windows are 7-day calendar slices ending at `$now`:
-     *   - recent window: grades within (now - 7d, now]
-     *   - prior  window: grades within (now - 14d, now - 7d]
+     * Both windows are 7-day slices of timegraded ending at `$now`:
+     *   - recent window: [now - 7d, now)
+     *   - prior  window: [now - 14d, now - 7d)
      *
-     * Returns the % change of the recent median vs the prior median.
-     * Negative = improving (faster turnaround). Returns null when either
-     * window has fewer than {@see self::MOMENTUM_MIN_GRADES} grades —
-     * small samples produce noise rather than signal.
+     * Returns the % change of the recent median vs the prior median, negative
+     * meaning faster turnaround. Returns null when either window has fewer
+     * than {@see self::MOMENTUM_MIN_GRADES} grades (too small a sample) or the
+     * prior median is not positive.
      *
-     * This is read-only from the ledger; no caching, no schema. The
-     * caller (get_insights) is itself cached for 15 minutes, so per-render
-     * cost is bounded.
+     * Runs up to two ledger queries per call and caches nothing; its caller
+     * {@see \block_feedback_tracker\external\get_insights} caches its result.
      *
      * @param int $courseid
      * @param int $groupid
@@ -264,15 +254,15 @@ class responsiveness_calculator {
     /**
      * Compute effective per-term weights given which terms have data.
      *
-     * Terms flagged `false` in $available are dropped (weight = 0) and the
-     * remaining weights are renormalised proportionally to sum 1.0. When
-     * every term is available, the input weights pass through unchanged.
-     * When every term is unavailable, every effective weight is 0 — the
-     * caller is responsible for guarding against this degenerate case.
+     * Terms not flagged true in $available are dropped (weight 0) and the
+     * remaining weights are scaled to sum 1.0, so even with every term
+     * available a load_weights() result inside its [0.95, 1.05] tolerance is
+     * rescaled here. When no term is available every weight is 0; the caller
+     * must guard against that case.
      *
      * @param array $weights Admin-configured weights (already normalised by load_weights()).
      * @param array $available Per-term availability flags.
-     * @return array<string, float>            Renormalised weights, same keys as $weights.
+     * @return array<string, float> Renormalised weights, same keys as $weights.
      */
     public static function effective_weights(array $weights, array $available): array {
         $keepsum = 0.0;
@@ -313,11 +303,12 @@ class responsiveness_calculator {
     }
 
     /**
-     * Parse the score-band thresholds setting (CSV) into a descending
-     * three-element float array [excellent_min, good_min, regular_min].
-     * Returns the design defaults (90, 70, 40) if the setting is malformed.
-     * Mirrors the bucket::parse_thresholds_eff() shape so settings.php can
-     * follow the same pattern for both.
+     * Parse the score-band thresholds setting (CSV) into a three-element
+     * float array [excellent_min, good_min, regular_min].
+     *
+     * Each missing or non-numeric element falls back to its own default
+     * (90, 70, 40). The values are neither clamped nor sorted, so
+     * {@see self::band_for()} assumes the admin typed them in descending order.
      *
      * @return array{0:float, 1:float, 2:float}
      */
@@ -331,9 +322,12 @@ class responsiveness_calculator {
     }
 
     /**
-     * Load the five weights from config_plugins. Normalise to sum 1.0 if the
-     * configured sum is outside [0.95, 1.05]; falls back to defaults if any
-     * weight is missing or non-numeric.
+     * Load the five weights from config_plugins.
+     *
+     * A missing, non-numeric or negative weight falls back to its own default;
+     * if the weights then sum to zero, all defaults are returned. A sum outside
+     * [0.95, 1.05] is normalised to 1.0. Normalisation happens here, at read
+     * time, so the stored settings keep the values the admin typed.
      *
      * @return array{compliance:float, median:float, critical:float, pending:float, trend:float}
      */

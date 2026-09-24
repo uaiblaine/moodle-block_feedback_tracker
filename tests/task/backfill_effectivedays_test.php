@@ -29,10 +29,9 @@ namespace block_feedback_tracker\task;
 
 /**
  * A resumable upgrade backfill: armed by config, walked with a keyset cursor,
- * finished by flipping a done flag. None of that was covered, and a paging or
- * arming defect would silently leave NULL effectivedays on an upgraded site —
- * which is the condition that makes the day-mode bands fall back rather than
- * read real data.
+ * finished by flipping a done flag. A paging or arming defect would silently
+ * leave NULL effectivedays on an upgraded site, which makes the day-mode band
+ * counts fall back to calendar days instead of the stored business-day count.
  *
  * @covers \block_feedback_tracker\task\backfill_effectivedays
  */
@@ -262,8 +261,8 @@ final class backfill_effectivedays_test extends \advanced_testcase {
     }
 
     /**
-     * A completed run writes an audit entry so the backfill is visible in the
-     * recompute log rather than happening silently.
+     * Each tick that fills rows writes an audit entry, so the backfill is
+     * visible in the recompute log rather than happening silently.
      *
      * @return void
      */

@@ -31,9 +31,11 @@ use block_feedback_tracker\local\audit\recompute_log;
 use core_external\external_api;
 
 /**
- * The course filter is applied after the rows have already been decoded, so
- * the contract this pins is that `total` and the returned page describe the
- * same set: paging to `total` must yield every match exactly once.
+ * Tests for get_audit_log.
+ *
+ * The course filter matches a fragment of the JSON `details` column in SQL;
+ * the contract pinned here is that `total` and the returned page describe the
+ * same set, so paging to `total` yields every match exactly once.
  *
  * @covers \block_feedback_tracker\external\get_audit_log
  */
@@ -93,9 +95,8 @@ final class get_audit_log_test extends \advanced_testcase {
     }
 
     /**
-     * The regression: total must count the filtered set, not the unfiltered
-     * one. Reporting 8 while returning 3 makes any client pager render empty
-     * pages forever.
+     * Total counts the filtered set, not the whole table; a total larger than
+     * the matches makes a client pager render empty pages.
      *
      * @return void
      */
@@ -121,8 +122,9 @@ final class get_audit_log_test extends \advanced_testcase {
     }
 
     /**
-     * The matches sit entirely outside the first SQL page window, so the old
-     * behaviour returned an empty first page while claiming a non-zero total.
+     * The matches sit entirely outside the first unfiltered page, so a course
+     * filter applied after the LIMIT would return an empty first page while
+     * claiming a non-zero total.
      *
      * @return void
      */
@@ -251,7 +253,7 @@ final class get_audit_log_test extends \advanced_testcase {
     }
 
     /**
-     * The endpoint is admin-only.
+     * A user without viewaudit at system context is refused.
      *
      * @return void
      */

@@ -42,10 +42,10 @@ use block_feedback_tracker\local\sla\submission_status;
  */
 final class reconcile_ledger_test extends \advanced_testcase {
     /**
-     * Flush per-request statics that survive resetAfterTest(), and swallow the
-     * task's mtrace() output — PHPUnit 11 treats unexpected stdout as a risky
-     * test. The trace lines are operational logging, not assertions
-     * (setOutputCallback() was removed in PHPUnit 10+).
+     * Flush per-request statics that survive resetAfterTest(), and buffer the
+     * task's mtrace() output, which Moodle's PHPUnit configuration
+     * (beStrictAboutOutputDuringTests) reports as a risky test.
+     * test_a_refused_repair_batch_is_reported() reads this buffer.
      *
      * @return void
      */
@@ -203,8 +203,8 @@ final class reconcile_ledger_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
         $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
 
-        // Unenrol, then remove the source row too so the orphan sweep is not
-        // what does the work — this must be the participant sweep.
+        // Unenrol only: the source row stays, so the orphan sweep has nothing to
+        // delete and the participant sweep has to do the work.
         $instances = enrol_get_instances($course->id, true);
         $plugin = enrol_get_plugin('manual');
         foreach ($instances as $instance) {
@@ -221,13 +221,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * The departed-participant deletion must survive the next tick.
      *
-     * The missing-row sweep runs first on every tick and reads
-     * {assign_submission} directly, so without an enrolment predicate it
-     * rebuilds precisely the rows the participant sweep removed on the tick
-     * before — an unenrolled student's work reappearing for ever, one backfill
-     * dispatch and one rollup recompute per round trip. One tick cannot show
-     * this: the deletion happens after the rebuild within a single run, so the
-     * assertion has to be made on the second.
+     * The missing-row sweep reads {assign_submission} directly, so without its
+     * enrolment predicate it would dispatch a rebuild of the rows the
+     * participant sweep removed, on every tick. In registry order it runs
+     * before the participant sweep, so only the second tick can show that.
      *
      * @return void
      */
@@ -271,11 +268,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
      *
      * `delete_user()` unenrols on its way through, so it exercises the
      * enrolment predicate rather than this one and would pass with or without
-     * the `deleted` test. The state pinned here — `{user}.deleted = 1` with the
-     * enrolment intact — is what a delete interrupted partway leaves behind,
-     * and it is the state the departed-participant sweep already deletes,
-     * because `get_enrolled_sql()` joins `{user}` with `u.deleted = 0`. The two
-     * sweeps have to agree on it or they resume fighting.
+     * the `deleted` test. The state pinned here, `{user}.deleted = 1` with the
+     * enrolment intact, is one the departed-participant sweep already deletes,
+     * because `get_enrolled_sql()` filters on `u.deleted = 0`; the missing-row
+     * sweep has to agree, or the two undo each other on every tick.
      *
      * @return void
      */
@@ -313,12 +309,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * An activity on the front page is still repaired.
      *
-     * Nobody holds a {user_enrolments} row on the site course, and core knows
-     * it: `get_enrolled_join()` skips the enrolment join outright when the
-     * course context is SITEID. A missing-row sweep that demanded an enrolment
-     * unconditionally would therefore stop repairing front-page activities
-     * altogether — silently, which is worse than the oscillation the predicate
-     * exists to end.
+     * Nobody holds a {user_enrolments} row on the site course, and
+     * `get_enrolled_join()` skips the enrolment join when the course is
+     * SITEID. A missing-row sweep that demanded an enrolment unconditionally
+     * would silently stop repairing front-page activities.
      *
      * @return void
      */
@@ -361,15 +355,14 @@ final class reconcile_ledger_test extends \advanced_testcase {
      * A grade that exists only in the gradebook is found, and then left alone.
      *
      * No event announces it: flipping a grade to overridden fires nothing, and
-     * a re-grade to the same value fires nothing either, because core gates the
-     * event on the final grade value having changed. So the sweep is the only
-     * thing that can close such a cycle.
+     * neither does a re-grade to the same value, because core fires
+     * `user_graded` only when the final grade changes. Only the sweep can close
+     * such a cycle.
      *
-     * The second half is the part worth testing. The whole model is monotone —
-     * a response is only ever recorded earlier, never withdrawn — precisely so
-     * that a sweep and the writer can never disagree about the same facts. A
-     * second pass that kept queueing repairs would mean they do, which is the
-     * failure this file already carries one regression test for.
+     * The second pass must then queue nothing. A response is only ever recorded
+     * earlier, never withdrawn, so once the writer has closed the row the sweep
+     * has nothing left to disagree with; a pass that kept queueing repairs
+     * would mean the two read the same facts differently.
      *
      * @return void
      */
@@ -488,11 +481,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * On 4.5 and 5.1 only the batch "Set allocated marker" operation fires
-     * `marker_updated`; quick grading and the grading form write the flag in
-     * silence. Without this sweep the marker turnaround is measurable only for
-     * batch-allocated work, which on most sites is a small and non-random
-     * slice — so the discovery is recorded, and recorded as a discovery.
+     * A marker allocation written with no `marker_updated` event is discovered
+     * and stamped as `reconciled`, so a discovery stays separable from an
+     * observed allocation. See reconcile_ledger::sweep_unstamped_allocations()
+     * for which core paths allocate silently.
      *
      * @return void
      */
@@ -538,12 +530,11 @@ final class reconcile_ledger_test extends \advanced_testcase {
      * Switching reconciliation off actually stops it.
      *
      * `reconcile_active` is a default-ON checkbox, so core stores the off state
-     * as the string '0'. The guard used to read it with `?: 1`, under which '0'
-     * is falsy and yields 1 — the documented escape hatch never fired.
+     * as the string '0'; a `?: 1` read would turn that back on.
      *
-     * The control matters more than the assertion here: six of the nine sweeps
-     * write no ledger row at all, they queue adhoc repairs, so "assert no
-     * ledger rows appeared" would pass whether the guard fires or not. This
+     * The control matters more than the assertion here: seven of the nine
+     * sweeps queue adhoc tasks instead of writing ledger rows, so "no ledger
+     * rows appeared" would pass whether the guard fires or not. The control
      * proves the sweeps were queueing before the setting was touched.
      *
      * @return void
@@ -578,15 +569,14 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * A team row for mod_assign's DEFAULT group is not an orphan.
+     * A team row for mod_assign's default group is not an orphan.
      *
-     * The default team group IS group 0, so a member row for it is stored with
-     * `teamgroupid = 0` — byte-identical to an individual row. Discriminating
-     * on that stored value made the orphan sweep probe for `s.userid = l.userid`
-     * while the source row carries `userid = 0`; it found nothing and deleted a
-     * perfectly good member row, which the missing-team sweep then recreated on
-     * the next tick. The live `assign.teamsubmission` flag is the only thing
-     * that can tell the two shapes apart.
+     * The default team group is group 0, so a member row for it is stored with
+     * `teamgroupid = 0`, identical to an individual row. Treated as individual,
+     * the orphan probe looks for `s.userid = l.userid` while the source row
+     * carries `userid = 0`, finds nothing and deletes a valid member row, which
+     * the missing-team sweep then rebuilds. Only the live
+     * `assign.teamsubmission` flag tells the two shapes apart.
      *
      * @return void
      */
@@ -628,11 +618,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
         );
         $after = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
         $this->assertNotEmpty($after, 'A default-group team member row is not an orphan.');
-        /* Identity, not existence. The missing-team sweep runs before the orphan
-         * sweep, so a deleted row is rebuilt on the following tick and a test
-         * that only asks "is there a row" passes while the pair thrash — one
-         * backfill dispatch and one rollup recompute per round trip. A changed
-         * id is the fingerprint of that round trip. */
+        /* Identity, not existence: the missing-team sweep runs before the
+         * orphan sweep, so a deleted row is rebuilt on the following tick and
+         * only a changed id shows the delete-and-rebuild cycle. */
         $this->assertSame(
             $rowid,
             (int) $after->id,
@@ -642,13 +630,8 @@ final class reconcile_ledger_test extends \advanced_testcase {
 
     /**
      * Every member of a team gets a row, and the repair is dispatched once for
-     * the GROUP rather than once per member.
-     *
-     * Ledger rows are per member while the repair is per group:
-     * `upsert_for_cm_user_attempt()` re-routes any member of a team activity
-     * back through the whole-group fan-out, so one descriptor per member ran
-     * the entire fan-out once per member — quadratic in group size, and split
-     * across parallel adhoc tasks that then raced to write the same rows.
+     * the group rather than once per member; reconcile_ledger::buffer_repairs()
+     * says why.
      *
      * @return void
      */
@@ -691,9 +674,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
             );
         }
 
-        /* Drive a ledger-rooted dispatching sweep: the latest flag drifting is
-         * the direct fingerprint of add_attempt(), and it selects one row PER
-         * MEMBER — which is the shape that used to fan out three times. */
+        /* Drive a ledger-rooted dispatching sweep: latest-flag drift is what
+         * add_attempt() leaves behind, and the sweep selects one row per
+         * member, three here, which must collapse into one descriptor. */
         $DB->set_field('block_feedback_tracker_sub', 'islatest', 0, ['cmid' => $cm->id]);
         $DB->delete_records('task_adhoc');
         (new reconcile_ledger())->execute();
@@ -722,10 +705,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * A due date changed with no event is repaired.
      *
-     * Due dates, cut-offs, overrides and extensions all move with no per-row
-     * signal, so the stored rule silently stops describing the activity and
-     * every downstream "within SLA" answer is computed against a deadline that
-     * no longer exists. The rule sweep is the only thing that notices.
+     * Due dates, cut-offs, overrides and extensions change with no per-row
+     * signal, so a stale stored rule would put every "within SLA" answer
+     * against a deadline that no longer exists. Only the rule sweep notices.
      *
      * @return void
      */
@@ -745,9 +727,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $this->assertSame(1, (int) $row->hasrule, 'Sanity: an activity with a due date carries a rule.');
         $this->assertSame($duedate, (int) $row->timecloses, 'Sanity: the stored rule matches the activity.');
 
-        /* Core moves the due date with no per-row event, which is exactly the
-         * hole this sweep exists to cover — so the fixture writes it the same
-         * silent way rather than going through the module's own update path. */
+        /* Written directly: the module's own update path fires
+         * course_module_updated, whose observer re-derives every row itself
+         * and would leave the rule sweep nothing to repair. */
         $moved = $duedate + 3 * 86400;
         $DB->set_field('assign', 'duedate', $moved, ['id' => $assign->id]);
 
@@ -764,12 +746,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * A repair that could not be queued is reported, not assumed.
      *
-     * `queue_adhoc_task()` returns false when an identical payload is already
-     * pending — and since Moodle 5.2 also for a refused component, before the
-     * dedup check runs. On 4.5 a retry-exhausted row still matches the probe,
-     * so an identical payload stays blocked for as long as
-     * `task_adhoc_failed_retention` keeps the dead row. Discarding that return
-     * made the sweep count a repair it never dispatched.
+     * `queue_adhoc_task()` returns false when nothing was queued, most often
+     * because an identical payload is already pending; see
+     * reconcile_ledger::queue_repair() for the other cases. The sweep must not
+     * count such a batch as dispatched.
      *
      * @return void
      */
@@ -781,7 +761,7 @@ final class reconcile_ledger_test extends \advanced_testcase {
 
         $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
 
-        // First tick queues the repair. It is deliberately NOT drained.
+        // First tick queues the repair, which is deliberately not drained.
         (new reconcile_ledger())->execute();
         $this->assertSame(
             1,
@@ -789,9 +769,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
             'Control: the first tick must actually queue something to be refused later.'
         );
 
-        /* The cursor resets whenever a sweep returns fewer rows than the batch,
-         * so the next tick rebuilds a byte-identical payload — which is what
-         * core's dedup compares. */
+        /* The first tick's window was shorter than the batch, so the cursor
+         * wrapped to 0 and this tick rebuilds a byte-identical payload, which
+         * is what core's dedup compares. */
         ob_clean();
         (new reconcile_ledger())->execute();
         $output = (string) ob_get_contents();
@@ -811,11 +791,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * Every tick records what it cost, including the ones that repair nothing.
      *
-     * Reconciliation emitted no audit row at all, so the only thing anyone
-     * could see was the cron duration of a task that does nine different
-     * things. The converged tick is the one that matters most: nine diffs that
-     * find nothing are this task's steady-state cost, and no claim about making
-     * it cheaper can be checked without a number to compare against.
+     * Without the audit row the only visible cost would be the cron duration
+     * of a task that runs nine sweeps. The converged tick matters most: nine
+     * diffs that find nothing are the task's steady-state cost, the baseline
+     * any optimisation has to be measured against.
      *
      * @return void
      */
@@ -839,9 +818,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $this->assertFalse($details['timecapped'], 'A one-row tick cannot have hit the cap.');
         $this->assertSame([], $details['skipped'], 'And nothing was skipped.');
 
-        /* The second tick is the control AND the claim: the ledger is now
-         * correct, so the sweeps repair nothing — and the row still has to
-         * appear, carrying the cost of having proved it. */
+        /* The second tick is both the control and the claim: the ledger is now
+         * correct, so the sweeps repair nothing, and the row must still appear
+         * with the cost of having proved it. */
         $DB->delete_records('block_feedback_tracker_log');
         $this->run_reconciler();
 
@@ -852,10 +831,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $this->assertArrayHasKey('emptyms', $seconddetails);
         $this->assertGreaterThan(0, (int) $seconddetails['courses'], 'The scope of the pass is recorded.');
 
-        /* A sweep that returned fewer rows than the batch spent its driving
-         * set, so its pass completed. The departed-participant sweep answers
-         * this too since its cursor became a courseid keyset: its driving set
-         * is the tracked-course list, and one course fits in one tick. */
+        /* A sweep whose window came back shorter than the batch spent its
+         * driving set, so its pass completed. The departed-participant sweep's
+         * driving set is the tracked-course list, and one course fits in one
+         * tick. */
         $this->assertTrue($seconddetails['sweeps']['missing']['exhausted'], 'The pass completed.');
         $this->assertTrue(
             $seconddetails['sweeps']['participant']['exhausted'],
@@ -866,14 +845,12 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * More than one course sheds its departed participants in a single tick.
      *
-     * The sweep used to visit exactly one course per tick behind a cursor that
-     * was an index into the tracked-course list, so a full pass cost one tick
-     * per course — at the two-hourly schedule, months on a large site. Every
-     * other test in this file uses one course, which is why the defect could
-     * live here undisturbed.
+     * The sweep visits several courses per tick behind a course-id cursor.
+     * Every other test in this file uses one course, so this is the one that
+     * notices a sweep stopping after the first.
      *
      * The still-enrolled student in each course is the control: without them
-     * this would pass if the sweep deleted everything, or nothing.
+     * this would pass if the sweep deleted everything.
      *
      * @return void
      */
@@ -925,10 +902,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * A tick resumes after the last sweep that ran, not at the registry head.
      *
-     * The cap is tested between sweeps and the order was fixed, so on a site
-     * whose ticks run out of budget the sweeps at the end of the registry were
-     * never reached — the rule and allocation ones, meaning due-date drift and
-     * marker turnaround simply stopped being repaired, with nothing saying so.
+     * The time cap is tested between sweeps, so with a fixed order a site whose
+     * ticks run out of budget would never reach the end of the registry, where
+     * the rule and allocation sweeps sit.
      *
      * @return void
      */
@@ -963,13 +939,12 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * A tick that runs no sweep at all leaves the rotation marker alone.
      *
-     * The marker is seeded from its stored value rather than left undefined or
-     * blanked. Undefined would be a fatal warning under --fail-on-warning;
-     * blanked would reset every tick to registry order, which is the starvation
-     * rotation exists to prevent, reintroduced by the fix for it.
+     * The marker is seeded from its stored value: left undefined it would raise
+     * a PHP warning, which fails the run under fail-on-warning; blanked, every
+     * such tick would reset rotation to registry order.
      *
      * A stored '-1' is deliberate: it survives the `?:` read that a stored '0'
-     * would not, so the deadline really is already past when the loop starts.
+     * would not, so the deadline is already past when the loop starts.
      *
      * @return void
      */
@@ -1000,13 +975,13 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * The allocation stamp leaves the reconciler's own time budget.
+     * The allocation stamp runs outside the reconciler's own time budget.
      *
-     * stamp_allocation_for_user() runs the academic-time engine once per ledger
-     * row of the pair, and the sweep called it inline — inside a cap shared by
-     * every sweep, on the one sitting last in the registry. This asserts the
-     * work is now dispatched: after the tick and before the queue is drained,
-     * nothing has been stamped and a worker is waiting.
+     * submission_ledger::stamp_allocation_for_user() runs the academic-time
+     * engine once per ledger row of the (cmid, userid) pair, so the sweep
+     * queues stamp_allocations instead of calling it inside the tick's shared
+     * time cap. After the tick and before the queue is drained, nothing has
+     * been stamped and one task is waiting.
      *
      * @return void
      */
@@ -1044,17 +1019,14 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * A window with nothing to repair still moves the cursor on.
      *
-     * The sweeps used to run one statement whose LIMIT sat over the drift
-     * predicate, so a converged ledger — the normal state — returned fewer rows
-     * than the batch on every tick, was read as "pass complete", and had its
-     * cursor wrapped to 0 after walking the whole table to prove it. The walk
-     * now bounds the rows EXAMINED and derives both the cursor and the
-     * end-of-pass claim from the window, never from what the probe returned.
+     * The walk derives both the cursor and the end-of-pass claim from the
+     * window, never from what the probe returned
+     * ({@see reconcile_ledger::walk()}). Driven one window per call (a sweep
+     * deadline already in the past) so each call's cursor can be read.
      *
-     * Driven one window at a time (a sweep deadline already in the past) so
-     * each call's cursor can be read. Mutating the walk to claim exhaustion
-     * whenever the probe returns nothing — the old behaviour — resets the
-     * cursor after the first call and this goes red.
+     * Changes that must make it fail: claiming exhaustion when the probe
+     * returns nothing, or moving the cursor from the probe result instead of
+     * from the window.
      *
      * @return void
      */
@@ -1064,7 +1036,7 @@ final class reconcile_ledger_test extends \advanced_testcase {
         $this->seed_calendar();
         [$cm, , $assign, $course] = $this->build_environment();
         $ids = $this->seed_ledger_rows($cm, $assign, $course, 6);
-        // Only the LAST row drifts: three windows of two must be walked to reach it.
+        // Only the last row drifts: three windows of two must be walked to reach it.
         $lastuser = (int) $DB->get_field('block_feedback_tracker_sub', 'userid', ['id' => end($ids)]);
         $DB->set_field('assign_submission', 'latest', 0, ['assignment' => $assign->id, 'userid' => $lastuser]);
         $DB->delete_records('task_adhoc');
@@ -1101,10 +1073,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * Drift past the first window is found within the tick.
      *
-     * One window per tick would make the fix above a new starvation: a pass
-     * over a large ledger would take one tick per window. A sweep keeps
-     * walking windows until its driving set or its share of the time cap is
-     * spent, and the audit row says how far it got.
+     * A sweep keeps walking windows until its driving set or its share of the
+     * time cap is spent, so a pass over a large ledger does not take one tick
+     * per window; the audit row records how far it got.
      *
      * @return void
      */
@@ -1147,9 +1118,9 @@ final class reconcile_ledger_test extends \advanced_testcase {
      *
      * The drift probe resolves the activity through the course module, exactly
      * as the repair writer does. Reaching {assign} directly through the stored
-     * `iteminstance` is a few milliseconds cheaper and selects rows the writer
-     * cannot repair — a module row deleted with its activity row surviving —
-     * dispatching the same no-op on every pass. The module-present case is the
+     * `iteminstance` is cheaper but selects rows the writer cannot repair (a
+     * module row deleted with its activity row surviving), dispatching the
+     * same no-op on every pass. The module-present case is the
      * control: the same drift, with the module in place, is dispatched.
      *
      * @return void
@@ -1287,8 +1258,8 @@ final class reconcile_ledger_test extends \advanced_testcase {
      *
      * The dedup that collapses a team's member rows into one container
      * descriptor spans the whole sweep, not one window: reset per window, a
-     * three-member team whose rows straddle a window boundary would fan out
-     * twice — the exact amplification the collapse exists to stop.
+     * three-member team whose rows straddle a window boundary would be
+     * dispatched twice.
      *
      * @return void
      */
@@ -1403,9 +1374,8 @@ final class reconcile_ledger_test extends \advanced_testcase {
      * The ledger row ids of one activity, ascending.
      *
      * Ordered in SQL on purpose: `get_fieldset_select()` takes no sort
-     * argument, and without one PostgreSQL returns heap order, which the
-     * upsert's follow-up UPDATE reshuffles — the first draft of these tests
-     * flaked one run in three on exactly that.
+     * argument, and without one PostgreSQL returns rows in heap order, which
+     * any UPDATE can reshuffle.
      *
      * @param int $cmid
      * @return int[]

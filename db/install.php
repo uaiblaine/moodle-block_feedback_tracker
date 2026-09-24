@@ -27,13 +27,13 @@
  * plugin's tables have been created from install.xml.
  *
  * Seeds:
- *  - calver = 1 (monotonic version bumped on every calendar save).
+ *  - calver = 1 (monotonic version that keys the calendar and payload caches).
  *  - Mon-Fri 08:00-18:00 business hours in {block_feedback_tracker_chours}.
  *  - Default calendar-behaviour flags (excludeweekends, excludeholidays, ...).
  *  - Default score-formula weights (sum 1.0) and SLA thresholds.
  *
- * Idempotent: re-running on an already-seeded site only re-asserts the config
- * defaults; the business-hours rows are inserted only when none exist.
+ * Idempotent: a config value is written only when unset, and the
+ * business-hours rows only when none exist.
  */
 function xmldb_block_feedback_tracker_install() {
     global $DB;
@@ -41,7 +41,8 @@ function xmldb_block_feedback_tracker_install() {
     $now = time();
 
     $defaults = [
-        // Calendar version: bumped by calendar::bump_version() on every cal_* save.
+        // Calendar version: bumped by calendar::bump_version() on calendar saves,
+        // rule-changing setting saves and a data reset.
         'calver'                     => '1',
 
         // Calendar behaviour.
@@ -66,17 +67,17 @@ function xmldb_block_feedback_tracker_install() {
         'bucket_thresholds_eff'      => '24,48,120',
         'bucket_thresholds_raw'      => '24,48,120',
 
-        // Score-band thresholds. CSV of three cutoffs (excellent / good /
-        // regular). Default 90/70/40 matches the design palette.
+        // Score-band thresholds: CSV of three cutoffs (excellent / good /
+        // regular). Same default as settings.php, parse_thresholds_band() in
+        // responsiveness_calculator and DEFAULT_SCORE_THRESHOLDS in amd/src/lib/bands.js.
         'score_thresholds_band'      => '90,70,40',
 
-        // Processing scope. Default OFF: hidden courses are skipped so a
-        // fresh install doesn't immediately start tracking archived terms.
+        // Processing scope. Default off: hidden courses are skipped so a
+        // fresh install does not start tracking archived terms.
         'process_hidden_courses'     => '0',
 
-        // Backfill master switch. Default OFF: install shouldn't scan
-        // {assign_submission} on large sites without admin consent.
-        // Admin flips on after dropping the block on tracked courses.
+        // Backfill master switch. Default off: install must not scan
+        // {assign_submission} on a large site without the admin's consent.
         'backfill_active'            => '0',
 
         // Performance. Pending recompute batch size — hourly pass that

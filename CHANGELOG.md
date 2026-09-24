@@ -185,6 +185,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the row now states it instead of letting a closed clock imply the student
   received something they cannot see.
 
+- **Code comments describe the code again.** Every comment was checked against
+  the code it annotates and rewritten to Moodle's comment guidance: claims that
+  had drifted from the code were corrected, notes about the development
+  environment and planning history were removed, and a rationale repeated in
+  several places now lives once, at the code that implements it. No code
+  changed; the AMD build is regenerated because its source maps carry the
+  comment text.
+
 ### Added
 - **Three lifecycle events are now observed**, closing gaps where a ledger row
   stops describing reality without any of its own values changing — the shape

@@ -21,17 +21,15 @@ Feature: The report reflects what Moodle actually did to a submission
     And the following "blocks" exist:
       | blockname        | contextlevel | reference |
       | feedback_tracker | Course       | C1        |
-    # These scenarios drive core's own grading form, so pin it: a sibling
-    # plugin that replaces the assign grading UI would otherwise change the
-    # field labels underneath them. Harmless where that plugin is absent —
-    # the step only writes a config row.
+    # These scenarios drive core's own grading form. local_unifiedgrader, when
+    # installed, replaces the assign grading UI and its field labels, so it is
+    # switched off; where it is absent the step only writes an unused config row.
     And the following config values are set as admin:
       | enable_assign | 0 | local_unifiedgrader |
 
-  # The reported defect: a student re-saving already-graded work used to
-  # un-grade the ledger row, destroying the recorded response time. Both facts
-  # must now be on screen at once, because Moodle itself reports both — the
-  # completed grading in the history, the re-look as a fresh pending item.
+  # Re-saving already-graded work must not un-grade the ledger row and lose the
+  # recorded response time. Moodle reports both facts, so both must be listed:
+  # the completed grading in the graded view, the re-save as a new pending item.
   Scenario: Re-saving graded work leaves the grading in history and opens a new pending item
     Given the following "activities" exist:
       | activity | name      | course | submissiondrafts | assignsubmission_onlinetext_enabled |
@@ -76,10 +74,9 @@ Feature: The report reflects what Moodle actually did to a submission
     And I click on "Graded" "button"
     Then I should see "Awaiting release"
 
-  # mod_assign stores a team's work in a single row with no user of its own.
-  # Mirroring it produced a pending item the list could never show, because
-  # every list joins the user table; the fan-out has to put every member on
-  # screen.
+  # mod_assign stores a team's work in one row with userid 0, and every list
+  # joins the user table, so the ledger fans that row out to one item per team
+  # member (submission_ledger::upsert_for_team_attempt()).
   Scenario: A group submission is listed against every member of the team
     Given the following "groups" exist:
       | name    | course | idnumber |

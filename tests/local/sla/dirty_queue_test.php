@@ -29,9 +29,8 @@ namespace block_feedback_tracker\local\sla;
 
 /**
  * The queue collapses a burst of writes for one (courseid, groupid) tuple into
- * a single row, and `enqueue()` is the last statement of every ledger write
- * path — so its failure modes are charged to whatever was writing the ledger,
- * long after that write has committed.
+ * a single row. `enqueue()` is called after the ledger row is written, so an
+ * exception escaping it fails the calling write path over a row already stored.
  *
  * @covers \block_feedback_tracker\local\sla\dirty_queue
  */
@@ -82,16 +81,13 @@ final class dirty_queue_test extends \advanced_testcase {
     }
 
     /**
-     * The hazard `enqueue()` recovers from is real: the tuple is unique at the
-     * database level, so a concurrent writer that inserts between the read and
-     * the insert turns an ordinary enqueue into a write exception.
+     * The tuple is unique at the database level, so a concurrent writer that
+     * inserts between `enqueue()`'s read and its insert makes the insert throw,
+     * which is what the recovery in `enqueue()` handles.
      *
-     * This is the control for the recovery path rather than the path itself.
-     * `enqueue()` reads, misses, then inserts; reproducing the miss while the
-     * row exists needs two connections interleaved inside one statement pair,
-     * which this suite has no harness for. What can be pinned is that the
-     * constraint really does fire — without it the recovery code would be
-     * guarding nothing, and this test would fail.
+     * Reproducing that race needs two interleaved connections; this pins the
+     * precondition instead. Without the unique index the recovery code guards
+     * nothing, and this test fails.
      *
      * @return void
      */

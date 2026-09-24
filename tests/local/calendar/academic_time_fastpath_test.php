@@ -431,13 +431,13 @@ final class academic_time_fastpath_test extends \advanced_testcase {
     }
 
     /**
-     * The repeated-date direction of a date-line move: Kwajalein crossed
-     * the line westward-to-eastward on 1969-09-30 and replayed most of a
-     * calendar day, with the jump landing at the replayed date's own
-     * midnight. The local date sequence stays monotone, so the fast path
-     * legitimately stays engaged — the walker folds the doubled date into
-     * one long day cell, which the transition slow range hands to it
-     * verbatim — and the result must still match exactly.
+     * The repeated-date direction of a date-line move: Kwajalein went from
+     * UTC+11 to UTC-12 at the midnight ending 1969-09-30, so the clock fell
+     * back to 01:00 on the same date and replayed 23 hours of it. The local
+     * date sequence stays monotone, so the fast path legitimately stays
+     * engaged — the walker folds the doubled date into one long day cell,
+     * which the transition slow range hands to it verbatim — and the result
+     * must still match exactly.
      */
     public function test_dateline_repeat_kwajalein(): void {
         $this->resetAfterTest();

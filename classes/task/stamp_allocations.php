@@ -30,26 +30,19 @@ use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
- * Queued by `reconcile_ledger`'s allocation sweep, which used to stamp inline.
+ * Stamps the marker allocations `reconcile_ledger`'s allocation sweep found.
  *
- * It could not route through {@see backfill_one_submission}. That task calls
- * the ordinary upsert, which writes neither `timeallocated` nor the source
- * label — and on exactly the rows this sweep selects (`timeallocated IS NULL`)
- * `allocation_measures()` returns its no-answer branch, so the upsert would
- * write nulls over four columns, leave the stamp unwritten, and let the cursor
- * move past a row that still matches the sweep. The next pass would find it
- * again, for ever.
+ * It cannot route through {@see backfill_one_submission}: the ordinary upsert
+ * writes neither `timeallocated` nor `allocsource`, so the row would still
+ * match the sweep (`timeallocated IS NULL`) on every pass.
  *
  * The discovery instant travels in the payload rather than being read from the
- * clock here. `ALLOC_SOURCE_RECONCILED` already declares the value as accurate
- * only to the sweep period; taking `time()` in the worker would add the whole
- * cron queue on top of that, and worse, would make the recorded number depend
- * on how far behind cron happens to be. Carrying it keeps what is measured
- * byte-identical to the inline version this replaces.
+ * clock here. `ALLOC_SOURCE_RECONCILED` declares the value accurate only to
+ * the sweep period; taking `time()` in the worker would add however far behind
+ * cron is running on top of that.
  *
- * The consequence is that the payload can never dedup — every batch embeds a
- * different instant, and core compares custom_data as a string. The dispatcher
- * says so by not asking. The sweep's own cursor is what bounds re-dispatch.
+ * Because every batch embeds its own instant, the payload never dedups; see
+ * {@see reconcile_ledger::queue_stamps()}.
  */
 class stamp_allocations extends \core\task\adhoc_task {
     /**

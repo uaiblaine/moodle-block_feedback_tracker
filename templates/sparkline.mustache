@@ -3,12 +3,12 @@
 
     @template    block_feedback_tracker/sparkline
 
-    Compact 30-day median effective-hours sparkline on a speed axis: fewer
-    hours (faster turnaround) render HIGHER. With an optional "desired-speed
-    zone" (light-green band anchored at the top 0 → goal, solid baseline at
-    0 hours / top edge, dotted line at the goal / minimum-desired-speed
-    boundary). Keep in lockstep with the JS port
-    amd/src/components/Sparkline.js and classes/output/sparkline.php.
+    Compact sparkline of the per-day median effective hours on a speed axis:
+    fewer hours (faster turnaround) render higher. The optional desired-speed
+    zone is a light-green band from the top edge (0 hours, solid baseline)
+    down to the dotted goal line. The geometry is computed by
+    classes/output/sparkline.php; keep in step with the JS port
+    amd/src/components/Sparkline.js.
 
     Context variables required:
     * empty       Truthy when no data points are available

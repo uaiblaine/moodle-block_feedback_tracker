@@ -30,10 +30,10 @@ use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\sla\course_access;
 
 /**
- * Per-batch worker that takes a list of (cmid, userid, attemptnumber,
- * courseid) tuples from custom data and writes one ledger row per tuple
- * via `submission_ledger::upsert_for_cm_user_attempt()`. Idempotent;
- * re-checks `course_access::is_processable()` at execute time.
+ * Pins the worker that backfill_history and reconcile_ledger queue: one ledger
+ * row per individual row of its payload, idempotent on a re-run, and re-gated
+ * at execute time on course processability and on the user still being an
+ * active participant.
  *
  * @covers \block_feedback_tracker\task\backfill_one_submission
  */
@@ -150,16 +150,13 @@ final class backfill_one_submission_test extends \advanced_testcase {
     /**
      * A repair queued before the student left is dropped when it finally runs.
      *
-     * The reconciler's delete-side sweep removes the rows of people who are no
-     * longer active participants, while its dispatching sweeps queue repairs
-     * for rows they selected earlier. Nothing makes those two happen in the
-     * same tick: core backs a failed adhoc task off from 60 seconds to 86400,
-     * so a repair can legitimately land a day after it was dispatched, long
-     * after the delete. Re-checking processability is not enough — the course
-     * is still perfectly processable; it is the person who left.
+     * The reconciler's delete-side sweep and its dispatching sweeps run
+     * independently, and core backs a failing adhoc task off from 60 seconds up
+     * to a day, so a repair can land long after the delete. The course is still
+     * processable; only the participation re-check catches it.
      *
-     * The still-enrolled student is the control. Without them this test would
-     * pass if the task had simply not run.
+     * The still-enrolled student is the control: without them this test would
+     * pass if the task had not run at all.
      *
      * @return void
      */

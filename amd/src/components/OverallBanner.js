@@ -15,13 +15,13 @@
 
 /**
  * Overall responsiveness banner — sits at the top of the block view above
- * the group cards. Renders the "ACADEMIC RESPONSIVENESS" eyebrow, a
- * ScoreRing with the big numeric score + status pill, and an optional
- * scheduled-pause notice underneath.
+ * the group cards. Renders the overall_eyebrow label, a ScoreRing with the
+ * big numeric score + status pill, and an optional scheduled-pause notice
+ * underneath.
  *
- * The overall score is the caller's responsibility: BlockView computes a
- * pending-weighted average of the per-group scores so a group with no work
- * doesn't drag the headline number.
+ * The caller supplies the score: BlockView uses the whole-course aggregate
+ * from get_responsiveness and falls back to a pending-weighted average of
+ * the loaded cards.
  *
  * @module    block_feedback_tracker/components/OverallBanner
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

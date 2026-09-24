@@ -31,8 +31,10 @@ use block_feedback_tracker\local\sla\group_access;
 use core_external\external_api;
 
 /**
- * The submission id is a small sequential integer, so anything this function
- * fails to gate is enumerable by a caller who holds viewresponsiveness.
+ * Tests for get_pause_timeline.
+ *
+ * Submission ids are sequential, so anything this function fails to gate is
+ * enumerable by a caller who holds viewresponsiveness.
  *
  * @covers \block_feedback_tracker\external\get_pause_timeline
  */
@@ -99,12 +101,11 @@ final class get_pause_timeline_test extends \advanced_testcase {
     }
 
     /**
-     * The regression: a separate-groups teacher must not read timing data for
-     * a submission belonging to a group they cannot see.
+     * A separate-groups teacher must not read timing data for a submission
+     * belonging to a group they cannot see.
      *
-     * Without the gate this returns the other group's timings — the caller
-     * holds viewresponsiveness in the course, so the only check standing
-     * between them and the data is the group whitelist.
+     * The caller holds viewresponsiveness in the course, so the group
+     * whitelist is the only check between them and the other group's timings.
      *
      * @return void
      */

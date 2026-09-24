@@ -17,9 +17,9 @@
  * Peer context — supportive (not punitive) comparison panel. Three rows:
  * You (highlighted), Department (median), Top 10% (aspirational).
  *
- * Hidden entirely when neither department nor top10 data is supplied —
- * single-course sites have no meaningful peer set. The component gracefully
- * accepts nulls so callers can pass payload fields directly.
+ * Hidden entirely when neither department nor top10 is supplied, which is
+ * what peer_stats returns below its minimum sample of other scored groups.
+ * Accepts nulls so callers can pass payload fields directly.
  *
  * @module    block_feedback_tracker/components/PeerContext
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -30,8 +30,7 @@ import {html} from 'block_feedback_tracker/lib/preact';
 import {colourFor} from 'block_feedback_tracker/lib/bands';
 
 /**
- * Render a single peer-row bar. Score-only — hours were dropped so the panel
- * compares responsiveness scores, not raw times.
+ * Render a single peer-row bar (score only, clamped to 0..100).
  *
  * @param {object} props
  * @param {string} props.label

@@ -191,8 +191,8 @@ final class get_report_scopes_test extends \advanced_testcase {
         $this->seed_rollup($course, (int) $groupa->id, $studenta);
         $this->seed_rollup($course, (int) $groupb->id, $studentb);
 
-        // Strip accessallgroups from the non-editing teacher archetype so the
-        // SEPARATEGROUPS whitelist actually bites.
+        // Core does not grant accessallgroups to the non-editing teacher
+        // archetype; unassigning it keeps the test independent of that default.
         $roleid = (int) $DB->get_field('role', 'id', ['shortname' => 'teacher'], MUST_EXIST);
         unassign_capability('moodle/site:accessallgroups', $roleid);
         accesslib_clear_all_caches_for_unit_testing();

@@ -14,15 +14,10 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Grade Now panel — top-N most-urgent pending submissions across the
- * caller's accessible courses, rendered in the teacher dashboard between
- * the hero and the courses table.
+ * Grade Now panel — list of the most urgent pending submissions from the
+ * get_grader_priority_list web service.
  *
- * Stateless presentational component: parent (DashboardView) owns the
- * data + refresh + error state and passes them as props. This keeps the
- * panel testable in isolation and lets the dashboard's single refresh
- * button refetch both the courses table and this list in one round-trip
- * pair.
+ * Stateless: the caller owns the data, loading and error state.
  *
  * @module    block_feedback_tracker/components/GradeNowPanel
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -34,10 +29,8 @@ import Badge from 'block_feedback_tracker/components/Badge';
 import {formatHours} from 'block_feedback_tracker/lib/format';
 
 /**
- * Build the grader-UI URL for one submission. Targets Moodle's standard
- * single-user grading interface so the teacher lands on the grade form
- * with one click. The cmid + userid pair is enough; mod_assign resolves
- * the rest.
+ * Build the grader-UI URL for one submission: mod_assign's single-user
+ * grading interface, which needs only the cmid and userid.
  *
  * @param {number} cmid
  * @param {number} userid

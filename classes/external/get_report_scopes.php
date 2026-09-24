@@ -40,10 +40,9 @@ use core_external\external_value;
  * scope per visible group, read straight from the materialised rollup
  * ({block_feedback_tracker_group}) plus display names. Deliberately skips
  * everything the full responsiveness payload assembles per group (trend
- * series, peer stats, activity schedules, paused aggregates) — the report
+ * series, peer stats, activity schedules, paused aggregates): the report
  * only needs these headline numbers, and reading them as rollup columns
- * keeps the call one indexed SELECT so the page can load it asynchronously
- * after first paint.
+ * keeps the call cheap enough for the page to load it after first paint.
  */
 class get_report_scopes extends external_api {
     /**
@@ -123,8 +122,8 @@ class get_report_scopes extends external_api {
         $titles = responsiveness_payload::resolve_group_titles($groupnames);
 
         // Counts follow the banding ruler: business-days mode serves the
-        // day-ruler twins, falling back to the hour counts until the rollup
-        // has been recomputed with the new columns.
+        // day-ruler twins, falling back to the hour counts while the rollup
+        // has not yet filled critical_days for the group.
         $usedays = bucket::use_day_thresholds();
 
         $groups = [];

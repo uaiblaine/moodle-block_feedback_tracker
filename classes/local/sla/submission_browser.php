@@ -41,12 +41,13 @@ namespace block_feedback_tracker\local\sla;
 class submission_browser {
     /** Pending mode: submitted work awaiting feedback (timegraded IS NULL). */
     public const MODE_PENDING = 'pending';
-    /* Graded mode is deliberately ALL-TIME while every other graded consumer is
-     * windowed to 30 days. This tab is an audit surface: a teacher opens it to
-     * see everything they have returned. The 30-day windows elsewhere feed the
-     * score and the medians, which have to be comparable across groups. Two
-     * different purposes, so the divergence is intentional — do not align them. */
-    /** Graded mode: submitted work already returned (timegraded IS NOT NULL). */
+    /**
+     * Graded mode: submitted work already returned (timegraded IS NOT NULL).
+     *
+     * All-time on purpose, unlike the windowed graded stats in rollup_service:
+     * this tab is an audit of everything a teacher returned, while the windowed
+     * stats feed the score and must stay comparable across groups.
+     */
     public const MODE_GRADED = 'graded';
     /** Draft mode: saved-but-not-submitted work (never counts toward the SLA). */
     public const MODE_DRAFT = 'draft';
@@ -239,12 +240,11 @@ class submission_browser {
             $t2 = $gradedrow ? (int) $r->timegraded : time();
             $days = \block_feedback_tracker\local\calendar\day_counter::between((int) $r->timesubmitted, $t2);
             $storeddays = $r->effectivedays !== null ? (float) $r->effectivedays : null;
-            // Displayed result band. A graded row freezes its effective
-            // measure at grading time, so its band is always knowable: when
-            // the stored value still resolves to the "pending" sentinel (a
-            // legacy row whose effectivedays column was never backfilled, or a
-            // row graded entirely within a paused window), reclassify from the
-            // frozen effective measure so a graded row never shows "pending".
+            // Displayed result band. A graded row's effective measure is frozen
+            // at grading time, so when the stored value still resolves to the
+            // "pending" sentinel (a legacy row: effectivedays never backfilled,
+            // or slabucket left at its column default), reclassify from the
+            // frozen measure so a graded row never shows "pending".
             $slabucket = $usedays
                 ? bucket::for_effective_days($storeddays)
                 : (string) $r->slabucket;
@@ -280,32 +280,25 @@ class submission_browser {
                     ? self::pending_band_days($storeddays ?? (float) $days['business'], $daygoal, $daycrit)
                     : self::pending_band($eff, $goal, $crit),
                 'submissionstatus' => (string) $r->submissionstatus,
-                /* Two disclosures, on the same footing as awaitingrelease
-                 * below and for the same reason. A cycle closed from the
-                 * gradebook was never marked inside the activity, so a teacher
-                 * looking at the grading screen finds nothing there to explain
-                 * it. And a grade the gradebook is hiding has reached nobody
-                 * yet, whatever the activity's own screen says. */
+                /* closedsource and gradehidden are disclosed like awaitingrelease:
+                 * a cycle closed from the gradebook leaves nothing on the
+                 * activity's grading screen to explain it, and a grade the
+                 * gradebook hides has not reached the student yet. */
                 'closedsource'     => (string) ($r->closedsource ?? ''),
-                /* Read live, not from the stored column. Visibility is not a
-                 * measurement: core fires no event when a grade is hidden or
-                 * un-hidden, and a hide-until date expires with the passage of
-                 * time alone. The stored snapshot is therefore right only for
-                 * the ordering "hidden first, graded second", and stale for the
-                 * mark-now-publish-later workflow this tag exists to flag. */
+                /* Read live from the gradebook, never stored in the ledger: core
+                 * fires no event when a grade is hidden or un-hidden, and a
+                 * hide-until date expires by itself. */
                 'gradehidden'      => (int) ($hiddennow[(int) $r->id] ?? 0),
-                /* A mark that the marking workflow has not released is
-                 * invisible to the student, and releasing frequently needs a
-                 * permission the marker does not hold — so it is surfaced
-                 * explicitly instead of being folded into "graded". */
+                /* A mark the marking workflow has not released is invisible to
+                 * the student, and releasing often needs a capability the marker
+                 * lacks (mod/assign:releasegrades), so it is flagged rather than
+                 * shown as plain "graded". */
                 'awaitingrelease'  => (int) (
                     $r->timemarked !== null && $r->timeclosed === null
                 ),
-                /* The response interval split by owner: how long the work
-                 * waited to be allocated, and how long the marker then took.
-                 * Per-row facts, so unlike the aggregate medians they carry no
-                 * sampling caveat — a row either has both stamps or reports
-                 * null. */
+                /* The response interval split by owner: hand-in to first
+                 * allocation, then the current marker's turnaround. Null where
+                 * the row has no measurement. */
                 'queuehours'       => $r->queuehours !== null ? (float) $r->queuehours : null,
                 'allochours'       => $r->allochours !== null ? (float) $r->allochours : null,
             ];
@@ -318,36 +311,27 @@ class submission_browser {
      * SQL expression for a row's elapsed-day count, with a fallback for rows
      * whose `effectivedays` was never backfilled.
      *
-     * Without a fallback every day-mode predicate compares against NULL, which
-     * is never true, so an un-backfilled row silently leaves every band while
-     * still being counted in the total — the distribution stops summing to the
-     * number of rows on screen.
+     * Without a fallback every day-mode predicate compares against NULL, so an
+     * un-backfilled row leaves every band while still counting in the total.
      *
      * The fallback measures the same interval the stored column would have:
      * submission to grading for graded rows, submission to now for pending
-     * ones (which is what `pending_recomputer` writes).
+     * ones (which is what `pending_recomputer` writes). It counts calendar
+     * days, because the business-day engine has no SQL equivalent; calendar
+     * days are always >= business days, so a row can only land in a worse
+     * band, never be reported as better than it is.
      *
-     * It counts *calendar* days, because the business-day calendar engine has
-     * no SQL equivalent. Calendar days are always >= business days, so the
-     * estimate can only place a row in a worse band, never a better one. That
-     * is the safe direction: an un-backfilled row may look more urgent than it
-     * is, but it is never quietly reported as excellent — which for a priority
-     * list would hide exactly the rows that need attention most.
-     *
-     * Transitional — once `backfill_effectivedays` completes, no row reaches
-     * the fallback at all.
+     * Once the `backfill_effectivedays` task completes no row reaches the
+     * fallback.
      *
      * @param string $mode Browse mode.
      * @param int $now Reference timestamp for pending rows.
      * @return string SQL expression usable anywhere sub.effectivedays was.
      */
     private static function days_expr(string $mode, int $now): string {
-        /* Clamped at zero. A legacy row written before the cycle model could
-         * hold timegraded < timesubmitted (the old code overwrote the hand-in
-         * time on every re-save), and a negative day count sorts to the top of
-         * a priority list — the loudest possible place for a bad number.
-         * Expressed as CASE rather than GREATEST: core uses GREATEST nowhere,
-         * and it is absent from SQL Server before 2022. */
+        /* Clamped at zero: a legacy row written before the cycle model can hold
+         * timegraded < timesubmitted. CASE rather than GREATEST, which core
+         * never uses and SQL Server lacks before 2022. */
         if ($mode === self::MODE_GRADED) {
             $raw = 'COALESCE(sub.effectivedays, (sub.timegraded - sub.timesubmitted) / 86400.0)';
         } else {
@@ -382,16 +366,11 @@ class submission_browser {
         $where = 'sub.courseid = :courseid';
         $params = ['courseid' => $courseid];
 
-        /* Open work is gated on the live state of the attempt: `islatest`
-         * mirrors assign_submission.latest (core gates every one of its own
-         * needs-grading reads on it, so a superseded attempt is nobody's
-         * outstanding task) and `iscurrent` keeps one attempt to a single live
-         * observation when a resubmission opened a later cycle.
-         *
-         * The graded side deliberately keeps EVERY cycle: a teacher who
-         * responded twice generated two genuine response events, and dropping
-         * the earlier one would re-create exactly the data loss the cycle
-         * model exists to prevent. */
+        /* Open work (pending, draft) is gated on the live state of the attempt:
+         * `islatest` mirrors assign_submission.latest, on which core gates its
+         * own needs-grading reads, and `iscurrent` keeps one live observation
+         * per attempt once a resubmission opened a later cycle. The graded side
+         * keeps every cycle: each is a genuine response event. */
         if ($mode === self::MODE_DRAFT) {
             $where .= ' AND sub.submissionstatus = :substatus';
             $where .= ' AND sub.islatest = 1 AND sub.iscurrent = 1';
@@ -525,8 +504,9 @@ class submission_browser {
 
     /**
      * Distribution counts over the base (band-unfiltered) set. Pending / draft
-     * count the effective-hours bands (aguardando/atencao/prioridade); graded
-     * counts the slabucket result bands.
+     * count the wait bands (aguardando/atencao/prioridade); graded counts the
+     * result bands. Hours mode uses effective hours and the stored slabucket,
+     * business-days mode the day ruler over days_expr().
      *
      * @param string $from Shared FROM + JOIN clause.
      * @param string $basewhere Base predicate.

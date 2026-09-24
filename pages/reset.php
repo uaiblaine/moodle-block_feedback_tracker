@@ -53,8 +53,8 @@ foreach ($counts as $name => $count) {
     $countrows[] = ['table' => $name, 'count' => (int) $count];
 }
 
-// Log this admin page view to the standard site log; user, IP and origin
-// are captured automatically. Fired once per render, after any POST redirect.
+// Log this admin page view to the standard site log. Fired after the POST
+// handling so a submit or cancel is not logged twice.
 $event = \block_feedback_tracker\event\tool_page_viewed::create([
     'context' => $context,
     'other' => ['page' => 'reset'],

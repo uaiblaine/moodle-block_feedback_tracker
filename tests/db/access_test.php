@@ -28,14 +28,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker\db;
 
 /**
- * Every capability used by a web service has a refusal test, enforced by
- * services_coverage_test. `resetdata` is the one that does not: it is used
- * only by pages/reset.php, so no web-service test reaches it, and it guards
- * the irreversible wipe of every ledger, rollup, trend and queue row.
+ * Pins the capability declarations in db/access.php.
  *
- * These tests pin the declaration rather than a call site — which is the right
- * instrument, because the realistic failure is somebody widening the archetype
- * list or dropping the risk flag, not deleting the require_capability line.
+ * Capability-gated web services get refusal tests through
+ * services_coverage_test. `resetdata` is checked only by pages/reset.php and
+ * guards the irreversible wipe of every ledger, rollup, trend and queue row, so
+ * its declaration is asserted here: the likely regression is a widened
+ * archetype list or a dropped risk flag, not a deleted require_capability().
  *
  * @coversNothing
  */
@@ -52,9 +51,7 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * The data-wipe capability is manager-only. Adding editingteacher here
-     * would hand every course teacher a site-wide delete — the same archetype
-     * breadth that made the pause-window write reachable.
+     * The site-wide data-wipe capability has the manager archetype and no other.
      *
      * @return void
      */
@@ -71,8 +68,8 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * It is declared as data loss, which is what makes Moodle warn when the
-     * capability is granted.
+     * The resetdata capability carries RISK_DATALOSS, which makes the roles UI
+     * flag it as a data-loss risk.
      *
      * @return void
      */
@@ -84,9 +81,8 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * A user without the capability does not get it by being an editing
-     * teacher, and a manager does. This is the mutation check the page gate
-     * itself has no other test for.
+     * At system context, where pages/reset.php checks it, a course editing
+     * teacher does not hold resetdata and a system manager does.
      *
      * @return void
      */
@@ -112,9 +108,9 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * Every declared capability has its lang string, which is what an
-     * administrator reads when assigning it. A missing one shows the raw
-     * identifier in the roles UI.
+     * Every declared capability has its lang string. For a missing one,
+     * get_capability_string() falls through to get_string(), which raises a
+     * debugging notice and shows the [[identifier]] placeholder in the roles UI.
      *
      * @return void
      */
@@ -143,11 +139,11 @@ final class access_test extends \advanced_testcase {
     }
 
     /**
-     * Write capabilities that reach beyond a single course are the ones worth
-     * watching. managepausewindows is granted to editingteacher on purpose —
-     * teachers schedule their own course pauses — and that breadth is exactly
-     * why save_pause_window must authorise against the row's stored context
-     * rather than the caller's requested scope.
+     * The managepausewindows capability is granted to editingteacher on purpose
+     * (teachers schedule their own course pauses). That breadth is why
+     * save_pause_window and delete_pause_window check it in the context an
+     * existing row belongs to, not just the scope the caller names; widening the
+     * archetypes needs the same review.
      *
      * @return void
      */

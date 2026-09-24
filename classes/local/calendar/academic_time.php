@@ -82,9 +82,8 @@ class academic_time {
      * Effective business hours plus the pause records that contributed.
      *
      * Each pause record carries reason / timestart / timeend / scopelevel /
-     * scopeid / note. Since v2.0.0 the per-submission pause table was
-     * removed; this audit array is consumed only on demand by
-     * `get_pause_timeline`.
+     * scopeid / note. The records are not stored anywhere; they are rebuilt on
+     * demand for {@see \block_feedback_tracker\external\get_pause_timeline}.
      *
      * @param int $courseid Course context (for manual pause scoping).
      * @param int $groupid Group context (for manual pause scoping); 0 if none.
@@ -121,7 +120,7 @@ class academic_time {
      * This is the full engine. Every day in the interval is resolved through
      * {@see day_rule_resolver} and intersected with its absolute
      * business-hours windows; manual pauses are subtracted afterwards over
-     * the union of all active intervals. Seconds are returned UNROUNDED so
+     * the union of all active intervals. Seconds are returned unrounded so
      * callers can aggregate results over sub-intervals exactly; rounding to
      * hours happens once, at the public API boundary.
      *
@@ -181,12 +180,10 @@ class academic_time {
 
                     $active = interval_math::intersect($windowinterval, $bhabsolute);
 
-                    /* v1.0.9 — sub-day optional event window. The day is
-                     * otherwise active per its weekly rule (see
-                     * day_rule_resolver), but the event window must be
-                     * subtracted from active intervals and recorded as a
-                     * pause with reason='optional' so PausedNote can
-                     * surface the event label. */
+                    /* Sub-day optional event: the day stays active per its
+                     * weekly rule (see day_rule_resolver), and the event
+                     * window is subtracted and recorded as an 'optional'
+                     * pause whose note carries the event label. */
                     if (!empty($rule['optional_window'])) {
                         $eventabs = self::business_hours_absolute(
                             $day,
@@ -347,7 +344,7 @@ class academic_time {
                 $transitionts = (int) $transition['ts'];
 
                 /* A date-line move skips or repeats a whole calendar date
-                 * (Pacific/Apia jumped from UTC-11 to UTC+13 at the end of
+                 * (Pacific/Apia jumped from UTC-10 to UTC+14 at the end of
                  * 2011-12-29; 2011-12-30 never existed there). The walker's
                  * +1 day chain hops straight over a skipped date while
                  * calendar arithmetic — diff()->days below — counts it, and
@@ -517,7 +514,10 @@ class academic_time {
     }
 
     /**
-     * Drop all per-request memos used by the engine (test helper).
+     * Drop all per-request memos used by the engine.
+     *
+     * Called after every calendar-affecting write, next to
+     * {@see calendar::bump_version()}, and between tests.
      *
      * @return void
      */
@@ -530,8 +530,6 @@ class academic_time {
     /**
      * Convert business-hours (minutes-since-midnight) intervals to absolute
      * unix-timestamp intervals for a specific day in the platform timezone.
-     *
-     * Handles DST correctly via DateTime arithmetic.
      *
      * @param \DateTimeImmutable $daymidnight Midnight in platform tz.
      * @param array $intervals List of [startmin, endmin].
@@ -564,10 +562,9 @@ class academic_time {
             case calendar::DAYTYPE_CLOSED:
                 return 'closed';
             case calendar::DAYTYPE_OPTIONAL:
-                /* v1.0.9 — full-day optional gets its own pause reason so
-                 * PausedNote can render the event-style note instead of
-                 * collapsing into a generic 'closed' chip. Sub-day optional
-                 * never reaches this branch (is_active=true above). */
+                /* A full-day optional event gets its own reason rather than
+                 * 'closed', so the timeline can present it as an event. A
+                 * sub-day optional day is active and never reaches here. */
                 return 'optional';
             default:
                 return $rule['is_weekend'] ? 'weekend' : 'outofhours';

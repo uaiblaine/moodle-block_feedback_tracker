@@ -31,28 +31,27 @@ namespace block_feedback_tracker\local\sla;
  *
  * Two independent gates, both must pass:
  *   1. A `block_feedback_tracker` instance exists at the course's own
- *      context. This is the explicit opt-in — admins drop the block on
- *      every course they want tracked, and nothing else is touched. The
- *      site can carry hundreds of courses where the plugin is installed
- *      but only a handful actively measured.
- *   2. The course is visible, OR the `process_hidden_courses` admin
+ *      context. This is the explicit opt-in: nothing is tracked on a course
+ *      without the block.
+ *   2. The course is visible, or the `process_hidden_courses` admin
  *      setting is on. Default is off so hidden / archived courses don't
  *      keep accruing ledger rows and rollups they'll never display.
  *
- * Used by the observer (write-path entry), the backfill task, and
- * potentially other batch jobs. Deliberately NOT consulted by
- * rollup_service::recompute_group() — that path is downstream of the
- * gate, and adding the check there would force a wide test-fixture
- * rewrite without closing any new leak.
+ * Every write-path entry (the event observers, the backfill and allocation
+ * tasks) calls this. Cleanup paths do not, so tracked data is still removed when its
+ * course or user goes away. rollup_service::recompute_group() does not
+ * either: it runs downstream of the gate, so checking there closes no leak.
  *
- * Per-request memo because both the observer hot path and the backfill
- * inner loop call this many times for the same courseids.
+ * The results are memoised in static properties because the observer hot
+ * path and the backfill loop ask about the same courses many times. The
+ * memo lives as long as the PHP process: one web request, or a whole cron
+ * run. Call {@see self::reset_memo()} after changing a course's block.
  */
 class course_access {
-    /** @var array<int, bool> Per-request memo keyed by courseid. */
+    /** @var array<int, bool> Per-process memo keyed by courseid. */
     private static array $memo = [];
 
-    /** @var int[]|null Per-request memo for the full processable-courseids enumeration. */
+    /** @var int[]|null Per-process memo for the full processable-courseids enumeration. */
     private static ?array $allmemo = null;
 
     /**
@@ -96,17 +95,16 @@ class course_access {
      * True when a `block_feedback_tracker` instance is attached directly
      * to the course's own context.
      *
-     * Category- and system-context blocks are intentionally excluded:
-     * dropping the block at category level renders it on the *category*
-     * page, not on courses, and a system-level block usually lives on
-     * the admin dashboard rather than indicating site-wide tracking
-     * intent. Admins who want all courses tracked add the block to each
-     * one (or script that via a small one-off task).
+     * Category- and system-context blocks are intentionally excluded: a
+     * category-level block renders on the category page, not on courses, and
+     * a system-level one usually sits on the dashboard rather than signalling
+     * site-wide tracking intent.
      *
-     * Public because the delayed-removal task needs the block question ALONE.
-     * is_processable() also requires the course to be visible, so using it as a
-     * deletion guard would make hiding a course — which is what archiving one
-     * looks like — destroy its measured history.
+     * Public because the delayed-removal task
+     * {@see \block_feedback_tracker\task\discard_course_data} needs the block
+     * question alone: is_processable() also requires the course to be visible,
+     * so as a deletion guard it would let hiding (archiving) a course destroy
+     * its measured history.
      *
      * @param int $courseid
      * @return bool
@@ -131,16 +129,12 @@ class course_access {
     }
 
     /**
-     * Return every courseid that currently passes is_processable() in one
-     * cheap query — for batch jobs that want to SQL-filter their scan with
-     * `WHERE courseid IN (...)` instead of doing per-row PHP checks. On
-     * sites where the block is on a handful of courses but the corpus has
-     * millions of submissions, the SQL pre-filter collapses backfill scan
-     * cost from O(all submissions) to O(submissions in tracked courses).
+     * Return every courseid that currently passes is_processable(), in one
+     * query, for batch jobs that filter their scan with
+     * `WHERE courseid IN (...)` instead of checking row by row: the scan then
+     * costs O(submissions in tracked courses) rather than O(all submissions).
      *
-     * Per-request memoised. Also pre-populates the per-courseid memo for
-     * the returned ids so subsequent `is_processable()` calls on them are
-     * served from cache.
+     * Memoised, and also fills the per-courseid memo for the returned ids.
      *
      * @return int[] Sorted ascending. Empty when no course currently
      *               passes the gate.
@@ -167,9 +161,7 @@ class course_access {
         $ids = array_map(static fn($r) => (int) $r->courseid, array_values($rows));
 
         self::$allmemo = $ids;
-        // Pre-populate the per-courseid memo for everything we just
-        // enumerated — any follow-up is_processable() call on these
-        // courseids is now served from memo with no extra query.
+        // Every enumerated course passes the gate, so seed the per-courseid memo.
         foreach ($ids as $cid) {
             self::$memo[$cid] = true;
         }
@@ -177,7 +169,8 @@ class course_access {
     }
 
     /**
-     * Drop the per-request memo. Test helper.
+     * Drop both memos, after a block is added or removed within the same
+     * process (tests, task\bulk_remove_blocks).
      *
      * @return void
      */

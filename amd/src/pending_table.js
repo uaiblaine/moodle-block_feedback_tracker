@@ -42,8 +42,9 @@ const cellKey = (cell) => {
 };
 
 /**
- * Numeric-aware comparator. Pure-numeric strings sort numerically; mixed
- * strings sort lexicographically.
+ * Numeric-aware comparator. When both keys start with a number (parseFloat
+ * succeeds, so "12.3 h" counts) they sort numerically; otherwise they sort
+ * with localeCompare.
  *
  * @param {string} a
  * @param {string} b
@@ -71,7 +72,7 @@ const enhanceTable = (table) => {
     headers.forEach((th) => {
         // The listener goes on the button, not the cell: a button is
         // focusable and fires on Enter and Space for free, which a th does
-        // not. Sorting used to be reachable by mouse only.
+        // not.
         const trigger = th.querySelector('.bft-th-sortable-btn') || th;
         trigger.addEventListener('click', () => {
             const colIdx = Array.from(th.parentElement.children).indexOf(th);

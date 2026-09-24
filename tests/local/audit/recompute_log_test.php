@@ -28,9 +28,9 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\audit;
 
 /**
- * The retention cutoff runs on both supported database families and had no
- * coverage at all, so an off-by-one in the comparison would delete a day too
- * much (or too little) unnoticed.
+ * Pins what record() stores and the boundary of the retention cutoff in
+ * prune_older_than(), where an off-by-one would delete one row too many or
+ * too few without any other test noticing.
  *
  * @covers \block_feedback_tracker\local\audit\recompute_log
  */
@@ -116,8 +116,7 @@ final class recompute_log_test extends \advanced_testcase {
 
     /**
      * The comparison is strictly less-than, so a row sitting exactly on the
-     * cutoff survives. Getting this backwards silently shortens retention by
-     * a whole tick.
+     * cutoff survives. Changes that must make it fail: comparing with <=.
      *
      * @return void
      */

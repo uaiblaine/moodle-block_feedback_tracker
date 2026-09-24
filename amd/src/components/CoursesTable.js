@@ -15,13 +15,14 @@
 
 /**
  * Dashboard courses table — one row per course with a small ScoreRing,
- * pending / priority / effective counts, and an inline 30-day sparkline.
+ * pending / priority / effective counts, and an inline 14-day sparkline.
  *
  * A native <table> with sortable column headers (aria-sort) that reflows
  * into stacked cards on narrow screens; each cell carries a data-label that
  * surfaces as the field caption in that card layout (see styles.css).
  *
- * Stateless. The parent owns sort state + click navigation.
+ * Stateless. The parent owns the sort state; rows link to the course's
+ * pending report.
  *
  * @module    block_feedback_tracker/components/CoursesTable
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -96,9 +97,7 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
         ? (i18n.sparkline_zone_label || 'Desired speed: 0 to {$a}')
             .replace('{$a}', String(Math.round(Number(goal))))
         : '';
-    // Column labels — shared between the header row and each cell's
-    // data-label, which surfaces as the field caption in the stacked-card
-    // layout the table reflows to on narrow screens.
+    // Column labels, shared by the header row and each cell's data-label.
     const cols = {
         course: i18n.dashboard_col_course || 'Course',
         avgscore: i18n.dashboard_col_avgscore || 'Score',

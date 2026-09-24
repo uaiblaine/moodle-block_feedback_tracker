@@ -30,12 +30,13 @@ use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\pending_recomputer;
 
 /**
- * Hourly pass to migrate pending submissions between SLA buckets as their
- * effective waiting time accrues. Without this, an Excellent (<=24h) pending
- * submission would still read Excellent at hour 25.
+ * Hourly pass to move pending submissions between SLA buckets as their
+ * effective waiting time accrues. Without it, a pending submission banded
+ * excellent (under 24 h by default) would still read excellent at hour 25.
  *
- * Targets rows where `effectivecalver < current_calver` (calendar changed)
- * OR `effectiveasof < now - 3600` (just stale).
+ * Targets pending rows whose `effectivecalver` is older than the current
+ * calendar version, or whose `effectiveasof` is missing or more than an hour
+ * old; see {@see pending_recomputer::recompute_stale()}.
  */
 class recompute_pending extends \core\task\scheduled_task {
     /** Default soft time cap (seconds). */

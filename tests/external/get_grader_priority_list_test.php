@@ -37,11 +37,11 @@ use core_external\external_api;
 final class get_grader_priority_list_test extends \advanced_testcase {
     /**
      * Reset the dashboard_scope memo and grant site admins site-wide
-     * visibility for the admin-based cases. dashboard_scope's static cache is
-     * keyed by userid and survives resetAfterTest, so it must be cleared each
-     * test; enable_admin_view_all is the gate that lets an unenrolled admin
-     * see every course (the admin tests below rely on that). It has no effect
-     * on the non-admin tests (student / custom-role teacher).
+     * visibility for the admin-based cases.
+     *
+     * The memo is a PHP static keyed by userid, which resetAfterTest does not
+     * clear. enable_admin_view_all lets the unenrolled admin see every course;
+     * it has no effect on the non-admin cases.
      *
      * @return void
      */
@@ -167,7 +167,7 @@ final class get_grader_priority_list_test extends \advanced_testcase {
     /**
      * SEPARATEGROUPS without accessallgroups: a teacher only sees
      * submissions from groups they belong to. Other groups' rows are
-     * filtered out by the per-course visibility WHERE-clause.
+     * filtered out by dashboard_scope::sql_visibility().
      */
     public function test_separategroups_filters_to_user_groups(): void {
         $this->resetAfterTest();
@@ -183,8 +183,8 @@ final class get_grader_priority_list_test extends \advanced_testcase {
         $this->getDataGenerator()->create_group_member(['groupid' => $groupa->id, 'userid' => $studenta->id]);
         $this->getDataGenerator()->create_group_member(['groupid' => $groupb->id, 'userid' => $studentb->id]);
 
-        // Push the rollup rows to reflect the new groupids (seed_pending
-        // inserts with groupid=0; reset it to match the membership).
+        // Move the ledger rows into each student's group; seed_pending
+        // inserts them with groupid 0.
         global $DB;
         $DB->set_field(
             'block_feedback_tracker_sub',
@@ -199,13 +199,9 @@ final class get_grader_priority_list_test extends \advanced_testcase {
             ['userid' => $studentb->id, 'courseid' => $course->id]
         );
 
-        // Use a CUSTOM role rather than editingteacher. The archetype
-        // defaults to accessallgroups = allow, which would bypass
-        // SEPARATEGROUPS; modifying its capabilities mid-test pollutes
-        // accesslib's static role-cap cache (PHP statics survive
-        // resetAfterTest). Touching a fresh custom role isolates the
-        // change so subsequent tests in this class don't see polluted
-        // role state.
+        // A custom role holding viewdashboard but not accessallgroups: the
+        // editingteacher archetype grants moodle/site:accessallgroups, which
+        // would lift the SEPARATEGROUPS restriction.
         $coursectx = \context_course::instance($course->id);
         $roleid = create_role(
             'Test teacher (no allgroups)',

@@ -32,14 +32,14 @@ use block_feedback_tracker\local\sla\rollup_service;
 
 /**
  * The task retires a queue row after recomputing, so the interesting cases are
- * the ones where it must NOT: a lock-skipped recompute did no work, and a
+ * the ones where it must not: a lock-skipped recompute did no work, and a
  * re-enqueue arriving mid-recompute is fresh dirt that has to survive.
  *
  * @covers \block_feedback_tracker\task\recompute_one
  */
 final class recompute_one_test extends \advanced_testcase {
     /**
-     * Queue a tuple and run the task against it.
+     * Run the task for one tuple directly, without queueing it.
      *
      * @param int $courseid
      * @param int $groupid
@@ -103,10 +103,9 @@ final class recompute_one_test extends \advanced_testcase {
     }
 
     /**
-     * The regression: when another worker holds the tuple's lock nothing is
-     * recomputed, so the queue row must stay put. Deleting it would retire
-     * work nobody did, and the rollup would stay stale until some later event
-     * happened to touch the same tuple.
+     * When another worker holds the tuple's lock nothing is recomputed, so the
+     * queue row must stay put. Deleting it would retire work nobody did, and
+     * the rollup would stay stale until some later event touched the tuple.
      *
      * @return void
      */
