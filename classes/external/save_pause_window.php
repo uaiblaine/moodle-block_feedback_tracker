@@ -34,10 +34,12 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Upsert one row in {block_feedback_tracker_cpause}. Capability gate
- * depends on scope: `:managepausewindows` at system context for site
- * pauses; at course context for course/group pauses (the cap is granted
- * to editingteacher at COURSE in db/access.php).
+ * Upsert one row in {block_feedback_tracker_cpause}.
+ *
+ * `:managepausewindows` is checked at system context for site pauses and at
+ * the course context for course and group pauses (editingteacher holds the
+ * capability by archetype, so teachers can pause their own courses). An update
+ * is also checked against the context the existing row lives in.
  *
  * Fires `cal_pause_updated` so the observer scopes the re-enqueue (site →
  * all groups, course → that course, group → one tuple).
@@ -140,9 +142,7 @@ class save_pause_window extends external_api {
             $id = (int) $DB->insert_record('block_feedback_tracker_cpause', $record);
         }
 
-        // The cal_pause_updated event doesn't declare 'objecttable' (so bulk-import
-        // and delete paths can also fire it), and Moodle requires both
-        // 'objectid' and 'objecttable' to be set together or not at all.
+        // The row id goes in 'other', not 'objectid': see cal_pause_updated::init().
         $event = cal_pause_updated::create([
             'context'  => $context,
             'other'    => ['scopelevel' => $scopelevel, 'scopeid' => $scopeid, 'rowid' => $id],

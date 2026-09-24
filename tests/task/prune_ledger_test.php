@@ -45,7 +45,8 @@ use block_feedback_tracker\local\sla\submission_status;
 final class prune_ledger_test extends \advanced_testcase {
     /**
      * Flush per-request statics and swallow the task's mtrace() output, which
-     * PHPUnit 11 would otherwise treat as a risky test.
+     * Moodle's PHPUnit configuration (beStrictAboutOutputDuringTests) reports
+     * as a risky test.
      *
      * @return void
      */
@@ -180,10 +181,9 @@ final class prune_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * The convergence property. The reconciler recreates a ledger row for any
-     * submission that lacks one, so without a shared boundary it would
-     * resurrect everything the pruner deleted on the very next tick, and the
-     * two would burn a batch against each other for ever.
+     * The reconciler recreates ledger rows for submissions that have none, so
+     * it must honour the pruner's boundary ({@see retention::cutoff()}) or it
+     * would rebuild every pruned row on the next tick.
      *
      * @return void
      */

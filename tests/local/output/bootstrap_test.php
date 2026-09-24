@@ -28,10 +28,12 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\output;
 
 /**
- * The default-ON toggles here are the ones that already shipped broken once:
- * `get_config()` returns the string '0' when a checkbox is switched off, which
- * is falsy in PHP, so a `?: 1` read makes the toggle impossible to turn off.
- * Only an explicit '0' may mean off; an unset value means on.
+ * Pins the reads in bootstrap::config_bundle().
+ *
+ * For the default-ON toggles, `get_config()` returns the string '0' when a
+ * checkbox is switched off, which is falsy in PHP, so a `?: 1` read would make
+ * the toggle impossible to turn off. Only an explicit '0' means off; an unset
+ * value means on.
  *
  * @covers \block_feedback_tracker\local\output\bootstrap
  */
@@ -53,8 +55,8 @@ final class bootstrap_test extends \advanced_testcase {
     }
 
     /**
-     * The regression that shipped: switching the checkbox off stores the
-     * string '0', and that must actually turn the toggle off.
+     * Switching the checkbox off stores the string '0', and that must turn the
+     * toggle off.
      *
      * @return void
      */
@@ -140,9 +142,9 @@ final class bootstrap_test extends \advanced_testcase {
     }
 
     /**
-     * A weight stored as zero survives as zero. The `?: default` fallback used
-     * for the weights means a deliberate 0 reads back as the default instead,
-     * which is worth knowing about rather than assuming either way.
+     * A weight stored as zero reads back as its default, because the bundle
+     * reads the weights with a `?: default` fallback. This differs from
+     * responsiveness_calculator::load_weights(), which keeps a stored 0.
      *
      * @return void
      */

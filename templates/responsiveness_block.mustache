@@ -3,8 +3,9 @@
 
     @template    block_feedback_tracker/responsiveness_block
 
-    Wraps the per-group responsiveness cards rendered inside the block.
-    Shows the empty-state message when no rollup rows exist for the course.
+    Wraps the server-rendered per-group responsiveness cards of one course
+    (renderer::render_course_responsiveness()). Shows the empty-state message
+    when there are no cards.
 
     Context variables required:
     * empty       Truthy when no cards are present

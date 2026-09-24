@@ -53,9 +53,9 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * The reported bug. A student who re-saves an already-graded submission
-     * must not un-grade it: the closed measurement keeps its response time and
-     * the re-look becomes a second, correctly-pending cycle.
+     * A student who re-saves an already-graded submission must not un-grade
+     * it: the closed measurement keeps its response time and the re-look
+     * becomes a second, pending cycle.
      *
      * @return void
      */
@@ -197,8 +197,8 @@ final class grading_cycle_test extends \advanced_testcase {
         $this->assertSame(1, (int) $row->islatest);
 
         /* The teacher allows another attempt: core inserts a new reopened row
-         * and flips the old one's latest flag. No event is fired at all, so
-         * the next observation of either attempt must repair both. */
+         * and flips the old one's latest flag. No event reports the flag
+         * change, so the next observation of either attempt must repair both. */
         $DB->set_field('assign_submission', 'latest', 0, [
             'assignment' => $assign->id,
             'userid' => $student->id,
@@ -212,9 +212,9 @@ final class grading_cycle_test extends \advanced_testcase {
 
     /**
      * A team submission is stored by mod_assign as one row with userid 0. The
-     * ledger must never mirror that row directly: it was counted by the rollup
-     * (which does not join {user}) but hidden by every list (which does), i.e.
-     * a pending item nobody could ever clear.
+     * ledger must never mirror that row directly: the rollup, which does not
+     * join {user}, would count it while the lists, which do, would hide it,
+     * leaving a pending item nobody could clear.
      *
      * @return void
      */
@@ -290,9 +290,10 @@ final class grading_cycle_test extends \advanced_testcase {
 
     /**
      * A member who never personally saved has no {assign_submission} row of
-     * their own — core only mirrors per-user rows when
-     * requireallteammemberssubmit is off. A per-user lookup finds nothing and
-     * drops them silently, which is why the fan-out reads the group row.
+     * their own: {@see \assign::save_submission()} mirrors the saver's row to
+     * every team member only when requireallteammemberssubmit is off. A
+     * per-user lookup finds nothing and drops them silently, which is why the
+     * fan-out reads the group row.
      *
      * @return void
      */
@@ -374,10 +375,10 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * With marking workflow on and the release setting at its default (off),
-     * the clock still stops when the mark is saved — no displayed number moves
-     * — but the row is flagged as awaiting release so the marker can see that
-     * a step they may not own is still outstanding.
+     * With marking workflow on and release_stops_clock at its default (off),
+     * the clock still stops when the mark is saved, but timeclosed stays null,
+     * which submission_browser reports as awaiting release so the marker can
+     * see that a step they may not own is still outstanding.
      *
      * @return void
      */
@@ -510,9 +511,8 @@ final class grading_cycle_test extends \advanced_testcase {
         $this->seed_calendar();
         [$cm, $student, $assign, $course] = $this->build_environment();
 
-        /* Relative to now, because the rollup's graded stats are windowed to
-         * the last 30 days — fixed calendar dates fall out of it as the suite
-         * ages and the assertion would rot into a false failure. */
+        /* Relative to now, because the rollup's graded stats cover only the
+         * last 30 days; fixed calendar dates would fall out of that window. */
         $now = time();
         $t1 = $now - 5 * 86400;
         $t2 = $now - 4 * 86400;
@@ -563,10 +563,9 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * The reported fairness problem, end to end. A submission that waited a
-     * long time to be allocated and was then marked quickly must not read as a
-     * slow marker: the queue and the turnaround are measured separately, and
-     * the student-experience clock is left alone.
+     * A submission that waited a long time to be allocated and was then marked
+     * quickly must not read as a slow marker: the queue and the turnaround are
+     * measured separately, and the student-experience clock is left alone.
      *
      * @return void
      */
@@ -579,10 +578,9 @@ final class grading_cycle_test extends \advanced_testcase {
             'markingallocation' => 1,
         ]);
 
-        /* Anchored on a recent Tuesday: the rollup's graded stats are windowed
-         * to 30 days, so fixed calendar dates rot out of the window as the
-         * suite ages, and a weekday 09:00 lands inside the seeded business
-         * hours (08:00-18:00) so the two-hour turnaround is two effective
+        /* Anchored on a recent Tuesday: it stays inside the rollup's 30-day
+         * graded window, and 09:00 on a weekday lies inside the seeded business
+         * hours (08:00-18:00), so the two-hour turnaround is two effective
          * hours rather than a weekend-clipped zero. */
         $talloc = $this->recent_weekday_at(9);
         $tgrade = $talloc + 2 * 3600;
@@ -621,8 +619,7 @@ final class grading_cycle_test extends \advanced_testcase {
     /**
      * An allocation discovered at or after the grading cannot be measured. It
      * must report null, never zero: zero effective hours bands as excellent,
-     * so a late-discovered stamp would read as a flawless turnaround — the
-     * worst possible failure direction for a figure attached to a person.
+     * so a late-discovered stamp would read as a flawless turnaround.
      *
      * @return void
      */
@@ -700,11 +697,10 @@ final class grading_cycle_test extends \advanced_testcase {
 
     /**
      * A grade saved in the same clock second as the submission's last change
-     * counts as still needing grading, matching core's own needs-grading
-     * counter (`s.timemodified >= g.timemodified`). Core needs that direction
-     * because it auto-creates placeholder grade rows carrying the submission's
-     * own timestamp; agreeing with it at the tie is what keeps the plugin's
-     * pending count identical to the one Moodle shows for the same activity.
+     * counts as still needing grading, matching core's needs-grading counter
+     * (`s.timemodified >= g.timemodified`, {@see \assign::count_submissions_need_grading()}),
+     * so the plugin's pending count agrees with the one Moodle shows for the
+     * same activity.
      *
      * @return void
      */
@@ -734,10 +730,9 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * A user-level override changes the dates one student is judged against
-     * and reaches the plugin through no other signal — the reconciler's
-     * rule-drift sweep compares against the activity's own dates and
-     * {assign_user_flags}, so it cannot see an {assign_overrides} row at all.
+     * A user-level override changes the dates one student is judged against,
+     * and the override events are what carry it to the ledger straight away;
+     * the reconciler's rule-drift sweep only catches up on a later pass.
      *
      * @return void
      */
@@ -776,12 +771,9 @@ final class grading_cycle_test extends \advanced_testcase {
      *
      * allocsource separates an instant captured from a real marker_updated
      * event (exact) from one a reconciliation sweep discovered later (accurate
-     * only to the sweep period) — the whole point being that a median is never
-     * built from a mix without saying so. The label was written on every row of
-     * the (cmid, userid) pair on every call, so a sweep running with
-     * ALLOC_SOURCE_RECONCILED relabelled rows whose stamp came from an event
-     * and had not changed, quietly folding exact measurements into the
-     * discovery-time population.
+     * only to the sweep period), so a median is never built from a mix without
+     * saying so. A sweep running with ALLOC_SOURCE_RECONCILED over an
+     * unchanged allocation must not relabel an event-sourced stamp.
      *
      * @return void
      */
@@ -836,13 +828,12 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * Reassigning the marker DOES relabel, because it records a new instant.
+     * Reassigning the marker does relabel, because it records a new instant.
      *
-     * The pair with the test above: confining allocsource to the first-stamp
-     * branch would be the obvious way to fix that one, and it would leave a
-     * reassignment wearing the previous provenance while carrying a
-     * timeallocmarker this call just wrote. The marker turnaround is measured
-     * from that instant, so the label has to describe it.
+     * Counterpart of the test above. The marker turnaround is measured from
+     * timeallocmarker, so the label has to describe that instant. Changes that
+     * must make it fail: setting allocsource only when timeallocated is first
+     * stamped.
      *
      * @return void
      */
@@ -946,7 +937,8 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * Seed the calendar settings the academic-time engine needs.
+     * Seed the calendar settings the academic-time engine needs, plus Monday
+     * to Friday 08:00-18:00 business hours.
      *
      * @return void
      */
@@ -982,9 +974,9 @@ final class grading_cycle_test extends \advanced_testcase {
     /**
      * The most recent Tuesday at the given UTC hour.
      *
-     * Tuesday is always inside the seeded weekday business hours and always
-     * within the rollup's 30-day graded window, so a fixture anchored here
-     * measures the interval it means to and does not rot as the suite ages.
+     * Tuesday is a business day under the seeded hours and always within the
+     * rollup's 30-day graded window, so a fixture anchored here neither loses
+     * hours to a weekend nor falls out of the window.
      *
      * @param int $hour Hour of day, UTC.
      * @return int

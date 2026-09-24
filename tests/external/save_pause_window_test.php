@@ -30,8 +30,11 @@ namespace block_feedback_tracker\external;
 use core_external\external_api;
 
 /**
- * The write path here is capability-gated at a context the caller supplies,
- * so the authorisation tests matter more than the happy paths.
+ * Tests for save_pause_window.
+ *
+ * The capability is checked at the context derived from the scope the caller
+ * supplies and, on update, again at the stored row's context, so the
+ * authorisation tests matter more than the happy paths.
  *
  * @covers \block_feedback_tracker\external\save_pause_window
  */
@@ -107,7 +110,8 @@ final class save_pause_window_test extends \advanced_testcase {
     }
 
     /**
-     * A group scope deliberately stores the COURSE context, not a group one.
+     * A group scope stores its course's context: Moodle groups have no context
+     * of their own.
      *
      * @return void
      */
@@ -177,7 +181,7 @@ final class save_pause_window_test extends \advanced_testcase {
     /**
      * A student has no business managing pause windows.
      *
-     * Every parameter here is deliberately VALID: the guard clauses run before
+     * Every parameter here is deliberately valid: the guard clauses run before
      * require_capability(), so a bad timestamp would throw
      * invalid_parameter_exception and the capability gate would go untested.
      *
@@ -235,14 +239,12 @@ final class save_pause_window_test extends \advanced_testcase {
     }
 
     /**
-     * The IDOR regression: updating an existing row must be authorised against
-     * the context that row already lives in, not against the scope the caller
-     * asks for.
+     * Updating an existing row must be authorised against the context that row
+     * already lives in, not only against the scope the caller asks for.
      *
-     * Without the fix the capability is checked at the teacher's own course
-     * context — which passes — and a site-wide pause window is silently
-     * re-scoped into their course, corrupting effective-hours computation for
-     * every course on the site.
+     * Checked only at the requested scope, the capability passes in the
+     * teacher's own course and a site-wide pause window is re-scoped into it,
+     * changing effective hours for every course on the site.
      *
      * @return void
      */
@@ -337,9 +339,10 @@ final class save_pause_window_test extends \advanced_testcase {
     }
 
     /**
-     * An unknown scope level is rejected. 'banana' is pure alpha on purpose —
-     * a value like 'group1' is stripped by PARAM_ALPHA before the in_array()
-     * guard under test is ever reached.
+     * An unknown scope level is rejected. 'banana' is pure alpha on purpose: a
+     * value like 'group1' already fails PARAM_ALPHA in validate_parameters()
+     * with the same exception, so the in_array() guard under test would never
+     * run.
      *
      * @return void
      */
@@ -353,8 +356,7 @@ final class save_pause_window_test extends \advanced_testcase {
     }
 
     /**
-     * timestart must be positive, and timeend must be strictly after it —
-     * equal timestamps are rejected because the guard is <=, not <.
+     * timestart must be a positive timestamp.
      *
      * @return void
      */

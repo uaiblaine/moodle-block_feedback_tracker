@@ -29,9 +29,9 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\local\calendar\academic_time;
 
 /**
- * The measurement model: a response is what reached the student, from either
- * surface, dated when it landed, and never withdrawn. Four rules carry it, and
- * each is pinned here because each was a decision rather than a consequence.
+ * Pins the measurement model: a response is what reached the student, from
+ * either surface (the activity or the gradebook), dated when it landed, and
+ * never withdrawn.
  *
  * @covers \block_feedback_tracker\local\sla\gradebook_response
  * @covers \block_feedback_tracker\local\sla\submission_ledger
@@ -84,9 +84,8 @@ final class gradebook_response_test extends \advanced_testcase {
     /**
      * A hidden gradebook grade is not a response.
      *
-     * Same reasoning the marking-workflow branch already applies to an
-     * unreleased mark, applied to the gradebook's own release gate: with the
-     * grade hidden the student sees no feedback block at all.
+     * The gradebook counterpart of an unreleased mark under marking workflow:
+     * with the grade hidden the student sees no feedback at all.
      *
      * @return void
      */
@@ -104,11 +103,10 @@ final class gradebook_response_test extends \advanced_testcase {
         $this->assertNull($row->timeclosed, 'A grade the student cannot see has reached nobody.');
         $this->assertNull($row->closedsource);
 
-        /* The visibility fact is deliberately NOT stored on the row. Core fires
-         * no event when a grade is hidden or un-hidden, and a hide-until date
-         * expires with the passage of time alone, so a stored copy would be
-         * right only until the next thing happened. It is read live — here at
-         * its source, and by submission_browser at display time. */
+        /* The visibility fact is not stored on the row: core fires no event
+         * when a grade is hidden or un-hidden, and a hide-until date expires
+         * by time alone, so a stored copy would go stale. It is read live, here
+         * and by submission_browser at display time. */
         $live = gradebook_response::for_assign_user((int) $assign->id, (int) $student->id);
         $this->assertTrue($live['hidden'], 'But the fact is disclosed rather than left silent.');
         $this->assertTrue($live['hasgrade']);
@@ -117,9 +115,8 @@ final class gradebook_response_test extends \advanced_testcase {
     /**
      * Deleting the gradebook grade does not withdraw the response.
      *
-     * This is the earliest-wins half of the model, and the reason the whole
-     * thing is monotone: a later administrative act cannot un-happen a
-     * response the student already received.
+     * A later administrative act cannot withdraw a response the student
+     * already received.
      *
      * @return void
      */
@@ -158,22 +155,15 @@ final class gradebook_response_test extends \advanced_testcase {
      * {grade_grades} holds one grade per user per item, with no attempt or
      * cycle dimension, so a resubmission opens a cycle whose hand-in postdates
      * an override made against the previous one. Applying that stale instant
-     * would close the new cycle before it began — a zero-hour interval, which
-     * bands as the best possible result and enters the medians and the score.
-     * The activity side has always required the response to postdate the work;
-     * this is the same rule.
+     * would close the new cycle before it began: a zero-hour interval, which
+     * bands as the best possible result. The activity side applies the same
+     * rule.
      *
-     * The window is exactly seven days, and the business hours are seeded,
-     * because the banding assertion below has to mean the same thing on every
-     * weekday. A window of exactly 7 * 86400 seconds covers each day of the
-     * week once — the partial first day and the partial last day are the same
-     * weekday and sum to a whole one — so the excluded weekend costs exactly
-     * two days whenever the test runs, and the interval is a fixed five
-     * business days. A three-day window is not weekday-independent: run on a
-     * Monday through Wednesday it spans the weekend and collapses towards one
-     * business day, which lands under the 24-hour `excellent` threshold and
-     * fails this assertion for reasons that have nothing to do with the rule
-     * under test. That is what it used to do, on three days out of seven.
+     * The hand-in is exactly 7 * 86400 seconds ago, with business hours
+     * seeded, so the open interval is worth five business days on whatever
+     * weekday the suite runs: the partial first and last days are the same
+     * weekday and sum to a whole one. A shorter window can span a weekend and
+     * fall under the 24-hour `excellent` threshold on some weekdays.
      *
      * @return void
      */
@@ -195,10 +185,9 @@ final class gradebook_response_test extends \advanced_testcase {
         $this->assertNull($row->timeclosed, 'A response cannot predate the work it answers.');
         $this->assertNull($row->timegraded, 'And it must not clear the pending clock either.');
         /* Five business days of ten hours (08:00-18:00), measured to now because
-         * the cycle is still open. Asserting the figure alongside the band is
-         * what makes the weekday-independence claim above self-checking: any
-         * drift in the window shows up here, with a number, before it can
-         * silently re-band and turn this into a calendar test. */
+         * the cycle is still open. Asserting the figure as well as the band
+         * makes a drift in the window fail here with a number rather than
+         * silently re-band. */
         $this->assertEqualsWithDelta(50.0, (float) $row->effectivehours, 0.5, 'Five ten-hour days.');
         $this->assertNotSame(
             'excellent',
@@ -210,12 +199,10 @@ final class gradebook_response_test extends \advanced_testcase {
     /**
      * Once the gradebook has answered, hiding the grade does not take it back.
      *
-     * {grade_grades} keeps no history, so the live read simply goes quiet when
-     * the grade is hidden or cleared. Any re-derivation driven by something
-     * else entirely — a student save, an activity settings change, a rule
-     * sweep — would then silently withdraw the response. Both clocks have to
-     * be restored from the stored row, not just the disclosure one: restoring
-     * `timeclosed` alone leaves the row closed and pending at the same time.
+     * {grade_grades} keeps no history, so once the grade is hidden the live
+     * read returns no response instant, and a later re-derivation must restore
+     * both `timeclosed` and `timegraded` from the stored row. Restoring
+     * `timeclosed` alone would leave the row closed and pending at once.
      *
      * @return void
      */
@@ -234,7 +221,7 @@ final class gradebook_response_test extends \advanced_testcase {
             (int) $DB->get_field('block_feedback_tracker_sub', 'timegraded', ['cmid' => $cm->id])
         );
 
-        // The coordinator hides the column, then something unrelated re-derives.
+        // The grade is hidden, then something unrelated re-derives.
         $this->gradebook_grade($assign, $student, 70.0, $responded, 1);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
@@ -286,8 +273,7 @@ final class gradebook_response_test extends \advanced_testcase {
      * The gradebook's feedback field runs through the same update_final_grade()
      * path and takes the same `overridden` stamp, but leaves finalgrade null.
      * Testing the grade value alone would leave a teacher who returned written
-     * feedback and no mark permanently pending — the exact failure this whole
-     * model exists to end.
+     * feedback and no mark permanently pending.
      *
      * @return void
      */
@@ -312,15 +298,13 @@ final class gradebook_response_test extends \advanced_testcase {
      * A mark made inside the activity still closes the clock while the
      * gradebook hides the grade — and the row says so.
      *
-     * This is the one case the model deliberately does NOT repair: the
-     * behaviour predates the gradebook work and changing it would move figures
-     * already reported. The disclosure is the whole compensation, so it has to
-     * actually reach the teacher — which is why it is asserted here through
-     * `submission_browser`, the surface the pending report reads, rather than
-     * against the writer. Note the row carries no `overridden` stamp at all:
-     * mod_assign pushes its mark to the gradebook through `grade_update()`,
-     * which never sets that column, so a detection keyed on it would miss
-     * exactly this case.
+     * The model deliberately leaves this case as it is, because changing it
+     * would move figures already reported; the hidden grade is disclosed
+     * instead. The disclosure is asserted through `submission_browser`, which
+     * the pending report reads, so it is proven to reach the teacher. The
+     * gradebook row carries no `overridden` stamp: mod_assign pushes its mark
+     * through `grade_update()`, which does not set that column, so detection
+     * cannot key on it.
      *
      * @return void
      */
@@ -383,28 +367,18 @@ final class gradebook_response_test extends \advanced_testcase {
      * The gradebook never closes the marker's own clock.
      *
      * queuehours and allochours measure the allocated marker's turnaround, and
-     * a grade typed into the gradebook is frequently a coordinator's act.
-     * Crediting it would measure the wrong person on a figure carrying their
-     * name — the same refusal the ALLOC_SOURCE_LATE constant already encodes.
+     * a grade typed into the gradebook is often a coordinator's act, so
+     * crediting it would measure the wrong person.
      *
-     * The fixture puts exactly one week between the gradebook answer and now,
-     * and that is load-bearing rather than arbitrary. allochours runs to
-     * time(), which no fixture can pin, so the only quantity this test governs
-     * is the WIDTH of the window between the answer and now. A width of
-     * 7 * 86400 covers every weekday exactly once whatever the hour: the
-     * partial head day and the partial tail day are the same weekday and their
-     * two fragments sum to one whole day of it. The gap is therefore a
-     * constant 50.0 effective hours — five ten-hour days — at every instant of
-     * the year. At the previous width of two days it was zero from Sunday
-     * 18:00 to Monday 08:00 UTC, because the longest business-hour-free
-     * stretch runs Friday 18:00 to Monday 08:00 and a 48-hour window fits
-     * inside it; the two measures then coincided legitimately and the old
-     * assertNotEquals failed for about 14 hours every weekend. Push-triggered
-     * CI cannot catch that, so the width is the guard.
-     *
-     * The sibling helper recent_weekday_at() in grading_cycle_test does not
-     * serve here: it pins an absolute instant, which settles nothing when the
-     * far end of the interval is now.
+     * allochours runs to time(), which no fixture can pin, so the fixture
+     * controls the width between the gradebook answer and now: exactly
+     * 7 * 86400. That width covers every weekday once whatever the hour (the
+     * partial head and tail days are the same weekday and sum to one whole
+     * day), so the gap is a constant 50.0 effective hours, five ten-hour days.
+     * A narrower window can fall inside the business-hour-free stretch from
+     * Friday 18:00 to Monday 08:00 UTC, where the two measures coincide.
+     * Pinning an absolute instant, as recent_weekday_at() in
+     * grading_cycle_test does, settles nothing when the far end is now.
      *
      * @return void
      */
@@ -412,25 +386,22 @@ final class gradebook_response_test extends \advanced_testcase {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
-        /* The assertion below states an hours figure, so the width of a
-         * working day has to be a property of this test rather than of
-         * whatever db/install.php happened to seed. */
+        /* The assertion below states an hours figure, so the test seeds the
+         * working day itself rather than relying on db/install.php. */
         $this->seed_business_hours();
         [$cm, $student, $assign] = $this->build_environment();
 
         /* Every instant hangs off the gradebook answer, so the week between
-         * that answer and now stays a week however the fixture is later
-         * retuned. See the docblock for why the width is what makes this test
-         * weekday-independent. */
+         * it and now stays exactly a week; see the docblock. */
         $answered = time() - 7 * 86400;
         $submitted = $answered - 2 * 86400;
         $allocated = $answered - 86400;
 
         $marker = $this->getDataGenerator()->create_user();
         $this->submit($assign, $student, $submitted);
-        /* The ledger row has to exist before the allocation can be stamped on
-         * to it — stamping first would write nothing at all, and the assertion
-         * below would then hold for the wrong reason. */
+        /* The ledger row must exist before the allocation is stamped on to it:
+         * stamping first writes nothing, and the assertions below would then
+         * hold vacuously. */
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
         $this->allocate_marker($assign, $student, $marker);
         submission_ledger::stamp_allocation_for_user((int) $cm->id, (int) $student->id, $allocated);
@@ -446,14 +417,11 @@ final class gradebook_response_test extends \advanced_testcase {
         $this->assertNotNull($row->timeclosed, 'The student clock did close.');
         $this->assertNotNull($row->timegraded, 'And so did the pending clock — that is the point.');
 
-        /* The marker's interval is still running. Measured against the
-         * gradebook response it would stop at that grade; measured correctly
-         * it runs to now, because nobody has marked inside the activity yet.
-         *
-         * This reads the closed value through the same entry point production
-         * uses for allochours, so the two sides of the comparison cannot come
-         * from different code paths — elapsed_effective_hours() takes a fast
-         * path that elapsed_with_audit() does not. */
+        /* The marker's interval runs to now, because nobody has marked inside
+         * the activity yet; stopped at the gradebook response it would equal
+         * the closed value below. That value is read through
+         * elapsed_effective_hours(), the entry point production uses for
+         * allochours: elapsed_with_audit() does not take the same fast path. */
         $closedvalue = academic_time::elapsed_effective_hours(
             (int) $row->courseid,
             (int) $row->groupid,
@@ -465,11 +433,9 @@ final class gradebook_response_test extends \advanced_testcase {
             round((float) $row->allochours, 2),
             'A coordinator grading in the gradebook must not close the allocated marker\'s clock.'
         );
-        /* And the figure, not merely the direction. The inequality above is
-         * satisfied by any upper bound later than the gradebook answer, so it
-         * would survive a regression that stopped the marker's clock somewhere
-         * short of now. The week the fixture pinned is worth five ten-hour
-         * days, and naming that number is what closes the gap. */
+        /* The inequality above holds for any upper bound after the gradebook
+         * answer; the exact figure (the week since the answer is worth five
+         * ten-hour days) also catches a clock stopped short of now. */
         $this->assertEqualsWithDelta(
             $closedvalue + 50.0,
             (float) $row->allochours,
@@ -482,11 +448,10 @@ final class gradebook_response_test extends \advanced_testcase {
      * Allocate a marker to a student, on whichever table this Moodle keeps
      * marking allocation in.
      *
-     * 5.2 moved allocation out of {assign_user_flags}.allocatedmarker into its
-     * own {assign_allocated_marker} table. Production code already branches on
-     * that; a fixture that wrote one table unconditionally would pass on the
-     * branch it was written against and silently stop allocating on the other,
-     * leaving the assertions here true for the wrong reason.
+     * Moodle 5.2 moved allocation from {assign_user_flags}.allocatedmarker to
+     * its own {assign_allocated_marker} table, and production code branches on
+     * which exists; a fixture writing one table unconditionally would silently
+     * stop allocating on the other branches.
      *
      * @param \stdClass $assign
      * @param \stdClass $student
@@ -552,12 +517,9 @@ final class gradebook_response_test extends \advanced_testcase {
             'overridden' => $when,
             'hidden' => $hidden,
             'timecreated' => $when,
-            /* Deliberately later than the override, and by a lot. A course
-             * regrade, a calculated-item recompute or 5.2's penalty manager
-             * all move timemodified and never touch overridden, so a model
-             * keyed on the wrong column would date every response to whenever
-             * an admin last touched the gradebook. Keeping the two apart is
-             * what makes that mistake visible to these tests. */
+            /* Deliberately well after the override: regrades and recomputes
+             * move timemodified but never overridden, so keeping the two apart
+             * makes a model keyed on the wrong column fail these tests. */
             'timemodified' => $when + 3 * 86400,
         ];
         if ($existing) {
@@ -627,10 +589,10 @@ final class gradebook_response_test extends \advanced_testcase {
     /**
      * Seed Monday-to-Friday business hours, 08:00 to 18:00.
      *
-     * `seed_calendar()` switches business hours ON without describing any, which
-     * leaves the width of a working day undefined — fine for the tests that only
-     * assert on the closure instants, wrong for any test that asserts on hours
-     * or on a band derived from them.
+     * `seed_calendar()` switches business hours on without inserting any rows,
+     * so the width of a working day would come from the db/install.php defaults
+     * rather than from the test. Needed by any test that asserts on hours or on
+     * a band derived from them.
      *
      * @return void
      */

@@ -34,17 +34,11 @@ use core_external\external_value;
 use block_feedback_tracker\local\calendar\day_counter;
 
 /**
- * Returns the top-N most-urgent pending submissions across every course
- * the caller can view the dashboard for. Powers the dashboard's "Grade
- * Now" triage panel — one cheap call replaces a per-course fan-out of
- * get_pending_submissions, and the underlying SQL sorts by effective wait
- * time so the rows surfaced are genuinely the worst-offenders.
+ * Returns the top-N pending submissions by effective wait across every course
+ * the caller can view the dashboard for: the dashboard's "Grade Now" panel, in
+ * one query instead of a get_pending_submissions call per course.
  *
- * Capability scope mirrors get_dashboard:
- * `block/feedback_tracker:viewdashboard` resolved per-course via
- * `get_user_capability_course()` so editing teachers see only their own
- * courses, category managers see all category courses (inherited), and
- * site admins see everything.
+ * Authorisation and scope are get_dashboard's, from {@see \block_feedback_tracker\local\sla\dashboard_scope}.
  */
 class get_grader_priority_list extends external_api {
     /** Default number of submissions to return. */
@@ -94,9 +88,8 @@ class get_grader_priority_list extends external_api {
         $sysctx = \context_system::instance();
         self::validate_context($sysctx);
 
-        // Authorisation + scope via dashboard_scope — same rules as
-        // get_dashboard, since the priority list is a slice of the same
-        // data. A non-admin with zero visible courses has no access.
+        // Same rules as get_dashboard, since the priority list is a slice of
+        // the same data. A user with no visible course has no access.
         $userid = (int) $USER->id;
         $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids($userid);
         if ($scope !== null && empty($scope)) {
@@ -165,52 +158,67 @@ class get_grader_priority_list extends external_api {
             }
         }
 
-        // Top-N by effective wait descending; ties broken by oldest
-        // submission first so the absolute worst-offender row floats up.
+        // Top-N by effective wait descending; ties go to the oldest submission.
+        // The course context columns preload the contexts the names are formatted in.
+        $sqlparams['bftctxcourse'] = CONTEXT_COURSE;
+        $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
+        $namefields = \core_user\fields::for_name()->get_sql('u')->selects;
         $sql = "SELECT sub.id, sub.cmid, sub.userid, sub.courseid, sub.groupid,
                        sub.timesubmitted, sub.waitinghours, sub.effectivehours,
                        sub.effectivedays, sub.slabucket,
-                       u.firstname, u.lastname,
                        c.fullname AS coursename,
-                       cm.instance AS assignid
+                       $ctxfields
+                       $namefields
                   FROM {block_feedback_tracker_sub} sub
                   JOIN {user} u ON u.id = sub.userid
                   JOIN {course} c ON c.id = sub.courseid
+                  JOIN {context} ctx ON ctx.instanceid = c.id AND ctx.contextlevel = :bftctxcourse
                   JOIN {course_modules} cm ON cm.id = sub.cmid
                  WHERE $where
               ORDER BY sub.effectivehours DESC, sub.timesubmitted ASC";
 
         $rows = $DB->get_records_sql($sql, $sqlparams, 0, $limit);
-
-        // Two follow-up reads to enrich with activity + group names —
-        // O(1) each because the result set is bounded by $limit.
-        $assignids = array_unique(array_map(static fn($r) => (int) $r->assignid, $rows));
-        $assignnames = [];
-        if (!empty($assignids)) {
-            [$ainsql, $ainparams] = $DB->get_in_or_equal($assignids, SQL_PARAMS_NAMED);
-            $assignnames = $DB->get_records_select_menu('assign', "id $ainsql", $ainparams, '', 'id, name');
+        foreach ($rows as $r) {
+            \context_helper::preload_from_record($r);
         }
+
+        /* Names are filtered (multilang and other string filters) but not
+         * escaped: PARAM_TEXT and the text nodes the dashboard renders them
+         * into escape for themselves. One query each for activity and group
+         * names, over at most $limit rows. */
+        $activitynames = self::activity_names(array_map(static fn($r) => (int) $r->cmid, $rows));
         $groupids = array_unique(array_filter(array_map(static fn($r) => (int) $r->groupid, $rows)));
         $groupnames = [];
         if (!empty($groupids)) {
             [$ginsql, $ginparams] = $DB->get_in_or_equal($groupids, SQL_PARAMS_NAMED);
-            $groupnames = $DB->get_records_select_menu('groups', "id $ginsql", $ginparams, '', 'id, name');
+            foreach ($DB->get_records_select('groups', "id $ginsql", $ginparams, '', 'id, courseid, name') as $g) {
+                $groupnames[(int) $g->id] = format_string(
+                    (string) $g->name,
+                    true,
+                    ['context' => \context_course::instance((int) $g->courseid), 'escape' => false]
+                );
+            }
         }
 
         $submissions = [];
         foreach ($rows as $r) {
             // Pending-only list (timegraded IS NULL): elapsed days run up to now.
             $days = day_counter::between((int) $r->timesubmitted, time());
+            $coursename = format_string(
+                (string) $r->coursename,
+                true,
+                ['context' => \context_course::instance((int) $r->courseid), 'escape' => false]
+            );
             $submissions[] = [
                 'submissionid'   => (int) $r->id,
                 'cmid'           => (int) $r->cmid,
                 'userid'         => (int) $r->userid,
-                'studentname'    => trim($r->firstname . ' ' . $r->lastname),
+                'studentname'    => fullname($r),
                 'courseid'       => (int) $r->courseid,
-                'coursename'     => (string) $r->coursename,
+                'coursename'     => $coursename,
                 'groupid'        => (int) $r->groupid,
                 'groupname'      => (string) ($groupnames[(int) $r->groupid] ?? ''),
-                'activityname'   => (string) ($assignnames[(int) $r->assignid] ?? ''),
+                'activityname'   => (string) ($activitynames[(int) $r->cmid] ?? ''),
                 'timesubmitted'  => (int) $r->timesubmitted,
                 'waitinghours'   => (float) $r->waitinghours,
                 'effectivehours' => (float) $r->effectivehours,
@@ -231,6 +239,45 @@ class get_grader_priority_list extends external_api {
             'returned'    => count($submissions),
             'submissions' => $submissions,
         ];
+    }
+
+    /**
+     * Assignment names keyed by course module id, formatted in each module's
+     * context (filters can be switched off per activity).
+     *
+     * The activity is resolved through {course_modules} and {modules}, not
+     * from the instance id alone, so a module of another type never lends its
+     * instance id to an unrelated assignment.
+     *
+     * @param int[] $cmids Course module ids; duplicates are ignored.
+     * @return array<int, string> Plain (unescaped) names keyed by cmid.
+     */
+    private static function activity_names(array $cmids): array {
+        global $DB;
+        $cmids = array_values(array_unique($cmids));
+        if (empty($cmids)) {
+            return [];
+        }
+        [$insql, $params] = $DB->get_in_or_equal($cmids, SQL_PARAMS_NAMED, 'bftcm');
+        $params['bftmodname'] = 'assign';
+        $params['bftctxmodule'] = CONTEXT_MODULE;
+        $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
+        $sql = "SELECT cm.id AS cmid, a.name, $ctxfields
+                  FROM {course_modules} cm
+                  JOIN {modules} m ON m.id = cm.module AND m.name = :bftmodname
+                  JOIN {assign} a ON a.id = cm.instance
+                  JOIN {context} ctx ON ctx.instanceid = cm.id AND ctx.contextlevel = :bftctxmodule
+                 WHERE cm.id $insql";
+        $names = [];
+        foreach ($DB->get_records_sql($sql, $params) as $r) {
+            \context_helper::preload_from_record($r);
+            $names[(int) $r->cmid] = format_string(
+                (string) $r->name,
+                true,
+                ['context' => \context_module::instance((int) $r->cmid), 'escape' => false]
+            );
+        }
+        return $names;
     }
 
     /**

@@ -28,36 +28,31 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\calendar;
 
 /**
- * Counts paused days in a rolling window by reason (weekend / holiday /
- * recess). Drives the design's "Paused periods excluded from this report"
- * transparency callout on the report page and the per-block PausedNote.
+ * Counts paused days in a window by reason (weekend / holiday / recess) for
+ * the "Paused periods excluded from this report" callout and the academic-days
+ * strip on the report page ({@see \block_feedback_tracker\external\get_academic_days}),
+ * the teacher dashboard and the block payload.
  *
  * Reasons are bucketed for display, not for SLA arithmetic:
- *  - weekend  — day matches the configured weekend mask AND weekend
- *               exclusion is enabled, AND no schoolday override exists in
- *               {block_feedback_tracker_cday}.
- *  - holiday  — daytype = 'holiday'.
- *  - recess   — daytype = 'recess' OR 'closed' OR full-day 'optional'
- *               (no time window) OR any active manual pause
- *               (from {block_feedback_tracker_cpause}) covers the day.
+ *  - weekend  — a weekend-mask day while weekends are excluded, unless a
+ *               'schoolday' row in {block_feedback_tracker_cday} opts it into
+ *               the working week.
+ *  - holiday  — a 'holiday' row, while holidays are excluded.
+ *  - recess   — a 'recess', 'closed' or full-day 'optional' row while recesses
+ *               are excluded, or any manual pause (site, the course, or a
+ *               group of the course) touching the day.
  *
- * Sub-day optional events (daytype = 'optional' with starttime + endtime
- * set) do NOT count as a recess "day" — they're hour-scale, not day-
- * scale. They surface in the `events` sidecar list with their window +
- * label so the report-page callout can render
- *   "… · 1 event (⚽ Brasil vs França)"
- * alongside the day-bucket counts.
- *
- * A "schoolday" override in {block_feedback_tracker_cday} cancels the
- * weekend classification — admins explicitly opting a Saturday into the
- * working week. Manual pauses include site / course / group scopes;
- * scoping is filtered by the caller's courseid.
+ * Sub-day optional events (an 'optional' row with starttime and endtime set)
+ * do not pause the day; they are returned in the `events` sidecar with their
+ * window and label, so the callout can add "… · 1 event (Staff meeting)"
+ * beside the day counts.
  */
 class paused_aggregator {
     /**
      * Count paused days in a [start, end) window, by reason. Derived from the
      * per-day classification so the counts and the per-day map (consumed by
-     * the report-page heatmap) can never drift apart.
+     * the report-page heatmap) can never drift apart. An event's label is its
+     * note as plain text: tags stripped, not HTML-escaped.
      *
      * @param int $courseid Course context for manual-pause scoping; 0 for site-wide.
      * @param int $start    Unix seconds; inclusive lower bound.
@@ -147,7 +142,8 @@ class paused_aggregator {
         $dayymds = [];
         while ($cur < $endboundary) {
             $ymd = (int) $cur->format('Ymd');
-            $dow = (int) $cur->format('w');
+            // Day of the week counted from Monday as 0, the numbering calendar::is_weekend() reads.
+            $dow = (int) $cur->format('N') - 1;
             $days[$ymd] = $dow;
             $dayymds[] = $ymd;
             $cur = $cur->modify('+1 day');
@@ -187,7 +183,8 @@ class paused_aggregator {
                 $optend = $override['endtime'];
                 if ($optstart !== null && $optend !== null) {
                     // Sub-day — surface in the events sidecar but do NOT
-                    // mark the day paused (it's hour-scale, not day).
+                    // mark the day paused (it's hour-scale, not day). The label
+                    // is plain text, like {@see upcoming_pauses::clean_note()}.
                     $events[] = [
                         'date'      => (int) $ymd,
                         'starttime' => (int) $optstart,
@@ -195,7 +192,7 @@ class paused_aggregator {
                         'label'     => format_string(
                             (string) ($override['note'] ?? ''),
                             true,
-                            ['context' => $sysctx]
+                            ['context' => $sysctx, 'escape' => false]
                         ),
                     ];
                 } else if ($excluderecesses) {
@@ -219,7 +216,7 @@ class paused_aggregator {
     /**
      * Fetch the day-override rows for the supplied YYYYMMDD ints. Returns
      * a per-day shape carrying daytype + starttime / endtime / note so
-     * for_window() can distinguish sub-day optional events from full-day
+     * classify_window() can distinguish sub-day optional events from full-day
      * rules.
      *
      * @param int[] $ymds
@@ -252,9 +249,8 @@ class paused_aggregator {
 
     /**
      * Fetch [start, end) manual pause windows scoped to the course (or
-     * site-wide for $courseid = 0). Group-scoped pauses are folded in via
-     * any group belonging to the course — the design's aggregate is
-     * per-course, not per-group.
+     * site-wide for $courseid = 0). A pause on any group of the course
+     * counts too: the aggregate is per course, not per group.
      *
      * @param int $courseid
      * @param int $windowstart

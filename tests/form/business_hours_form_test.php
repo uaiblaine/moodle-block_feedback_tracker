@@ -28,10 +28,9 @@ declare(strict_types=1);
 namespace block_feedback_tracker\form;
 
 /**
- * Slot validation is pure logic with no database, so every branch is cheap to
- * pin. The boundary that matters most is that slots which merely touch are
- * legal: 09:00-12:00 followed by 12:00-18:00 is a day without a lunch break,
- * not an overlap.
+ * Slot validation needs no database. The boundary that matters most is that
+ * slots which merely touch are legal: 09:00-12:00 followed by 12:00-18:00 is a
+ * day without a lunch break, not an overlap.
  *
  * @covers \block_feedback_tracker\form\business_hours_form
  */
@@ -39,7 +38,7 @@ final class business_hours_form_test extends \advanced_testcase {
     /**
      * Validate a set of slots.
      *
-     * @param array $slots Pairs of [start, end]; null entries leave the field empty.
+     * @param array $slots Pairs of [start, end] in minutes since midnight; null leaves the field empty.
      * @return array Validation errors.
      */
     private function validate(array $slots): array {

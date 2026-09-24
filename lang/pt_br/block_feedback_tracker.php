@@ -108,6 +108,7 @@ $string['cachedef_pause_windows_by_course'] = 'Janelas de pausa manual do SLA ap
 $string['cachedef_responsiveness_payload'] = 'Payload de responsividade por usuário e por curso.';
 $string['cachedef_site_comparison'] = 'Benchmarks de mediana e percentil para todo o site.';
 $string['caleditor_bulk_button'] = 'Importar';
+$string['caleditor_bulk_error_line'] = 'Linha {$a->line}: {$a->raw} — {$a->message}';
 $string['caleditor_bulk_heading'] = 'Importação em lote de CSV';
 $string['caleditor_bulk_result'] = '{$a->saved} dias salvos, {$a->errors} erros.';
 $string['caleditor_col_actions'] = 'Ações';

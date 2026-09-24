@@ -36,9 +36,6 @@ use block_feedback_tracker\local\sla\dirty_queue;
  * touches everything, a course pause only that course, a group pause a single
  * tuple.
  *
- * This class looked covered — tests/local/sla/observer_test.php shares the
- * filename — but that file declares coverage of the SLA observer only.
- *
  * @covers \block_feedback_tracker\local\calendar\observer
  */
 final class observer_test extends \advanced_testcase {
@@ -225,8 +222,8 @@ final class observer_test extends \advanced_testcase {
     }
 
     /**
-     * The queue reason records what dirtied the tuple, which is what the audit
-     * log later reports.
+     * The queue row's reason records what dirtied the tuple: a calendar edit
+     * or a pause.
      *
      * @return void
      */

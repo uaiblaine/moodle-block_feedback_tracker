@@ -19,10 +19,10 @@
  * One named export per WS, each accepting a single options object. The
  * `Ajax.call([...])` plumbing and `Notification.exception` error routing
  * are centralised here so views can `await getResponsiveness({courseid})`
- * without worrying about the underlying RequireJS shape.
+ * without handling core/ajax's request-array shape.
  *
- * Function names mirror the corresponding methodname (Moodle convention)
- * minus the `block_feedback_tracker_` frankenstyle prefix.
+ * Function names are the camelCase methodname without the
+ * `block_feedback_tracker_` prefix.
  *
  * @module    block_feedback_tracker/lib/api
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -122,9 +122,9 @@ export const getPendingSubmissions = ({
 
 /**
  * Paginated list of already-graded submissions in a course (the report's
- * "Já avaliados" view). Mirrors getPendingSubmissions but each row carries a
- * timegraded and a result band (slabucket recorded at grading time); the
- * counts cover the four result bands.
+ * graded mode). Mirrors getPendingSubmissions but each row carries a
+ * timegraded and a result band (slabucket recorded at grading time). The
+ * server folds critical results into regular, so counts.critical is always 0.
  *
  * @param {object} options
  * @param {number} options.courseid
@@ -144,8 +144,8 @@ export const getGradedSubmissions = ({
     {courseid, groupid, bucket, sort, page, perpage, search, order});
 
 /**
- * Last-30-academic-days heatmap series for the report page. Each entry is one
- * calendar day, flagged paused (with a reason) or coloured by that day's
+ * Heatmap series of the last 30 calendar days for the report page. Each entry
+ * is one day, flagged paused (with a reason) or coloured by that day's
  * responsiveness band. Loaded asynchronously after first paint.
  *
  * @param {object} options
@@ -193,10 +193,9 @@ export const getCalendar = ({scope, scopeid = 0}) =>
     call('block_feedback_tracker_get_calendar', {scope, scopeid});
 
 /**
- * Site / cross-course dashboard payload. The WS has its own internal
- * 900-second cache keyed on (calver, userid, band), so there's no
- * client-driven force flag — bypass happens via calver bumps or natural
- * TTL expiry.
+ * Site / cross-course dashboard payload. The WS keeps its own 900-second
+ * cache keyed per user, band and calendar version (calver), so there is no
+ * client-driven force flag: a calver bump or TTL expiry refreshes it.
  *
  * @param {object} [options]
  * @param {string} [options.band]  Optional band filter ('' = no filter).
@@ -216,7 +215,7 @@ export const getSchoolComparison = () =>
 /**
  * Cross-course "Grade Now" prioritised list — top-N most-urgent pending
  * submissions across every course the caller can view, sorted by
- * effective wait DESC. Powers the dashboard's Grade Now panel.
+ * effective wait DESC. Powers the dashboard's "Grade now" priority cards.
  *
  * @param {object} [options]
  * @param {number} [options.limit]  1..50, default 10.
@@ -237,9 +236,7 @@ export const getInsights = () =>
     call('block_feedback_tracker_get_insights', {});
 
 /**
- * Paginated audit-log read. Powers the future React audit-log view;
- * existing pages/audit_log.php still renders server-side from
- * block_feedback_tracker_log directly.
+ * Paginated read of the recompute audit log ({block_feedback_tracker_log}).
  *
  * @param {object} [options]
  * @param {number} [options.page]      0-based page index.
@@ -256,7 +253,7 @@ export const getAuditLog = ({page = 0, perpage = 50, courseid = 0, actor = 0} = 
  *
  * Each wrapper exposes the same field names as the server's
  * execute_parameters() so callers can pass payload-shaped objects directly.
- * Errors propagate through the shared call() helper (toast + rethrow).
+ * Errors propagate through call().
  * ========================================================================= */
 
 /**

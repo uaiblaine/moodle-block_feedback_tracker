@@ -34,8 +34,7 @@ use core_privacy\local\request\writer;
 /**
  * The provider declares four tables holding administrator ids at system
  * context and returns that context from get_contexts_for_userid(), so the
- * export and delete paths have to honour it. A context the plugin itself puts
- * in the list and then ignores is a compliance failure, not a gap.
+ * export and delete paths must act on it too.
  *
  * @covers \block_feedback_tracker\privacy\provider
  */
@@ -234,8 +233,8 @@ final class provider_system_context_test extends \advanced_testcase {
     }
 
     /**
-     * The course-context userlist path had no coverage either: listed users
-     * lose their ledger rows, unlisted users keep theirs.
+     * The course-context userlist path: listed users lose their ledger rows,
+     * unlisted users keep theirs.
      *
      * @return void
      */

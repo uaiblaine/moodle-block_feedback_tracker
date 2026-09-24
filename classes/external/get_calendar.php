@@ -35,9 +35,9 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Returns the platform calendar configuration for a date range plus the
- * weekly business-hours schedule and platform settings. Drives the calendar
- * editor's month grid.
+ * Returns the platform calendar's day overrides for a date range plus the
+ * weekly business-hours schedule and the calendar settings. Readable with
+ * either `:managecalendar` or `:viewdashboard` at system context.
  */
 class get_calendar extends external_api {
     /** Maximum date span in days. */

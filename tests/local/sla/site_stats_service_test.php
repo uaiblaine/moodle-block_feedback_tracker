@@ -71,11 +71,9 @@ final class site_stats_service_test extends \advanced_testcase {
     /**
      * Every field of the day row, across several rows and groups.
      *
-     * The aggregate is built by walking one day's graded submissions once and
-     * accumulating six things at the same time. Only two of them were pinned,
-     * so a change to how that walk is done — the read was materialising the
-     * whole day into objects before building the arrays it actually needed —
-     * could have altered the other four without any test noticing.
+     * All the columns come from one pass over the day's graded submissions, so
+     * each is pinned here: a change to that pass must not alter any of them
+     * unnoticed.
      *
      * @return void
      */
@@ -94,13 +92,12 @@ final class site_stats_service_test extends \advanced_testcase {
         $day = (int) $dt->format('Ymd');
 
         /* Odd count so the median is the middle value under any tie-breaking
-         * rule. Four distinct (course, group) tuples over TWO courses that
-         * reuse the same group numbers: keying the tuple set on groupid alone
-         * would also yield 2 on a single-course fixture, which is how a real
-         * site — where every course reuses group 0 — could under-report its
-         * breadth without any test noticing.
+         * rule. Four distinct (course, group) tuples over two courses that
+         * reuse the same group ids: keying the tuple set on groupid alone would
+         * count 2, and a single-course fixture could not tell the difference.
+         * Real sites reuse group 0 in every course.
          *
-         * One value sits exactly ON the 24-hour goal, because the comparison is
+         * One value sits exactly on the 24-hour goal, because the comparison is
          * `<=` and no fixture that avoids the boundary can tell that from `<`. */
         $rows = [
             [$coursea, 0, 4.0],
@@ -134,12 +131,11 @@ final class site_stats_service_test extends \advanced_testcase {
             0.01,
             'Four of five within goal — the one sitting exactly on it counts.'
         );
-        /* Asserted as numbers, not as an ordering. An ordering against the
-         * median holds just as well when the percentiles are computed from the
-         * raw clock instead of the effective one, so a column named p10h_eff
-         * could be filled from the wrong array and stay green. These values are
-         * the linear interpolation stats::percentile() documents: rank is
-         * p/100 * (n - 1) over the sorted effective hours. */
+        /* Asserted as numbers, not as an ordering: an ordering against the
+         * median also holds when the percentiles are computed from the raw
+         * clock instead of the effective one. The values follow
+         * stats::percentile(): rank = p/100 * (n - 1) over the sorted
+         * effective hours, interpolated linearly. */
         $this->assertEqualsWithDelta(5.6, (float) $row->p10h_eff, 0.01);
         $this->assertEqualsWithDelta(69.6, (float) $row->p90h_eff, 0.01);
     }

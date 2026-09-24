@@ -27,7 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\output;
 
 /**
- * Compact SVG line chart for the 30-day median-effective-hours trend.
+ * Compact SVG line chart of daily median effective hours (the block card
+ * passes the last 14 days).
  *
  * Renders via Mustache; see templates/sparkline.mustache (and the JS port
  * amd/src/components/Sparkline.js — keep all three in lockstep). Null values
@@ -35,11 +36,9 @@ namespace block_feedback_tracker\output;
  * polyline (a gapless line through the days that have data).
  *
  * The vertical axis reads as speed: fewer effective hours (faster turnaround)
- * render HIGHER. When a goal is supplied it drives the "desired-speed zone":
- * a light-green band anchored at the TOP spanning effective hours 0 → goal,
- * with a solid green baseline at 0 hours (top edge) and a dotted green line at
- * the goal (the minimum-desired-speed boundary). A slowdown pushes the line
- * down, below the goal line.
+ * render higher. When a goal is supplied it draws the "desired-speed zone", a
+ * band anchored at the top spanning 0 hours to the goal, with a line at each
+ * edge; a slowdown pushes the line below the goal line.
  */
 class sparkline implements \renderable, \templatable {
     /** Minimum width (user units) at which the zone text label is drawn. */
@@ -129,9 +128,7 @@ class sparkline implements \renderable, \templatable {
             'zoneheight' => $haszone ? $zoney : null,
             'showlabel'  => $showlabel,
             'zonelabel'  => $zonelabel,
-            /* Localised, and it names the window the sparkline actually draws.
-             * The previous hard-coded label said 30 days while the card
-             * renders 14, so assistive tech was told the wrong period. */
+            // The string names a 14-day window, matching the series responsiveness_payload builds.
             'arialabel'  => get_string('sparkline_aria', 'block_feedback_tracker'),
         ];
     }

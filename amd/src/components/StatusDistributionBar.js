@@ -18,10 +18,10 @@
  * in each band; click a segment to filter the table. Mode-aware:
  *
  *  - pending: three segments (Waiting / Attention / Priority) over the pending
- *    effective-hours bands, plus a trailing "Já avaliados" button that switches
- *    the table to the graded view.
- *  - graded: four segments (Excellent / Good / Up Next / Priority) over the
- *    slabucket result bands, plus a "back to pending" button.
+ *    bands, plus a trailing "Graded" button that switches the table to the
+ *    graded view.
+ *  - graded: three segments (On goal / Good / Regular) over the slabucket
+ *    result bands, plus a "Pending" button back to the pending view.
  *
  * The counts come from the web service so they reflect every matching row, not
  * just the loaded page. The bar renders even when a mode has no rows so the

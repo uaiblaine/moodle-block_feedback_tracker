@@ -14,12 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Paused-periods transparency callout. Single bar at the top of the
- * pending-report page that explains how many days were paused in the
- * last 30 and which categories contributed.
+ * Paused-periods transparency callout: a single bar that explains how many
+ * days were paused in the last 30 and which categories contributed.
  *
- * Hides itself when total_days = 0 so brand-new courses don't show
- * "0 days paused" noise.
+ * Renders nothing when there are no paused days and no events, so a new
+ * course does not show "0 days paused".
  *
  * @module    block_feedback_tracker/components/PausedCallout
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -29,9 +28,7 @@
 import {html} from 'block_feedback_tracker/lib/preact';
 
 /**
- * YYYYMMDD int → "DD/MM" (admin's local calendar, not localised — the
- * paused-callout strip is informational; full locale handling would
- * require Intl.DateTimeFormat plumbing for the page tz).
+ * YYYYMMDD int → "DD/MM", in that fixed order whatever the language.
  *
  * @param {number} ymd
  * @returns {string}
@@ -93,8 +90,7 @@ const buildBreakdownLine = (breakdown, events, i18n) => {
         const word = n === 1
             ? (i18n.paused_callout_event_singular || 'event')
             : (i18n.paused_callout_event_plural || 'events');
-        // Latest event in the sidecar carries the most recent label + time.
-        // Aggregator emits events in date order so the last item is newest.
+        // The server's paused_aggregator emits events in date order, so the last is the newest.
         const latest = events[events.length - 1];
         const detail = latest ? fmtEvent(latest) : '';
         parts.push(n + ' ' + word + (detail ? ' (' + detail + ')' : ''));

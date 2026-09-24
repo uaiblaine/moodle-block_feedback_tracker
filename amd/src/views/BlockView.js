@@ -42,7 +42,7 @@ import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
 import {getResponsiveness} from 'block_feedback_tracker/lib/api';
 
-/** Client cache: how long a stored page set stays fresh (matches server TTL). */
+/** Client cache: how long a stored page set stays fresh (matches responsiveness_payload::CACHE_TTL). */
 const CACHE_TTL_SECONDS = 900;
 /** SessionStorage key prefix + schema version (bump to invalidate old shapes). */
 const CACHE_PREFIX = 'bft-resp-v2-';
@@ -121,10 +121,10 @@ const clearCacheForCourse = (courseid) => {
 };
 
 /**
- * Pending-weighted average of per-group scores. A group with no pending
- * work doesn't drag the headline figure — its score still counts but with
- * a minimum weight of 1 so courses early in the term don't end up with
- * "no overall score" simply because nobody has submitted yet.
+ * Average of the loaded groups' scores weighted by pending count, with a
+ * minimum weight of 1 so a group with nothing pending still counts. Groups
+ * without a score are skipped. Mirrors responsiveness_payload::overall_score(),
+ * which computes the same figure over the whole course.
  *
  * @param {Array<object>} groups
  * @param {{excellent?: number, good?: number, regular?: number}|null} thresholds
@@ -170,9 +170,10 @@ const fmtTimestamp = (ts) => {
 
 /**
  * The scheduled-pause list (already decorated + visibility-filtered by
- * upcoming_pauses::for_display() on the server). It is attached identically
- * to every group payload — the calendar is platform-wide — so the first
- * group carrying a non-empty list wins and the block renders it once.
+ * upcoming_pauses::for_display() on the server). The payload builds it once
+ * per course, without group-scoped pauses, and attaches it identically to
+ * every group, so the first group carrying a non-empty list wins and the
+ * block renders it once.
  *
  * @param {Array<object>} groups
  * @returns {Array<object>}
@@ -198,8 +199,7 @@ const upcomingFromGroups = (groups) => {
  *                                the view loads them lazily via the WS.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function BlockView({initial}) {
     const i18n = initial.i18n || {};
@@ -210,8 +210,8 @@ export default function BlockView({initial}) {
     const sesskey = (typeof M !== 'undefined' && M.cfg && M.cfg.sesskey) || '';
 
     // Batch sizes + the DOM safety cap. Auto-loading stops at CAP rendered
-    // cards so a course with thousands of groups can't exhaust the renderer
-    // (Chrome "Código de erro: 5"); a manual button loads MANUAL_BATCH more.
+    // cards so a course with thousands of groups cannot crash the browser tab;
+    // a manual button loads MANUAL_BATCH more.
     const BATCH = 3;
     const CAP = 200;
     const MANUAL_BATCH = 25;
@@ -472,8 +472,7 @@ export default function BlockView({initial}) {
     };
 
     // Overall banner: prefer the whole-course server aggregate; fall back to a
-    // client estimate over loaded cards only when the server figure is absent
-    // (e.g. a stale cache entry written before overall_score shipped).
+    // client estimate over the loaded cards only when the server figure is absent.
     const fallback = useMemo(
         () => overallScore(groups, config && config.score_thresholds),
         [groups, config]

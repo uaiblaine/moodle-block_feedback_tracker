@@ -33,48 +33,49 @@ use block_feedback_tracker\local\score\responsiveness_calculator;
 
 /**
  * Reads the per-submission ledger and produces one row in
- * {block_feedback_tracker_group}. Called by the drain task for tuples in the
- * dirty queue and by the adhoc `recompute_one` task right after grading.
+ * {block_feedback_tracker_group}. Called by the adhoc `recompute_one` task
+ * (queued by the drain_queue task and by the submission_graded observer) and
+ * by the recompute CLIs.
  *
  * Metrics split into three groups:
  * - Pending counts (pending / critical / overgoal) — current backlog state.
- * - Last-30d graded stats (medians / p90 / max / compliance) — historical
- *   responsiveness, used by the score formula.
+ * - Graded stats over the trend_window_days window (medians / p90 / max /
+ *   compliance) — historical responsiveness, used by the score formula.
  * - Trend (rolling 7d vs prior 7d median) — week-over-week direction of travel.
  *
- * Plus auxiliary `nextpause_*` / `lastpause_*` columns to power the dashboard
- * "next pause: May 25 (holiday)" indicator without extra read-path queries.
+ * Plus the `nextpause_*` / `lastpause_*` columns, precomputed so the read path
+ * can show the next and last pause without recomputing them.
  */
 class rollup_service {
-    /** Recent-stats window length in days (compliance / median / counts). */
+    /**
+     * Default graded-stats window in days (compliance / median / counts), used when the
+     * trend_window_days setting is unset. Despite the name, the trend uses TREND_COMPARE_DAYS.
+     */
     public const TREND_WINDOW_DAYS = 30;
 
     /** Rolling window (days) for the trend comparison — a fixed weekly cycle. */
     public const TREND_COMPARE_DAYS = 7;
 
     /**
-     * Display cap (±%) for trend_pct_30d. The raw ratio is unbounded when the
-     * prior-window median is near zero (e.g. 0.06h → 227h ≈ 118950%), which
-     * overflows the NUMBER(6,2) column. A regression beyond ~900% already
-     * reads as "far worse", so clamping here loses no signal — and the score's
-     * trend term saturates via clamp01() long before this bound.
+     * Cap (±%) for trend_pct_30d. The raw ratio is unbounded when the
+     * prior-window median is near zero and would overflow the NUMBER(6,2)
+     * column. Clamping loses no signal: the score's trend term already
+     * saturates at ±100%.
      */
     public const TREND_PCT_CAP = 999.99;
 
     /**
      * Recompute and upsert the rollup row for one (courseid, groupid).
      *
-     * Guarded by a non-blocking Moodle Lock API lock keyed on the tuple. When
-     * two workers race on the same (courseid, groupid) — e.g. a drain_queue
-     * tick and a recompute_one adhoc task — the second arrival returns
-     * silently. The math is idempotent so the winning worker produces the
-     * same rollup row either way; the lock just elides duplicate I/O.
+     * Guarded by a non-blocking Lock API lock keyed on the tuple: when two
+     * workers race on the same (courseid, groupid) — e.g. two recompute_one
+     * adhoc tasks, or a CLI recompute and an adhoc task — the second arrival
+     * returns without recomputing.
      *
-     * The return value distinguishes "recomputed" from "skipped because
-     * another worker held the lock". Callers that retire a queue entry
-     * afterwards must not do so on a skip: the tuple would be dequeued
-     * without anyone having recomputed it, leaving the materialized rollup
-     * stale until some later event happens to touch the same tuple.
+     * Callers that retire a queue entry afterwards must not do so when this
+     * returns false: the tuple would be dequeued without anyone having
+     * recomputed it, leaving the materialized rollup stale until some later
+     * event touches the same tuple.
      *
      * @param int $courseid
      * @param int $groupid
@@ -99,7 +100,7 @@ class rollup_service {
 
     /**
      * Body of recompute_group(), invoked once the per-tuple lock is held (or
-     * the lock store proved unavailable and we fell back to running uncoupled).
+     * the lock factory was unavailable and the recompute runs unlocked).
      *
      * @param int $courseid
      * @param int $groupid
@@ -120,18 +121,16 @@ class rollup_service {
         $slagoal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
         $thresholds = bucket::parse_thresholds_eff();
         $criticalmin = $thresholds[2];
-        // Day-ruler bounds for the critical_days/overgoal_days twins (the
-        // hour-based critical/overgoal above keep feeding the score).
+        // Day-ruler bounds for the display-only critical_days/overgoal_days
+        // counts; the score reads the hour-based critical count.
         $daythresholds = bucket::parse_thresholds_days();
         $daygoal = $daythresholds[0];
         $daycrit = $daythresholds[2];
-        // Business-days SLA goal for the display-only compliance_pct_days
-        // twin (the hour-based compliance_pct above keeps feeding the score).
+        // Business-days SLA goal for the display-only compliance_pct_days;
+        // the score reads the hour-based compliance_pct.
         $slagoaldays = (float) (get_config('block_feedback_tracker', 'sla_goal_days') ?: 2);
 
-        // 1. Pending counts. Only genuinely submitted work counts toward the
-        // SLA — draft / new / reopened attempts are awaiting the student, not
-        // the teacher, so they are excluded here (and everywhere downstream).
+        // 1. Pending counts, submitted work only (see submission_status).
         $pendingrows = $DB->get_records_select(
             'block_feedback_tracker_sub',
             'courseid = :courseid AND groupid = :groupid AND timegraded IS NULL'
@@ -167,12 +166,11 @@ class rollup_service {
             } else if ($days['business'] > $daygoal) {
                 $overgoaldays++;
             }
-            // Mutually-exclusive pending bands that partition $pending, so the
-            // three displayed counts sum to the total: critical (eff >=
+            // Mutually-exclusive bands that partition $pending: critical (eff >=
             // criticalmin) | over-goal (goal < eff < criticalmin) | within-goal
-            // (the remainder, eff <= goal, derived at display as
-            // $pending - $overgoal - $critical). $pending stays the total — the
-            // score and the overall-weighting depend on it.
+            // (eff <= goal, derived at display as $pending - $overgoal - $critical).
+            // $pending stays the total: the score and the pending-weighted course
+            // score depend on it.
             if ($eff >= $criticalmin) {
                 $critical++;
             } else if ($eff > $slagoal) {
@@ -219,11 +217,9 @@ class rollup_service {
             if ($days['business'] <= $slagoaldays) {
                 $compliantdayscount++;
             }
-            /* The split measures, collected only where they are real. A row
-             * with no allocation stamp contributes to neither: the coverage
-             * percentage below is what says how much of the window that is,
-             * and it is published beside the medians precisely so they are
-             * never read as if the sample were complete. */
+            /* Queue and marker hours are collected only where they were
+             * measured; alloc_coverage_pct below says how much of the window
+             * that is. */
             if ($r->queuehours !== null) {
                 $queuevals[] = (float) $r->queuehours;
             }
@@ -244,25 +240,18 @@ class rollup_service {
         $compliancepctdays = $numgraded30d ? round(100.0 * $compliantdayscount / $numgraded30d, 2) : null;
 
         /* Coordination queue vs marker turnaround. Coverage is the share of
-         * the graded window that carries a usable marker measurement: before
-         * Moodle 5.2 only one of mod_assign's three allocation paths fires an
-         * event, so the sample is partial by construction and the median is
-         * meaningless without it. */
+         * the graded window that carries a marker measurement: before Moodle
+         * 5.2 only one of mod_assign's three allocation paths (the batch
+         * action) fires marker_updated, so the sample is partial and the
+         * median must be read beside the coverage. */
         $medianqueue = !empty($queuevals) ? stats::median($queuevals) : null;
         $medianalloc = !empty($allocvals) ? stats::median($allocvals) : null;
         $alloccoverage = $numgraded30d ? round(100.0 * count($allocvals) / $numgraded30d, 2) : null;
 
-        // 2b. Headline "current" medians — graded-in-window plus currently
-        // pending work — so the dashboard's effective / perceived times
-        // reflect the live backlog instead of reading ~0 when little has been
-        // graded. These feed the display only; the score keeps using the
-        // graded-only $medianeff above.
-        /* Built from a dedicated iscurrent = 1 population rather than by
-         * merging the two sets above. The graded set deliberately keeps every
-         * cycle (each is a real response event), but a "state right now"
-         * headline must not count one attempt twice — which is exactly what a
-         * merge does when a closed cycle 0 sits in the graded window while its
-         * own live cycle 1 is pending. */
+        // 2b. Headline "current" medians over graded-in-window plus pending
+        // work, so the display reflects the live backlog. Display only; the
+        // score uses the graded-only $medianeff. Not a merge of the two sets
+        // above, which would count an attempt twice (see current_state_values()).
         $current = self::current_state_values($courseid, $groupid, $cutoffrecent, $now);
         $curmedianeff = !empty($current['eff']) ? stats::median($current['eff']) : null;
         $curmedianraw = !empty($current['raw']) ? stats::median($current['raw']) : null;
@@ -270,11 +259,10 @@ class rollup_service {
         $curmedianeffdays = !empty($current['effdays']) ? stats::median($current['effdays']) : null;
         $curmedianpercdays = !empty($current['percdays']) ? stats::median($current['percdays']) : null;
 
-        // 3. Trend — rolling 7-day cycle: this week's median effective hours vs
-        // the prior week's (submitted, graded work only). A deliberately
-        // SEPARATE, shorter window from the 30-day stats above, so the trend
-        // reacts week-over-week while compliance / median / counts keep their
-        // monthly view. Stored in the legacy-named trend_pct_30d column.
+        // 3. Trend: median effective hours of the last 7 days vs the 7 days
+        // before (submitted, graded work only). Deliberately shorter than the
+        // stats window above so it reacts week over week. Stored in the
+        // legacy-named trend_pct_30d column.
         $trendsec = self::TREND_COMPARE_DAYS * 86400;
         $trendrecent = self::graded_eff_hours($courseid, $groupid, $now - $trendsec, $now);
         $trendprior = self::graded_eff_hours($courseid, $groupid, $now - 2 * $trendsec, $now - $trendsec);
@@ -443,11 +431,8 @@ class rollup_service {
      *
      * Returns [$lock, $proceed].
      *  - $proceed=true, $lock=lock object: acquired; caller must release.
-     *  - $proceed=true, $lock=null: lock store unavailable; run without it.
+     *  - $proceed=true, $lock=null: lock factory unavailable; run without it.
      *  - $proceed=false: another worker holds the lock; caller skips silently.
-     *
-     * Resource key uses `_` not `:` because some lock-store backends (notably
-     * the file store) treat `:` as a path separator.
      *
      * @param int $courseid
      * @param int $groupid
@@ -475,9 +460,9 @@ class rollup_service {
     }
 
     /**
-     * Find the next pause that affects this (course, group) within 30 days.
-     * Considers both cday-driven holidays/recesses/closures and overlapping
-     * cpause windows.
+     * Find the next pause that starts after now and within 30 days for this
+     * (course, group): site calendar days (holiday / recess / closed /
+     * optional) and cpause windows. A pause already in progress is not "next".
      *
      * @param int $courseid
      * @param int $groupid
@@ -503,9 +488,8 @@ class rollup_service {
                 't1' => calendar::DAYTYPE_HOLIDAY,
                 't2' => calendar::DAYTYPE_RECESS,
                 't3' => calendar::DAYTYPE_CLOSED,
-                // V1.0.9 — optional days surface as paused too. Sub-day
-                // event rows resolve their start to ymd + starttime*60 so
-                // PausedNote can show "Paused 16:00-18:00: {label}".
+                // Optional days count as pauses too; a sub-day event starts
+                // starttime minutes after that day's midnight.
                 't4' => calendar::DAYTYPE_OPTIONAL,
             ],
             'daydate ASC',
@@ -567,7 +551,7 @@ class rollup_service {
                 't1' => calendar::DAYTYPE_HOLIDAY,
                 't2' => calendar::DAYTYPE_RECESS,
                 't3' => calendar::DAYTYPE_CLOSED,
-                // V1.0.9 — optional days surface as paused too.
+                // Optional days count as pauses too.
                 't4' => calendar::DAYTYPE_OPTIONAL,
             ],
             'daydate DESC',
@@ -617,7 +601,8 @@ class rollup_service {
     }
 
     /**
-     * Translate a cpause scopelevel to a stable reason slug.
+     * Translate a cpause scopelevel to a stable reason slug. Mirrored by
+     * {@see \block_feedback_tracker\local\calendar\upcoming_pauses::scope_reason()}; keep in step.
      *
      * @param string $scopelevel
      * @return string

@@ -35,14 +35,15 @@ use block_feedback_tracker\local\sla\submission_ledger;
  *
  * Runs as a task rather than in the request that submitted the form: an
  * end-of-year sweep can select hundreds of courses, each removal tears down a
- * block context, and doing that inline would hold a browser connection open
- * long enough to time out somewhere in the middle — leaving a partial result
- * nobody can see.
+ * block context, and a request that timed out part-way would leave a partial
+ * result nobody can see.
  *
- * The `discardnow` mode exists for the deliberate case (archiving a finished
- * year), and skips the grace period that a manual removal gets. It is gated in
- * the UI behind a typed confirmation, because it is the one path here with no
- * way back.
+ * Each removal goes through the block's own instance_delete(), which defers
+ * the discard of the course's history by the grace period
+ * ({@see discard_course_data}). The `discardnow` mode, for archiving a
+ * finished year, deletes the history at once instead and cannot be undone;
+ * pages/bulk_remove.php queues either mode only after the administrator types
+ * the number of selected courses.
  */
 class bulk_remove_blocks extends \core\task\adhoc_task {
     /**

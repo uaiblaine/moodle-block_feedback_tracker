@@ -35,8 +35,9 @@ namespace block_feedback_tracker\local\calendar;
  *
  * Day-types: schoolday | holiday | recess | closed | optional.
  *
- * Row separators: line break. Field separators: comma or semicolon. Blank
- * lines and lines beginning with `#` are skipped.
+ * Row separators: line break. Field separators: comma or semicolon; only the
+ * first two split, so a note may itself contain either. Blank lines and lines
+ * beginning with `#` are skipped.
  *
  * Per-line errors are reported back rather than aborting the import: valid
  * rows are upserted, malformed rows are returned in the result with line

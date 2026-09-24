@@ -29,8 +29,8 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\local\calendar\academic_time;
 
 /**
- * Verifies that the wired Moodle events drive ledger upserts, pause-record
- * persistence, queue entries, and adhoc-task queueing.
+ * Verifies that the observed Moodle events drive ledger upserts, queue entries
+ * and adhoc-task queueing, and that the course_access gate applies.
  *
  * @covers \block_feedback_tracker\local\sla\observer
  * @covers \block_feedback_tracker\local\sla\submission_ledger
@@ -85,8 +85,8 @@ final class observer_test extends \advanced_testcase {
     }
 
     /**
-     * Firing submission_graded sets timegraded + effectivehours, persists
-     * pause records in the audit ledger, and queues one adhoc recompute task.
+     * Firing submission_graded sets timegraded and effectivehours and queues
+     * one adhoc recompute task.
      */
     public function test_submission_graded_persists_pauses_and_queues_recompute(): void {
         global $CFG, $DB;
@@ -122,12 +122,12 @@ final class observer_test extends \advanced_testcase {
         ];
         $grade->id = $DB->insert_record('assign_grades', $grade);
         /* Re-read so the record snapshot carries every column core defines.
-         * A hand-built object is missing whatever was added last (penalty, as
-         * of 5.1) and add_record_snapshot() raises a debugging() notice. */
+         * A hand-built object misses columns newer branches add (penalty, since
+         * Moodle 5.0), and add_record_snapshot() raises a debugging() notice. */
         $grade = $DB->get_record('assign_grades', ['id' => $grade->id], '*', MUST_EXIST);
 
-        // The submission_graded::create() throws in modern Moodle —
-        // create_from_grade() is the only supported factory.
+        // The event's create() throws when called directly; create_from_grade()
+        // is the supported factory.
         $assigninst = new \assign($context, $cm, $course);
         $event = \mod_assign\event\submission_graded::create_from_grade($assigninst, $grade);
         $event->trigger();
@@ -139,11 +139,9 @@ final class observer_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(64.0, (float) $row->waitinghours, 0.01);
         $this->assertSame(bucket::EXCELLENT, $row->slabucket);
 
-        // V2.0.0+: pause windows are no longer persisted to a table —
-        // they're recomputed on demand by get_pause_timeline using
-        // academic_time::elapsed_with_audit(). The fact that
-        // effectivehours is shorter than waitinghours (2h vs 64h)
-        // proves the engine applied pauses correctly.
+        // Pause windows are not stored; get_pause_timeline derives them on
+        // demand. Effective 2 h against a raw 64 h wait (Friday 17:00 to
+        // Monday 09:00) shows the engine applied the weekend and off-hours pauses.
 
         $alladhoc = \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\recompute_one::class);
         $this->assertCount(1, $alladhoc);
@@ -157,9 +155,6 @@ final class observer_test extends \advanced_testcase {
     public function test_group_member_added_reattributes_and_enqueues_both(): void {
         $this->resetAfterTest();
         $this->seed_calendar();
-        // The $context value from build_course_and_assign's return tuple
-        // is intentionally omitted here — this scenario only exercises the
-        // group-membership observer path and doesn't need a context.
         [$course, $student, $cm, $assign] = $this->build_course_and_assign();
 
         $group1 = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
@@ -223,8 +218,7 @@ final class observer_test extends \advanced_testcase {
         $this->seed_calendar();
         course_access::reset_memo();
 
-        // Build the course + assign WITHOUT calling build_course_and_assign(),
-        // because that helper auto-adds the block.
+        // Built by hand because build_course_and_assign() adds the block.
         $course = $this->getDataGenerator()->create_course();
         $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
         $assigninst = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
@@ -299,11 +293,9 @@ final class observer_test extends \advanced_testcase {
      */
     private function build_course_and_assign(): array {
         $course = $this->getDataGenerator()->create_course();
-        // The course_access::is_processable() requires a course-context block
-        // instance — drop one here so the observer doesn't short-circuit
-        // every test. Also reset the per-request memo because earlier
-        // tests in this class may have memoised the pre-block (false)
-        // result against a recycled courseid.
+        // Observers skip courses without a course-context block instance
+        // (course_access::is_processable()). The memo is reset because an
+        // earlier test may have cached "false" for a recycled course id.
         $coursectx = \context_course::instance($course->id);
         $this->getDataGenerator()->create_block('feedback_tracker', [
             'parentcontextid' => $coursectx->id,

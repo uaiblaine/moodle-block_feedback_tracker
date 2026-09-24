@@ -57,6 +57,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PostgreSQL refuses a statement with more than 65 535 of them. The cursors'
   meaning is unchanged; nothing needs resetting on upgrade.
 
+- **Extensions now reach the stored due date and cut-off.** An extension granted
+  in the assignment replaces that student's due date, as the grading table
+  shows it, whether the date came from the activity or from an override. It
+  also moves an existing cut-off it passes, as mod_assign does when deciding
+  whether submissions are still open; where there is no cut-off it creates
+  none. The `extension_granted` observer already re-resolved the student's
+  rules, but the resolver never read `{assign_user_flags}`, so the ledger kept
+  the activity's dates.
+- **An override that removes a date now removes it.** In an assignment
+  override an empty value means "use the activity's date" and 0 means the date
+  was switched off for that student or group. The plugin read both as "use the
+  activity's date". Stored rule dates and the per-group activity dates on the
+  block now follow mod_assign; on the group card, an override that removed
+  dates counts as the group's own override.
+- **A student in several overridden groups gets one answer, whichever path
+  writes the row.** Each date now comes from the student's own override, then
+  from the group override with the lowest sortorder among all of the student's
+  groups, then from the activity, one date at a time, as the activity's dates
+  on the course page are resolved. Before, the result depended on the group the
+  ledger row was attributed to and on which write path ran last, and deleting a
+  group override fell back to the activity instead of the student's remaining
+  groups.
+- **The rule sweep no longer re-dispatches every overridden or extended
+  submission on every pass.** It compared the stored dates against the
+  activity's own due date and the raw extension, neither of which the writer
+  stored, so each such row was "repaired" to the same value on every tick. It
+  now checks the open date, due date and cut-off of each current cycle with the
+  same query the ledger stores them with, which also catches override edits,
+  reorderings and group-membership changes that fired no event. Rows stored
+  under the old rules are corrected over the sweep's next pass.
+- **The grade-divergence sweep no longer re-dispatches marked submissions on
+  grade type "None".** Core stores -1 for a grading on an activity with no
+  grade. The sweep read that as "no mark", while the writer, like core, only
+  checks that a later grade row exists.
+- **Paused periods no longer count Friday as weekend and Sunday as a working
+  day.** The paused-days aggregator numbered weekdays from Sunday, while the
+  weekend setting numbers them from Monday. With the default Saturday + Sunday
+  weekend, the paused-periods callout, the dashboard events line and the
+  report's academic-days strip marked every Friday as a weekend day and every
+  Sunday as an academic one. Counts over whole weeks looked right, which hid it.
+- **An "&" in a name or a note no longer shows as "&amp;".** Calendar notes on
+  upcoming pauses and sub-day events, course and group names, group titles
+  built from custom fields, the dashboard greeting and the bulk block-removal
+  list were HTML-escaped before reaching surfaces that escape text themselves.
+  They are now sent as plain text, with tags still stripped, and escaped once
+  where they are displayed.
+- **A group title field with a link configured no longer breaks the block.**
+  Titles and subtitles built from group custom fields used the field's display
+  HTML. For a text field with a link that HTML is a link element, which made
+  the web service reject the whole response, so no card loaded. Titles are now
+  plain text for every field type: text, select, textarea, checkbox, date and
+  number.
+- **Names are filtered in the reader's language and people follow the site's
+  full-name format.** The dashboard and its insight cards, the Grade Now list,
+  the report's class filter, its pending and graded tables, the group
+  drilldown and the activity list on the block's group cards sent course,
+  group and activity names exactly as stored, so a multi-language name showed
+  every language's markup and other text filters never ran. Student names were
+  always "first last" whatever *Full name format* said; the report's search
+  now matches the name in that same format. The cached dashboard, insights and
+  block payload are kept per language, so switching language no longer shows
+  the previous language's names for up to fifteen minutes.
+- **Calendar editor messages are shown as text.** An error raised while saving
+  a day, a pause window or business hours was inserted into the page as HTML.
+  It is now escaped. Rejected CSV rows from a bulk import are listed one per
+  line, with a translated line label.
+- **Default-on settings are on before the settings page is first saved.**
+  `exclude_grader_submissions` and `removal_grace_follow_recyclebin` default to
+  on, but a value never saved read as off. After a web upgrade, until an admin
+  saved the new settings, submissions by teachers and role-switched
+  administrators were recorded, and a removed block's history was kept only for
+  the plugin's own grace period even when the recycle bin keeps the course
+  longer.
+
 ### Changed
 - **The academic-time engine no longer runs inside the reconciler's tick.** The
   allocation sweep called `stamp_allocation_for_user()` inline, which invokes
@@ -184,6 +258,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closes the response time even while hidden, which is long-standing behaviour,
   and the row now states it instead of letting a closed clock imply the student
   received something they cannot see.
+
+- **Code comments describe the code again.** Every comment was checked against
+  the code it annotates and rewritten to Moodle's comment guidance: claims that
+  had drifted from the code were corrected, notes about the development
+  environment and planning history were removed, and a rationale repeated in
+  several places now lives once, at the code that implements it. No code
+  changed; the AMD build is regenerated because its source maps carry the
+  comment text.
 
 ### Added
 - **Three lifecycle events are now observed**, closing gaps where a ledger row

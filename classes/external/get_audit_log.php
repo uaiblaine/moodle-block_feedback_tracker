@@ -33,19 +33,19 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Paginated read of {block_feedback_tracker_log} — the recompute audit
- * trail that pages/audit_log.php renders server-side today. Reuses the
- * existing `viewaudit` capability so role assignments don't change.
+ * Paginated read of {block_feedback_tracker_log}, the recompute audit trail
+ * that pages/audit_log.php renders server-side. Gated by the same `viewaudit`
+ * capability as that page.
  *
- * Returns the same fields the Mustache template consumes, with
- * triggeredby resolved to a display name via \core_user. The optional
- * courseid / actor filters narrow the result set without changing
- * shape.
+ * Rows carry the same data the page shows, unformatted, with triggeredby
+ * resolved to a full name and `details` flattened to "key=value, ..." text.
+ * The optional courseid / actor filters narrow the result set without
+ * changing its shape.
  */
 class get_audit_log extends external_api {
     /** Default page size. */
     public const DEFAULT_PAGE_SIZE = 50;
-    /** Maximum page size — keeps a single fetch under ~200KB even with verbose details. */
+    /** Maximum page size; larger requests are clamped to it to bound one response. */
     public const MAX_PAGE_SIZE = 200;
 
     /**
@@ -100,9 +100,8 @@ class get_audit_log extends external_api {
         }
         /* The log table carries no courseid column, so the filter matches the
          * fragment inside the JSON `details` field. It has to happen in SQL:
-         * filtering after the LIMIT made the count and the page describe
-         * different sets, so a page could come back empty while the total
-         * promised hundreds of rows.
+         * filtering after the LIMIT would leave the count and the page
+         * describing different sets.
          *
          * Two fragments because a JSON value is terminated by either a comma
          * or the closing brace, and matching the bare number would also match
@@ -153,9 +152,7 @@ class get_audit_log extends external_api {
                     $details = implode(', ', $parts);
                 }
             }
-            /* No post-decode filtering here: the predicate lives in SQL so the
-             * count and this page stay in agreement. The decoded value is kept
-             * only to populate details_courseid for the client. */
+            // The decoded courseid only populates details_courseid; the filter is in SQL.
             $entries[] = [
                 'id'              => (int) $r->id,
                 'reason'          => (string) $r->reason,

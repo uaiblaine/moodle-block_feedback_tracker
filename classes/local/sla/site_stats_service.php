@@ -45,25 +45,12 @@ class site_stats_service {
         global $DB;
         [$start, $end] = self::day_bounds($daydate);
 
-        /* Streamed, not materialised. This reads every graded submission on the
-         * site for one day, and the previous get_records_select() held all of
-         * them as objects while ALSO building the two float arrays below — on
-         * the one query in this plugin with no course scope to bound it, in a
-         * daily cron task.
-         *
-         * The array of record objects goes away on both drivers. The result set
-         * behind it only goes away on PostgreSQL, which streams through a
-         * server-side cursor; the mysqli driver takes MYSQLI_STORE_RESULT
-         * deliberately, because MYSQLI_USE_RESULT would block writes on the
-         * tables it holds open. So this is a large win on PostgreSQL and a
-         * smaller one on MariaDB — worth knowing before sizing a site from it.
-         *
-         * The float arrays stay: a median needs every value, and computing it in
-         * SQL means percentile_cont on PostgreSQL with no portable MariaDB twin,
-         * which the cross-DB rule would require guarding and providing a
-         * fallback for. Two arrays of floats is a fraction of what the record
-         * objects cost, and trend_service::recompute_day() already reads its
-         * analogous set this way. */
+        /* A recordset, because this reads every graded submission on the site
+         * for one day with no course scope to bound it. PostgreSQL streams it
+         * through a server-side cursor; the mysqli driver buffers the whole
+         * result (MYSQLI_STORE_RESULT), so on MariaDB only the record objects
+         * are saved. The two float arrays stay: a median needs every value, and
+         * SQL percentile_cont is PostgreSQL-only. */
         $rs = $DB->get_recordset_select(
             'block_feedback_tracker_sub',
             'timegraded IS NOT NULL AND timegraded >= :start AND timegraded < :end'

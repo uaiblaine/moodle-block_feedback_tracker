@@ -38,7 +38,8 @@ use block_feedback_tracker\local\sla\course_access;
  */
 final class bulk_remove_blocks_test extends \advanced_testcase {
     /**
-     * Swallow the task's mtrace() output, which PHPUnit 11 treats as risky.
+     * Swallow the task's mtrace() output, which Moodle's PHPUnit configuration
+     * (beStrictAboutOutputDuringTests) reports as a risky test.
      *
      * @return void
      */
@@ -86,9 +87,8 @@ final class bulk_remove_blocks_test extends \advanced_testcase {
     }
 
     /**
-     * The deliberate mode skips the grace period, for archiving a finished
-     * period. This is the one path here with no way back, which is why the UI
-     * puts a typed confirmation in front of it.
+     * The discardnow mode skips the grace period, for archiving a finished
+     * period; unlike the default mode it cannot be undone.
      *
      * @return void
      */

@@ -14,12 +14,12 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Clickable count tile — used three-up for Pending / At risk / Priority in
- * each group card. Click navigates to the pending-report page with the
- * appropriate group + bucket filter pre-applied.
+ * Clickable count tile — used three-up for Waiting / Attention / Priority in
+ * each group card, each linking to the pending report with that group and
+ * pending band pre-filtered.
  *
- * Tone is forced to 'neutral' when value === 0 so an all-clear group reads
- * calm rather than alarmist.
+ * Tone is forced to 'neutral' when the value is 0 so an all-clear group
+ * reads calm.
  *
  * @module    block_feedback_tracker/components/StatTile
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

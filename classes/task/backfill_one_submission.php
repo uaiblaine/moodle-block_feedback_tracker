@@ -31,11 +31,13 @@ use block_feedback_tracker\local\sla\participation;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
- * Queued by `backfill_history` once per sub-chunk of ~N submissions. Each
- * adhoc task is independent and parallelises across cron workers — a cluster
- * of M workers gets ~Mx the throughput of the previous serialised scheduled
- * task. Idempotent: `submission_ledger::upsert_for_cm_user_attempt()` re-runs
- * cleanly against existing ledger rows.
+ * Upserts the ledger rows for a batch of submissions.
+ *
+ * Queued by `backfill_history` (one task per sub-chunk), by
+ * `reconcile_ledger`'s repair sweeps and by the observer's bulk
+ * re-derivations. Tasks are independent, so the work spreads across cron
+ * workers, and idempotent: `submission_ledger::upsert_for_cm_user_attempt()`
+ * re-runs cleanly against existing ledger rows.
  *
  * Re-checks `course_access::is_processable()` at execute time so a block
  * removed between dispatch and execute doesn't get a stray ledger row.
@@ -85,19 +87,13 @@ class backfill_one_submission extends \core\task\adhoc_task {
                 );
                 continue;
             }
-            /* Re-check participation at EXECUTE time, not just processability.
-             * This is the row-creating half of the reconciler's oldest
-             * disagreement: the delete-side sweep removes the rows of people
-             * who left, and the dispatching sweeps queue repairs for rows they
-             * selected earlier. Between those two moments core may run this
-             * task at any point up to a day later — a failed adhoc backs off
-             * 60s doubling to 86400s — so "the dispatch and the delete happen
-             * in the same tick" is not a property anything guarantees.
-             *
-             * Gating the sweeps' SELECTs cannot close this: they decide before
-             * the wait, and this decides after it. The team branch above is
-             * already covered, because upsert_for_team_attempt() resolves its
-             * members through get_enrolled_sql(). */
+            /* Re-check participation here, not only when the row was selected:
+             * this task may run long after it was queued (a failing adhoc task
+             * backs off up to a day), by which time
+             * reconcile_ledger::sweep_departed_participants() may have deleted
+             * this user's rows, and the upsert would recreate them. The team
+             * branch above needs no check: upsert_for_team_attempt() resolves
+             * its members through get_enrolled_sql() with onlyactive. */
             if (!participation::is_active_participant($courseid, (int) ($row['userid'] ?? 0))) {
                 continue;
             }

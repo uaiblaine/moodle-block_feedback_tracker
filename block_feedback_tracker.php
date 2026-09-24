@@ -32,7 +32,7 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class block_feedback_tracker extends block_base {
-    /** Vendored Preact + htm bundle (path relative to plugin root). */
+    /** Vendored Preact + htm bundle (URL path relative to wwwroot). */
     private const VENDOR_BUNDLE = '/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js';
 
     /**
@@ -49,8 +49,8 @@ class block_feedback_tracker extends block_base {
      * bootstrap payload (empty groups + i18n + config) as JSON. block_app.js
      * fetches the group cards asynchronously in sequential pages after mount;
      * a short no-JS hint is wrapped inside <noscript> for graceful
-     * degradation. On the site front page or dashboard the block emits a
-     * short hint instead — those surfaces aren't supported in this MVP.
+     * degradation. On a page without a real course (the front page) it emits
+     * a hint to add the block to a course instead.
      *
      * @return stdClass
      */
@@ -124,7 +124,7 @@ class block_feedback_tracker extends block_base {
      * blocks subsystem.
      *
      * @param int $courseid
-     * @param array $groups Group payload entries (25-key shape).
+     * @param array $groups Group payload entries; get_content() passes none.
      * @param int $lastsynced Unix timestamp of the last rollup compute.
      * @return array
      */
@@ -152,8 +152,7 @@ class block_feedback_tracker extends block_base {
     }
 
     /**
-     * Where this block can be placed. Course pages are the supported surface;
-     * site front and my-dashboard render a short hint.
+     * Where this block can be placed: course pages only.
      *
      * @return array<string, bool>
      */
@@ -167,16 +166,13 @@ class block_feedback_tracker extends block_base {
     }
 
     /**
-     * Called once by core before every instance of this block type is deleted
-     * during plugin uninstall.
+     * Called once by core during plugin uninstall, before it deletes every
+     * instance of this block (each through instance_delete()).
      *
      * It is the only signal that separates "the plugin is going away" from
-     * "somebody removed the block from a course page". Queuing a week of
-     * cleanup tasks during an uninstall would be pointless — the tables are
-     * about to be dropped — and on a large site it would mean thousands of
-     * adhoc rows nobody will ever run.
-     *
-     * The flag itself is held by removal_grace, which explains why.
+     * "somebody removed the block from a course page", and it stops
+     * instance_delete() from queuing cleanup tasks for tables that are about
+     * to be dropped. {@see \block_feedback_tracker\local\sla\removal_grace::mark_uninstalling()}
      *
      * @return void
      */
@@ -187,18 +183,14 @@ class block_feedback_tracker extends block_base {
     /**
      * Arm the delayed discard of this course's measured history.
      *
-     * Moodle deletes a block's data here, synchronously — that is the
-     * convention, and it fits a block whose data belongs to the instance. This
-     * one is a gate: the data belongs to the course, the plugin's tables are
-     * not in course backups, and removing a block from a course page is a
-     * small act with an irreversible consequence. So the discard is deferred,
-     * and the task re-checks at run time whether the block came back.
+     * Unlike the usual synchronous delete, the discard is deferred by the grace
+     * period ({@see \block_feedback_tracker\local\sla\removal_grace} explains
+     * why), and the task re-checks at run time whether the block came back.
      *
-     * No decision about sibling instances is taken here. This method runs
-     * BEFORE the block_instances row is deleted, and the bulk path defers every
-     * row deletion until after its loop, so a count taken now is wrong in both
-     * directions. The task asks the question when it runs, which is the only
-     * moment the answer is stable.
+     * No decision about sibling instances is taken here: core calls this before
+     * deleting the block_instances row, and blocks_delete_instances() deletes
+     * the rows only after its whole loop, so a count taken now still includes
+     * instances that are being deleted. The task counts when it runs.
      *
      * @return bool
      */
@@ -228,9 +220,9 @@ class block_feedback_tracker extends block_base {
     /**
      * The course this instance sat on, or 0 when it did not sit on one.
      *
-     * Read from the instance's parent context rather than from $this->page,
-     * which is not set on every deletion path (bulk deletes and course
-     * teardown never build a page).
+     * Read from the instance's parent context rather than from $this->page:
+     * core loads the block against whatever the global $PAGE is, which on bulk
+     * deletes, course teardown and CLI runs need not be the block's course.
      *
      * @return int
      */

@@ -29,9 +29,10 @@ namespace block_feedback_tracker\output;
 use block_feedback_tracker\local\output\numfmt;
 
 /**
- * One responsiveness card per (course, group). Composes the score gauge,
- * counts row, metrics row, scheduled-pause notice, and an optional score
- * breakdown. Rendered via Mustache; see templates/responsiveness_card.mustache.
+ * One responsiveness card per (course, group): the block's no-JS first paint.
+ * Composes the score gauge, counts row, metrics row, optional sparkline,
+ * scheduled-pause notice and drilldown link. Rendered via Mustache; see
+ * templates/responsiveness_card.mustache.
  */
 class responsiveness_card implements \renderable, \templatable {
     /** @var int The course ID. */
@@ -63,9 +64,16 @@ class responsiveness_card implements \renderable, \templatable {
     public function export_for_template(\renderer_base $output): array {
         $p = $this->payload;
 
-        $title = format_string(($p['groupname'] !== '' ? $p['groupname'] : $p['coursename']));
+        // The template prints both through double stashes, which escape them,
+        // so format_string() filters and strips tags but does not escape.
+        $formatoptions = ['context' => \context_course::instance($this->courseid), 'escape' => false];
+        $title = format_string(
+            (string) ($p['groupname'] !== '' ? $p['groupname'] : $p['coursename']),
+            true,
+            $formatoptions
+        );
         $subtitle = isset($p['groupsubtitle']) && (string) $p['groupsubtitle'] !== ''
-            ? format_string((string) $p['groupsubtitle']) : '';
+            ? format_string((string) $p['groupsubtitle'], true, $formatoptions) : '';
 
         $gauge = new score_gauge(
             $p['responsiveness_score'] !== null ? (float) $p['responsiveness_score'] : null,
@@ -73,9 +81,8 @@ class responsiveness_card implements \renderable, \templatable {
             100
         );
 
-        // Default-ON toggles: an unset value (get_config returns false) keeps the
-        // default; only an explicit '0' turns them off. A plain `?: 1` read would
-        // mis-handle the off case because the stored '0' is falsy in PHP.
+        // Default-ON toggles: unset (get_config returns false) keeps the default and
+        // only a stored '0' turns them off; a `?: 1` read could never turn them off.
         $perceivedcfg = get_config('block_feedback_tracker', 'show_perceived_time');
         $showperceived = ($perceivedcfg === false || $perceivedcfg === null) ? true : ((string) $perceivedcfg !== '0');
         $pausecfg = get_config('block_feedback_tracker', 'show_paused_today_indicator');
@@ -168,6 +175,7 @@ class responsiveness_card implements \renderable, \templatable {
         if ($p['trend_pct_30d'] !== null) {
             $trendval = (float) $p['trend_pct_30d'];
             // Speed model: fewer hours (negative) = faster = ▲; more = slower = ▼.
+            // Same rule as amd/src/lib/format.js formatTrend(); keep in step.
             $arrow = $trendval < 0 ? '▲' : ($trendval > 0 ? '▼' : '→');
             $trendtxt = $arrow . ' ' . format_float(abs($trendval), 0) . '%';
         }
@@ -179,10 +187,11 @@ class responsiveness_card implements \renderable, \templatable {
     }
 
     /**
-     * Build the scheduled-pause notice rows ("Pausa prevista") from the
+     * Build the scheduled-pause notice rows ("Upcoming pause") from the
      * payload's upcoming_pauses list. The list is already decorated with
      * localised when/typelabel strings by upcoming_pauses::for_display(), so
-     * the no-JS card and the Preact block render identical text.
+     * the no-JS card and the Preact block render identical text. Its label is
+     * plain text, which the template's double stash escapes.
      *
      * @param array $p
      * @return array

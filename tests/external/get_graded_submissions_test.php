@@ -151,10 +151,9 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * A graded row whose stored bucket is still the "pending" sentinel (e.g.
-     * graded before its effective hours were resolved, or graded entirely
-     * within a paused window) is reclassified from its frozen effective hours
-     * so the result band is never "pending". Hours mode.
+     * A graded row whose stored bucket is still the "pending" sentinel is
+     * reclassified from its stored effective hours, so the result band is
+     * never "pending". Hours mode.
      *
      * @return void
      */
@@ -176,10 +175,10 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * In business-days mode the displayed band is recomputed from the stored
-     * elapsed-day count, which is NULL on legacy / unbackfilled rows and would
-     * otherwise resolve to "pending". A graded row falls back to its frozen
-     * submit→grade business-day count instead, so it shows a real band.
+     * In business-days mode the displayed band comes from the stored
+     * elapsed-day count, which is NULL on rows never backfilled and would
+     * resolve to "pending". A graded row falls back to its submit-to-grade
+     * business-day count instead, so it shows a real band.
      *
      * @return void
      */
@@ -200,8 +199,48 @@ final class get_graded_submissions_test extends \advanced_testcase {
 
         $this->assertSame(1, (int) $result['total']);
         $this->assertNotSame('pending', $result['submissions'][0]['slabucket']);
-        // Same-day submit→grade ⇒ zero business days ⇒ excellent.
+        // One hour from submit to grade is at most one business day, inside the
+        // default Excellent threshold of two days.
         $this->assertSame('excellent', $result['submissions'][0]['slabucket']);
+    }
+
+    /**
+     * The graded table carries the same names as the pending one: activity and
+     * group names filtered and unescaped, the student name in the site's
+     * full-name format.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        global $CFG, $DB;
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+        $CFG->fullnamedisplay = 'lastname firstname';
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $this->seed_row($course, 'good', true);
+        $row = $DB->get_record('block_feedback_tracker_sub', ['courseid' => $course->id], '*', MUST_EXIST);
+        $DB->set_field('assign', 'name', $multilang, ['id' => $row->iteminstance]);
+        $DB->set_field('block_feedback_tracker_sub', 'groupid', $group->id, ['id' => $row->id]);
+        $DB->update_record('user', (object) ['id' => $row->userid, 'firstname' => 'Alice', 'lastname' => 'Anderson']);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_graded_submissions',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['submissions']);
+        $submission = $response['data']['submissions'][0];
+        $this->assertSame('A & B', $submission['activityname']);
+        $this->assertSame('A & B', $submission['groupname']);
+        $this->assertSame('Anderson Alice', $submission['studentname']);
     }
 
     // Helpers.

@@ -29,9 +29,13 @@ namespace block_feedback_tracker\local\sla;
 /**
  * Wraps the {block_feedback_tracker_queue} table.
  *
- * Producers (observers, calendar editors) call enqueue() to mark a
- * (courseid, groupid) tuple as needing rollup recompute. Consumers (the
- * drain task in Phase D) call pop_batch() + remove().
+ * Producers (observers, ledger writers, calendar editors) call enqueue() to
+ * mark a (courseid, groupid) tuple as needing rollup recompute.
+ * {@see \block_feedback_tracker\task\drain_queue} reads tuples with pop_batch()
+ * and queues one recompute per tuple, and
+ * {@see \block_feedback_tracker\task\recompute_one} retires the row after a
+ * successful recompute. It deletes by tuple and enqueue time rather than
+ * through remove(), so a row re-enqueued during the recompute survives.
  *
  * Uniqueness on (courseid, groupid) collapses bursts of writes for the same
  * tuple into a single queue row; the row's `reason` reflects the most recent
@@ -46,7 +50,7 @@ class dirty_queue {
     public const REASON_CALENDAR = 'calendar';
     /** Reason: manual pause saved. */
     public const REASON_PAUSE = 'pause';
-    /** Reason: bulk import / admin reset. */
+    /** Reason: bulk re-enqueue (settings change, privacy deletion). */
     public const REASON_BULK = 'bulk';
 
     /**
@@ -74,18 +78,17 @@ class dirty_queue {
                 'timeenqueued' => $now,
             ]);
         } catch (\dml_write_exception $e) {
-            /* The read above and this insert are not atomic, and enqueue() is
-             * the LAST statement of every ledger write path — so a concurrent
-             * writer for the same tuple turns `uq_course_group` into an
-             * exception thrown AFTER the ledger row has already been committed.
-             * Left to escape, it fails the surrounding adhoc task, burns one of
-             * its twelve attempts, and on Moodle 4.5 an attempts-exhausted row
-             * still matches the dedup probe — so that exact payload stays
-             * blocked for as long as `task_adhoc_failed_retention` keeps it.
-             * The row the other writer inserted is the row we wanted; adopt it.
+            /* The read above and this insert are not atomic, so a concurrent
+             * writer for the same tuple can hit `uq_course_group` here, after
+             * the caller's ledger row is already written. Escaping would fail
+             * the surrounding adhoc task; before Moodle 5.1.5 and 5.2.1 a task
+             * that exhausts its attempts still matches the queue-time duplicate
+             * check, so the same payload stays blocked until
+             * task_adhoc_failed_retention purges it. The other writer's row is
+             * the one we wanted; adopt it.
              *
-             * Inside a transaction the connection is already aborted and
-             * nothing can be read, so the exception has to travel. */
+             * Inside a transaction the failed statement has already aborted it
+             * on PostgreSQL, so nothing can be read and the exception must travel. */
             if ($DB->is_transaction_started()) {
                 throw $e;
             }
@@ -115,8 +118,9 @@ class dirty_queue {
     }
 
     /**
-     * Read up to $batchsize queued tuples in FIFO order. Does not remove them;
-     * callers should remove() after successful processing.
+     * Read up to $batchsize queued tuples in FIFO order. Does not remove them:
+     * {@see \block_feedback_tracker\task\recompute_one} retires each row once
+     * its recompute succeeds.
      *
      * @param int $batchsize
      * @return array<int, \stdClass>

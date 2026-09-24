@@ -265,9 +265,8 @@ final class rollup_service_test extends \advanced_testcase {
 
     /**
      * Trend pct is clamped to ±TREND_PCT_CAP so a near-zero prior median can't
-     * produce a value that overflows the NUMBER(6,2) trend_pct_30d column.
-     * Regression: prior median 0.05h → recent 200h yields ~399900%, which
-     * triggered a "numeric field overflow" on update_record.
+     * produce a value that overflows the NUMBER(6,2) trend_pct_30d column:
+     * a prior median of 0.05h against a recent 200h is a ~399900% change.
      */
     public function test_trend_pct_is_clamped_to_avoid_overflow(): void {
         $this->resetAfterTest();
@@ -374,16 +373,10 @@ final class rollup_service_test extends \advanced_testcase {
         $this->assertSame(1, (int) $row->numgraded30d);
     }
 
-    // Note (v1.0.0): the prior test_recompute_skips_on_lock_collision
-    // test was removed. The Lock API factory provisioned in Moodle's
-    // PHPUnit environment is per-process and doesn't enforce mutual
-    // exclusion when the same process acquires the lock twice — making
-    // it impossible to simulate a "concurrent worker holds the lock"
-    // scenario without mocking the factory (which is more test
-    // infrastructure than the verification justifies). The lock
-    // semantics themselves are exercised by Moodle core's lock-factory
-    // tests; we rely on \core\lock\lock_config::get_lock_factory()
-    // behaving correctly in production.
+    // The lock-held branch of recompute_group() has no test. The lock is held
+    // per database connection and lock_config::get_lock_factory() returns a new
+    // factory on every call, so a second acquisition from the same process
+    // succeeds; a concurrent holder cannot be simulated without mocking the factory.
 
     // Helpers.
 

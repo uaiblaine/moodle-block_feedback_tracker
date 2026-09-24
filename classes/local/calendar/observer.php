@@ -41,7 +41,7 @@ use block_feedback_tracker\local\sla\dirty_queue;
  */
 class observer {
     /**
-     * `cal_day_updated` — a single day in the calendar changed type.
+     * `cal_day_updated` — one calendar day, or a CSV import of many, changed.
      *
      * @param \core\event\base $event
      * @return void

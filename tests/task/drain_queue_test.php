@@ -123,8 +123,8 @@ final class drain_queue_test extends \advanced_testcase {
         /*
          * Mirror the submission_graded observer: queue an adhoc for
          * (42, 99) before the drain task fires. The dispatcher must
-         * collapse into the same adhoc (matching custom_data hash),
-         * not create a second one.
+         * collapse into the same adhoc (core compares the JSON-encoded
+         * custom data as a string), not create a second one.
          */
         $existing = new recompute_one();
         $existing->set_custom_data(['courseid' => 42, 'groupid' => 99]);
@@ -138,7 +138,7 @@ final class drain_queue_test extends \advanced_testcase {
     }
 
     /**
-     * Score-formula config + Mon-Fri business hours used by rollup_service.
+     * Score-formula and calendar settings read by rollup_service.
      */
     private function seed_config(): void {
         set_config('calver', '1', 'block_feedback_tracker');

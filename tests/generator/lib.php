@@ -33,8 +33,10 @@
  */
 class block_feedback_tracker_generator extends testing_block_generator {
     /**
-     * Seed the platform calendar config + Mon-Fri 08:00-18:00 business hours.
-     * Idempotent.
+     * Seed the platform calendar and scoring settings (UTC; weekends, holidays
+     * and recesses excluded; fixed weights and thresholds) plus Mon-Fri
+     * 08:00-18:00 business hours. Idempotent: the hours are inserted only when
+     * no business-hours rows exist.
      *
      * @return void
      */
@@ -120,9 +122,7 @@ class block_feedback_tracker_generator extends testing_block_generator {
      *
      * Moodle 5.2 replaced `{assign_user_flags}.allocatedmarker` with the
      * `{assign_allocated_marker}` table and dropped the column, so a fixture
-     * that writes the column directly errors on 5.2 and 5.3 while one that
-     * writes the table errors on 4.5 and 5.1. Both are supported branches, so
-     * tests go through here.
+     * that writes either one directly fails on the other side of that change.
      *
      * @param int $assignid The {assign} instance id.
      * @param int $userid The student.
@@ -205,10 +205,12 @@ class block_feedback_tracker_generator extends testing_block_generator {
     }
 
     /**
-     * Insert a {block_feedback_tracker_sub} row with sensible defaults; only
-     * the keys in $overrides are set explicitly.
+     * Insert a {block_feedback_tracker_sub} ledger row with sensible defaults.
      *
-     * @param array $overrides
+     * Each call gets a fresh cmid and iteminstance (counting up from 90001)
+     * unless the overrides set them.
+     *
+     * @param array $overrides Any column of the ledger table.
      * @return int Row id.
      */
     public function create_ledger_row(array $overrides = []): int {
@@ -251,11 +253,10 @@ class block_feedback_tracker_generator extends testing_block_generator {
             'timemodified'     => $now,
         ];
         $rec = (object) array_merge($defaults, $overrides);
-        /* A fixture that sets timegraded describes a graded row, so mirror the
-         * two companion stamps unless the caller pinned them itself. Production
-         * writes all three together (marking workflow off is the common case,
-         * where they are equal by definition), and a fixture that set only
-         * timegraded would otherwise describe a state the ledger never
+        /* A fixture that sets timegraded describes a graded row, so default
+         * timemarked and timeclosed to it and gradestate to 'graded' unless the
+         * caller set them. That is what the ledger writes for a first grade
+         * without marking workflow; timegraded alone describes a state it never
          * produces. */
         if ($rec->timegraded !== null) {
             if (!array_key_exists('timemarked', $overrides)) {
@@ -276,10 +277,9 @@ class block_feedback_tracker_generator extends testing_block_generator {
      *
      * The plugin is strict opt-in: `course_access::is_processable()` returns
      * false unless a `feedback_tracker` block instance lives on the course's
-     * own context. This bundles the three steps every DB test needs — create
-     * the course, drop the block on it, and flush the per-request memo (which
-     * may hold a stale `false` against a recycled courseid from an earlier
-     * test in the same class).
+     * own context. This creates the course, adds the block and resets the
+     * course_access memo, which is static and may hold a stale `false` for a
+     * courseid reused from an earlier test.
      *
      * @param array $opts Passed to create_course(); `groupmode` and
      *                    `groupmodeforce` are honoured for group-visibility tests.
@@ -298,7 +298,7 @@ class block_feedback_tracker_generator extends testing_block_generator {
      * Enrol a new user in a course, optionally adding them to a group.
      *
      * @param int $courseid
-     * @param string $roleshortname Archetype shortname, e.g. 'editingteacher'.
+     * @param string $roleshortname Role shortname, e.g. 'editingteacher'.
      * @param int|null $groupid When set, the user joins this group.
      * @return \stdClass The user record.
      */
@@ -314,10 +314,9 @@ class block_feedback_tracker_generator extends testing_block_generator {
     /**
      * Prohibit one capability for a role in a context.
      *
-     * The `accesslib_clear_all_caches_for_unit_testing()` call is not optional:
-     * without it the change is invisible to `has_capability()` for the rest of
-     * the request, which is the classic cause of a capability test that passes
-     * alone and fails when the suite runs in a different order.
+     * The change is visible to `has_capability()` at once: `assign_capability()`
+     * clears the role definition cache, and the helper also flushes every
+     * accesslib cache.
      *
      * @param string $capability
      * @param \context $context
@@ -334,9 +333,9 @@ class block_feedback_tracker_generator extends testing_block_generator {
     /**
      * Insert a {block_feedback_tracker_group} rollup row.
      *
-     * Seeding this table is a hard prerequisite for anything that walks it —
-     * `calendar\observer::enqueue_all_groups()` iterates these rows, so a test
-     * that skips this helper enqueues nothing and passes vacuously.
+     * Code that walks the rollup table, such as
+     * `calendar\observer::enqueue_all_groups()`, does nothing without these
+     * rows, so a test of it that seeds none passes vacuously.
      *
      * @param array $overrides Any column of the rollup table; only courseid is required by the schema.
      * @return int Row id.
@@ -365,8 +364,8 @@ class block_feedback_tracker_generator extends testing_block_generator {
      * Seed audit-log rows through the production writer.
      *
      * Goes via `recompute_log::record()` rather than hand-built inserts so the
-     * fixture keeps matching the schema (and the JSON shape of `details`)
-     * instead of rotting when either changes.
+     * fixture keeps matching the schema and the JSON encoding of `details`.
+     * Unless timestarted is overridden, rows are one minute apart, oldest first.
      *
      * @param int $count How many rows to write.
      * @param array $overrides Keys: reason, affectedrows, triggeredby, details, timestarted, timefinished.
@@ -391,8 +390,9 @@ class block_feedback_tracker_generator extends testing_block_generator {
     /**
      * Switch the display ruler to days (or back to hours).
      *
-     * The unit and its thresholds must move together — setting one without the
-     * other leaves a day-mode test silently asserting against the hour ruler.
+     * The day thresholds are read only while the unit is business_days
+     * ({@see \block_feedback_tracker\local\sla\bucket::use_day_thresholds()}),
+     * so a test that sets them without the unit is still banded on the hour ruler.
      *
      * @param string $unit 'business_days' or 'hours'.
      * @param string $daythresholds Comma-separated day thresholds for the bucket ladder.
@@ -406,15 +406,14 @@ class block_feedback_tracker_generator extends testing_block_generator {
     /**
      * Create a graded assign submission and fire the submission_graded event.
      *
-     * Wraps the whole mod_assign dance: the module, the {assign_submission}
-     * row the ledger upsert requires, the {assign_grades} row, and the event —
-     * which must go through `create_from_grade()` because `::create()` throws.
+     * Creates the module (unless one is passed), the {assign_submission} row
+     * the ledger upsert requires, the {assign_grades} row, and the event, which
+     * must go through `create_from_grade()` because `::create()` throws.
      *
-     * The grade record is deliberately **re-read from the database** before the
-     * event is built. `add_record_snapshot()` validates the snapshot's field
-     * list against the live table, so a hand-built object is missing whatever
-     * column core added last (`penalty`, as of Moodle 5.1) and raises an
-     * unexpected debugging() notice.
+     * The grade record is re-read from the database before the event is built:
+     * in developer debug mode `add_record_snapshot()` checks the snapshot
+     * against the table's columns, and a hand-built object lacks any column
+     * core adds (`penalty` since Moodle 5.0), raising a debugging() notice.
      *
      * @param \stdClass $course Course to attach the assign to.
      * @param \stdClass $user The submitting user.

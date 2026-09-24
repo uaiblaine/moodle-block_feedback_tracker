@@ -51,11 +51,8 @@ $rows = [];
 foreach ($dbrows as $r) {
     $triggeredby = '-';
     if ($r->triggeredby) {
-        // Core_user::get_user() returns every name field fullname() needs
-        // (firstnamephonetic / lastnamephonetic / middlename / alternatename
-        // in addition to firstname / lastname) — avoids the
-        // "missing name fields" debugging warning that fullname() emits
-        // when handed a partial record.
+        // A full user record: fullname() emits a debugging notice when any
+        // name field is missing.
         $user = \core_user::get_user((int) $r->triggeredby);
         $triggeredby = $user ? fullname($user) : (string) $r->triggeredby;
     }
@@ -79,8 +76,7 @@ foreach ($dbrows as $r) {
     ];
 }
 
-// Log this admin page view to the standard site log; user, IP and origin
-// are captured automatically. Fired once per render.
+// Log this admin page view to the standard site log, once per render.
 $event = \block_feedback_tracker\event\tool_page_viewed::create([
     'context' => $context,
     'other' => ['page' => 'audit'],

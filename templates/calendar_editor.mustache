@@ -9,7 +9,8 @@
 
     Context variables required:
     * heading
-    * notice          {text, level} or empty
+    * notice          {text, level, haserrors, errors: [string]} or empty; text
+                      and each error line are plain text, escaped here
     * days            {heading, addheading, bulkheading, empty, emptytext,
                        cols: [...], rows: [{cells, deleteurl}], addform, bulkform}
     * hours           {heading, days: [{name, form}]}
@@ -19,7 +20,12 @@
     Example context (json):
     {
         "heading": "Academic calendar editor",
-        "notice": null,
+        "notice": {
+            "text": "4 days saved, 1 errors.",
+            "level": "warning",
+            "haserrors": true,
+            "errors": ["Line 3: 2026-13-99, holiday, Bad date — Expected: YYYY-MM-DD, type[, note]"]
+        },
         "days": {
             "heading": "Calendar days",
             "addheading": "Add or update one day",
@@ -63,7 +69,14 @@
 <h2>{{heading}}</h2>
 
 {{#notice}}
-    <div class="alert alert-{{level}}">{{{text}}}</div>
+    <div class="alert alert-{{level}}">
+        {{text}}
+        {{#haserrors}}
+            <ul class="mb-0">
+                {{#errors}}<li>{{.}}</li>{{/errors}}
+            </ul>
+        {{/haserrors}}
+    </div>
 {{/notice}}
 
 <section>

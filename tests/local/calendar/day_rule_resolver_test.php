@@ -37,7 +37,7 @@ final class day_rule_resolver_test extends \advanced_testcase {
         $this->resetAfterTest();
         $this->seed_calendar();
 
-        // Mon 2026-05-18 (dayofweek 0 in ISO).
+        // Mon 2026-05-18 (dayofweek 0: ISO order, counted from zero).
         $rule = day_rule_resolver::for_date(20260518, 0);
 
         $this->assertSame(calendar::DAYTYPE_IMPLICIT, $rule['type']);

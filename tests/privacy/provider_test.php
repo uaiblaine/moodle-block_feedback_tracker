@@ -31,7 +31,8 @@ use core_privacy\local\request\approved_userlist;
 use core_privacy\local\request\writer;
 
 /**
- * Spot-check the GDPR surface for ledger + pause rows.
+ * Spot-checks the course-context ledger rows and the user preferences.
+ * System-context data is covered by provider_system_context_test.
  *
  * @covers \block_feedback_tracker\privacy\provider
  */
@@ -121,8 +122,7 @@ final class provider_test extends \core_privacy\tests\provider_testcase {
     /**
      * The dashboard_collapsed user preference is declared in metadata
      * and surfaces via export_user_preferences() with a localised
-     * human-readable description. v1.0.8 — covers the new
-     * user_preference_provider implementation.
+     * human-readable description.
      */
     public function test_export_user_preferences_writes_dashboard_collapsed(): void {
         $this->resetAfterTest();

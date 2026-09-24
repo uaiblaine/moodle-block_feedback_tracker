@@ -63,16 +63,14 @@ function block_feedback_tracker_is_bootstrapping(): bool {
 }
 
 /**
- * Force a global re-recompute. Called from settings save callbacks and from
- * the reset action whenever a write changes the rules: bumps `calver` so all
- * downstream caches invalidate, resets per-request memos, enqueues every
- * existing (course, group) tuple, and writes an audit row.
+ * Force a global recompute; the `set_updatedcallback()` of every rule-changing
+ * setting in settings.php. Bumps `calver` so the calver-keyed caches roll over,
+ * purges the calendar caches, resets per-request memos, enqueues every
+ * existing (course, group) rollup, and writes an audit row.
  *
- * Hard short-circuits while the plugin is bootstrapping
- * (initial install / `$CFG->upgraderunning` / tables missing) so the
- * cascade of `admin_apply_default_settings()` writes during install doesn't
- * try to touch tables-not-yet-created or fire `debugging()` notices that
- * break `phpunit --fail-on-warning`.
+ * Returns early while {@see block_feedback_tracker_is_bootstrapping()}: during
+ * install, `admin_apply_default_settings()` fires this callback before the
+ * plugin's tables and caches are usable.
  *
  * @return void
  */
@@ -165,9 +163,8 @@ function block_feedback_tracker_reset_data(bool $reenablebackfill = false): arra
 
     if ($reenablebackfill) {
         set_config('backfill_active', '1', 'block_feedback_tracker');
-        // V1.7.0+: per-course cursors. Wipe all cursor rows so the
-        // dispatcher lazily recreates them at cursor=0/active=1 for
-        // every currently-processable course on the next tick.
+        // Deleting the per-course cursors makes backfill_history recreate them
+        // from the start for every processable course on its next tick.
         $DB->delete_records('block_feedback_tracker_bfcursor');
     }
 
@@ -185,28 +182,25 @@ function block_feedback_tracker_reset_data(bool $reenablebackfill = false): arra
  * Per-user preferences this plugin exposes via the core
  * user-preferences API.
  *
- * Moodle calls this callback before letting `core_user_update_user_preferences`
- * write any preference whose name starts with `block_feedback_tracker_`;
- * unlisted preferences are rejected. The permission callback restricts
- * writes to the user's own row — admins can't accidentally toggle the
- * dashboard hero on someone else's behalf through the WS.
+ * `core_user::can_edit_preference()` rejects any preference no component
+ * declares, so these must be listed for `core_user/repository::setUserPreference()`
+ * (and `core_user_set_user_preferences`) to store them. The permission callback
+ * limits writes to the user's own preference.
  *
- * @return array<string, array{type:int, null:int, default:string, permissioncallback:callable}>
+ * @return array<string, array{type:string, null:bool, default:string, permissioncallback:callable}>
  */
 function block_feedback_tracker_user_preferences(): array {
     return [
-        // V1.0.8 — collapsed state for the teacher dashboard's combined
-        // Responsiveness hero + Insights block. Stored as a stringified
-        // boolean ('0' | '1') because that's what the core preferences
-        // API serialises to.
+        // Collapsed state of the teacher dashboard's combined Responsiveness
+        // hero + Insights block, stored as '0' | '1' (preferences are strings).
         'block_feedback_tracker_dashboard_collapsed' => [
             'type'    => PARAM_BOOL,
             'null'    => NULL_NOT_ALLOWED,
             'default' => '0',
             'permissioncallback' => [\core_user::class, 'is_current_user'],
         ],
-        // V1.0.27 — collapsed state for the report page's combined hero +
-        // academic-days strip. Same shape + rationale as the dashboard one.
+        // Collapsed state of the report page's combined hero + academic-days
+        // strip; same shape as the dashboard one.
         'block_feedback_tracker_report_collapsed' => [
             'type'    => PARAM_BOOL,
             'null'    => NULL_NOT_ALLOWED,

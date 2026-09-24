@@ -37,11 +37,11 @@ use core_external\external_api;
 final class get_grader_priority_list_test extends \advanced_testcase {
     /**
      * Reset the dashboard_scope memo and grant site admins site-wide
-     * visibility for the admin-based cases. dashboard_scope's static cache is
-     * keyed by userid and survives resetAfterTest, so it must be cleared each
-     * test; enable_admin_view_all is the gate that lets an unenrolled admin
-     * see every course (the admin tests below rely on that). It has no effect
-     * on the non-admin tests (student / custom-role teacher).
+     * visibility for the admin-based cases.
+     *
+     * The memo is a PHP static keyed by userid, which resetAfterTest does not
+     * clear. enable_admin_view_all lets the unenrolled admin see every course;
+     * it has no effect on the non-admin cases.
      *
      * @return void
      */
@@ -167,7 +167,7 @@ final class get_grader_priority_list_test extends \advanced_testcase {
     /**
      * SEPARATEGROUPS without accessallgroups: a teacher only sees
      * submissions from groups they belong to. Other groups' rows are
-     * filtered out by the per-course visibility WHERE-clause.
+     * filtered out by dashboard_scope::sql_visibility().
      */
     public function test_separategroups_filters_to_user_groups(): void {
         $this->resetAfterTest();
@@ -183,8 +183,8 @@ final class get_grader_priority_list_test extends \advanced_testcase {
         $this->getDataGenerator()->create_group_member(['groupid' => $groupa->id, 'userid' => $studenta->id]);
         $this->getDataGenerator()->create_group_member(['groupid' => $groupb->id, 'userid' => $studentb->id]);
 
-        // Push the rollup rows to reflect the new groupids (seed_pending
-        // inserts with groupid=0; reset it to match the membership).
+        // Move the ledger rows into each student's group; seed_pending
+        // inserts them with groupid 0.
         global $DB;
         $DB->set_field(
             'block_feedback_tracker_sub',
@@ -199,13 +199,9 @@ final class get_grader_priority_list_test extends \advanced_testcase {
             ['userid' => $studentb->id, 'courseid' => $course->id]
         );
 
-        // Use a CUSTOM role rather than editingteacher. The archetype
-        // defaults to accessallgroups = allow, which would bypass
-        // SEPARATEGROUPS; modifying its capabilities mid-test pollutes
-        // accesslib's static role-cap cache (PHP statics survive
-        // resetAfterTest). Touching a fresh custom role isolates the
-        // change so subsequent tests in this class don't see polluted
-        // role state.
+        // A custom role holding viewdashboard but not accessallgroups: the
+        // editingteacher archetype grants moodle/site:accessallgroups, which
+        // would lift the SEPARATEGROUPS restriction.
         $coursectx = \context_course::instance($course->id);
         $roleid = create_role(
             'Test teacher (no allgroups)',
@@ -273,6 +269,74 @@ final class get_grader_priority_list_test extends \advanced_testcase {
 
         $this->assertSame(1, (int) $result['returned']);
         $this->assertSame('Submitted Student', $result['submissions'][0]['studentname']);
+    }
+
+    /**
+     * Course, group and activity names reach the caller filtered, in the plain
+     * spelling: the multilang filter picks the English half, and the ampersand
+     * is not escaped.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        global $DB;
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $course = $this->getDataGenerator()->create_course(['fullname' => $multilang]);
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        [$cm, $student] = $this->seed_pending($course, 'Ana Silva', 10.0);
+        $DB->set_field('assign', 'name', $multilang, ['id' => $cm->instance]);
+        $DB->set_field(
+            'block_feedback_tracker_sub',
+            'groupid',
+            $group->id,
+            ['userid' => $student->id, 'courseid' => $course->id]
+        );
+
+        $this->setAdminUser();
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_grader_priority_list',
+            ['limit' => 10, 'bucket' => '']
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['submissions']);
+        $row = $response['data']['submissions'][0];
+        $this->assertSame('A & B', $row['coursename']);
+        $this->assertSame('A & B', $row['groupname']);
+        $this->assertSame('A & B', $row['activityname']);
+    }
+
+    /**
+     * The student name follows the site's full-name format rather than a
+     * hard-coded "first last", as it does everywhere else in Moodle.
+     *
+     * @return void
+     */
+    public function test_student_name_follows_fullnamedisplay(): void {
+        global $CFG;
+        $course = $this->getDataGenerator()->create_course();
+        $this->seed_pending($course, 'Ana Silva', 10.0);
+        $this->setAdminUser();
+
+        $result = external_api::clean_returnvalue(
+            get_grader_priority_list::execute_returns(),
+            get_grader_priority_list::execute(10, '')
+        );
+        $this->assertSame('Ana Silva', $result['submissions'][0]['studentname'], 'Control: the default format.');
+
+        $CFG->fullnamedisplay = 'lastname firstname';
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_grader_priority_list',
+            ['limit' => 10, 'bucket' => '']
+        );
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('Silva Ana', $response['data']['submissions'][0]['studentname']);
     }
 
     // Helpers.

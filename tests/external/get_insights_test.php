@@ -31,14 +31,15 @@ use block_feedback_tracker\local\sla\dashboard_scope;
 use core_external\external_api;
 
 /**
- * The only one of the seventeen functions that never calls
- * require_capability(). It authorises through dashboard_scope instead — an
- * empty visible-course scope is the refusal — so that bespoke gate is exactly
- * what needs pinning.
+ * Tests for get_insights.
  *
- * Every test resets the scope memo: it is static and keyed by userid, and
- * PHPUnit recycles user ids between tests, so a stale entry silently answers
- * for a different user.
+ * Like get_dashboard and get_grader_priority_list, this function never calls
+ * require_capability(): it authorises through dashboard_scope, where an empty
+ * visible-course scope is the refusal. These tests pin that gate.
+ *
+ * Every test resets the scope memo: it is a PHP static keyed by userid, and
+ * user ids are reused between tests, so a stale entry would answer for a
+ * different user.
  *
  * @covers \block_feedback_tracker\external\get_insights
  */
@@ -88,10 +89,9 @@ final class get_insights_test extends \advanced_testcase {
     }
 
     /**
-     * With the setting off — the default — a site admin is deliberately
-     * scoped like any other user. An admin with no enrolments therefore sees
-     * nothing and is refused, which is the documented intent of
-     * dashboard_scope rather than an accident.
+     * With the setting off (the default) a site admin is scoped like any
+     * other user, so an admin with no enrolments sees nothing and is refused
+     * ({@see dashboard_scope::visible_course_ids()}).
      *
      * @return void
      */
@@ -184,6 +184,46 @@ final class get_insights_test extends \advanced_testcase {
         dashboard_scope::reset_memo();
         $this->expectException(\required_capability_exception::class);
         get_insights::execute();
+    }
+
+    /**
+     * Course and group names reach the caller filtered, in the plain spelling:
+     * the multilang filter picks the English half and the ampersand is not
+     * escaped.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        $course = $this->generator()->create_tracked_course(['fullname' => $multilang]);
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $this->generator()->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => (int) $group->id,
+            'pending' => 2,
+            'critical' => 2,
+            'responsiveness_score' => 80.0,
+            'score_band' => 'good',
+        ]);
+        $teacher = $this->generator()->create_user_in_role((int) $course->id, 'editingteacher');
+        $this->setUser($teacher);
+        dashboard_scope::reset_memo();
+        $_POST['sesskey'] = sesskey();
+
+        $response = external_api::call_external_function('block_feedback_tracker_get_insights', []);
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        foreach (['bright_spot', 'gentle_watch'] as $slot) {
+            $this->assertArrayHasKey($slot, $response['data']);
+            $this->assertSame((int) $group->id, $response['data'][$slot]['groupid']);
+            $this->assertSame('A & B', $response['data'][$slot]['coursename'], $slot);
+            $this->assertSame('A & B', $response['data'][$slot]['groupname'], $slot);
+        }
     }
 
     /**

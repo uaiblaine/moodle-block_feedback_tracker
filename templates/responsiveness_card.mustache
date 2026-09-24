@@ -16,10 +16,11 @@
 
     @template    block_feedback_tracker/responsiveness_card
 
-    One responsiveness card per (course, group) — the no-JS fallback. Collapsible
-    via native <details>: a gray header (title + optional subtitle + band badge)
-    toggles the body — score gauge, the three pending-band counts, metrics row,
-    optional scheduled-pause notice, optional 14-day sparkline, and a drilldown link.
+    Server-rendered responsiveness card for one (course, group), exported by
+    classes/output/responsiveness_card.php. Collapsible via native <details>: a
+    grey header (title, optional subtitle, band badge) toggles the body — score
+    gauge, the three pending-band counts, metrics row, optional 14-day sparkline,
+    optional scheduled-pause notice and a drilldown link.
 
     Context variables required:
     * title          Group or course title (string)

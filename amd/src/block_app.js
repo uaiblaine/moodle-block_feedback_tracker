@@ -15,12 +15,12 @@
 
 /**
  * Block entrypoint — mounts BlockView into every [data-bft-block-root] div
- * on the page (a course page can host two block-region instances).
+ * on the page.
  *
  * Each mount-point contains a <script type="application/json"
- * data-bft-init> with the initial payload (groups + i18n + config),
- * which we parse and pass to BlockView so first paint is data-rich and
- * needs no WS round-trip.
+ * data-bft-init> payload built by block_feedback_tracker::get_content():
+ * course id, calendar version, i18n and config bundles, and an empty
+ * groups array. BlockView fetches the group cards after mount.
  *
  * @module    block_feedback_tracker/block_app
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

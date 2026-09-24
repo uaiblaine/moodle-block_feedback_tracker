@@ -16,12 +16,9 @@
 /**
  * Trend row — arrow + percentage + verbal label + 14-day sparkline.
  *
- * The trend percentage in the payload is the week-over-week change in median
- * effective hours (rolling 7-day vs the prior 7-day window). A negative number
- * means work was returned faster (hours dropped), so we present it as speed:
- * faster = ▲ green,
- * slower = ▼ priority/red, within ±2% = stable (muted). The magnitude is
- * shown unsigned — direction is carried by the arrow, colour and label.
+ * `pct` is the week-over-week change in median effective hours (last 7 days
+ * vs the 7 before); negative means work was returned faster. The speed tone,
+ * arrow and unsigned magnitude come from lib/trend.js::classifySpeed().
  *
  * @module    block_feedback_tracker/components/TrendRow
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

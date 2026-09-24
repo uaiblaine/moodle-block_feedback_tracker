@@ -36,13 +36,11 @@ use block_feedback_tracker\local\calendar\academic_time;
  */
 final class submission_ledger_test extends \advanced_testcase {
     /**
-     * Reset every plugin-level static memo that the ledger upsert path
-     * consults. Moodle's resetAfterTest() resets the DB but not PHP
-     * static state, so the `$skipsubmittermemo` (keyed by courseid:userid)
-     * would otherwise carry over from prior tests and skip a fresh
-     * student whose recycled userid coincides with a memoised teacher.
+     * Reset the static memos the ledger upsert path consults.
      *
-     * Runs before every test method automatically.
+     * resetAfterTest() does not reset PHP statics, so the grader-filter memo
+     * (keyed by courseid:userid) would otherwise skip a fresh student whose
+     * recycled user id matches a teacher memoised by an earlier test.
      *
      * @return void
      */
@@ -61,9 +59,8 @@ final class submission_ledger_test extends \advanced_testcase {
         $this->seed_calendar();
         [$cm, $student, $assign] = $this->build_environment();
 
-        // The upsert_for_cm_user_attempt requires an existing {assign_submission}
-        // row to mirror into the ledger; without one it returns null and no
-        // ledger row is created.
+        // The upsert mirrors an existing {assign_submission} row; without one it
+        // returns null and creates no ledger row.
         $this->insert_assign_submission((int) $assign->id, (int) $student->id, time() - 3600, 'submitted');
 
         $a = submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
@@ -77,8 +74,7 @@ final class submission_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * After grading, timegraded + effectivehours + slabucket are populated
-     * and pause records are persisted into the per-submission audit table.
+     * After grading, timegraded, effectivehours and slabucket are populated.
      */
     public function test_upsert_after_grading_populates_effective_and_pauses(): void {
         $this->resetAfterTest();
@@ -99,9 +95,8 @@ final class submission_ledger_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(2.0, (float) $row->effectivehours, 0.01);
         $this->assertSame(bucket::EXCELLENT, $row->slabucket);
 
-        /* v2.0.0+: pause windows are derived on demand; the shorter
-         * effectivehours vs raw waiting interval proves the engine
-         * applied pauses. */
+        /* Pause windows are not stored; 2 effective hours over a 64-hour raw
+         * wait (Friday 17:00 to Monday 09:00) shows the pauses were applied. */
     }
 
     /**
@@ -170,10 +165,9 @@ final class submission_ledger_test extends \advanced_testcase {
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertSame((int) $group1->id, (int) $row->groupid);
 
-        // Clear the queue from the initial upsert; then add the student to
-        // group2 — that fires \core\event\group_member_added, observed by
-        // observer::group_membership_changed → submission_ledger::
-        // reattribute_user(), which is the path we're exercising.
+        // Clear the queue from the initial upsert, then add the student to
+        // group2: group_member_added reaches reattribute_user() through
+        // observer::group_membership_changed().
         $DB->delete_records('block_feedback_tracker_queue');
         $this->getDataGenerator()->create_group_member([
             'groupid' => $group2->id, 'userid' => $student->id,
@@ -231,13 +225,12 @@ final class submission_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * Regression: when Moodle has created an {assign_grades} row for a
-     * submission but no real grade has been entered (workflow init,
-     * teacher just opened the grading page, plagiarism plugin touched the
-     * row, etc.), the ledger must NOT treat the submission as graded.
+     * An {assign_grades} row without a real grade does not make the
+     * submission graded, even when it is newer than the submission.
      *
-     * Two variants are exercised because Moodle's "no grade yet" sentinels
-     * are inconsistent across versions/code paths: grade=null and grade=-1.
+     * mod_assign has two "no grade" values: -1, written when
+     * assign::get_user_grade() creates the row, and NULL, stored when the
+     * grading form saves an empty grade. A grade of 0 is a real grade.
      */
     public function test_upsert_with_null_or_negative_grade_stays_pending(): void {
         $this->resetAfterTest();
@@ -245,10 +238,10 @@ final class submission_ledger_test extends \advanced_testcase {
         [$cm, $student, $assign] = $this->build_environment();
 
         $tsubmit = $this->ts('2026-05-15 17:00:00');
-        $ttouched = $this->ts('2026-05-15 17:30:00'); // After submit; would trip the old check.
+        $ttouched = $this->ts('2026-05-15 17:30:00'); // After the submission, so only the grade value decides.
 
         $this->insert_assign_submission((int) $assign->id, (int) $student->id, $tsubmit, 'submitted');
-        // Variant A — grade column is NULL (workflow state changed only).
+        // Variant A: grade column NULL.
         $this->insert_assign_grade_raw(
             (int) $assign->id,
             (int) $student->id,
@@ -263,8 +256,7 @@ final class submission_ledger_test extends \advanced_testcase {
         $row = $DB->get_record('block_feedback_tracker_sub', ['id' => $subid]);
         $this->assertNull($row->timegraded, 'NULL grade must not count as graded.');
 
-        // Variant B — grade column is -1 (Moodle's "not yet graded" sentinel
-        // used by mod_assign::get_user_grade(create:true)).
+        // Variant B: grade column -1, as assign::get_user_grade() writes when it creates the row.
         $DB->delete_records('assign_grades', ['assignment' => $assign->id, 'userid' => $student->id]);
         $this->insert_assign_grade_raw(
             (int) $assign->id,
@@ -291,8 +283,37 @@ final class submission_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * Disabling the exclude_grader_submissions setting restores the original
-     * behaviour — teacher submissions ARE recorded in the ledger.
+     * The grader filter is on while its setting was never saved, as the
+     * setting's default says: get_config() returns false for such a key, and
+     * only an explicit '0' turns the filter off. A student's submission in the
+     * same activity is still recorded, so the filter is not skipping everyone.
+     */
+    public function test_grader_filter_applies_while_the_setting_is_unset(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        unset_config('exclude_grader_submissions', 'block_feedback_tracker');
+        $this->assertFalse(
+            get_config('block_feedback_tracker', 'exclude_grader_submissions'),
+            'Precondition: the setting is absent, not stored as anything.'
+        );
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
+        $cm = get_coursemodule_from_instance('assign', $assign->id);
+        $this->insert_assign_submission((int) $assign->id, (int) $teacher->id, time() - 3600, 'submitted');
+        $this->insert_assign_submission((int) $assign->id, (int) $student->id, time() - 1800, 'submitted');
+
+        $this->assertNull(submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $teacher->id, 0));
+        $this->assertNotNull(submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0));
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $teacher->id]));
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]));
+    }
+
+    /**
+     * With exclude_grader_submissions off, teacher submissions are recorded.
      */
     public function test_grader_filter_disabled_records_teacher_submission(): void {
         $this->resetAfterTest();
@@ -346,18 +367,16 @@ final class submission_ledger_test extends \advanced_testcase {
     // Helpers.
 
     /**
-     * Build the course generator testing environment.
+     * Build a tracked course with an enrolled student and an assign.
      *
-     * @return array{0:\stdClass, 1:\stdClass, 2:\stdClass, 3:\stdClass}
+     * @return array{0:\stdClass, 1:\stdClass, 2:\stdClass, 3:\stdClass} The cm, the student, the assign and the course.
      */
     private function build_environment(): array {
         $course = $this->getDataGenerator()->create_course();
-        /* v1.0.0+ requires a course-context block instance for the
-         * observer-driven paths (group_member_added →
-         * group_membership_changed → reattribute_user) to fire. Direct
-         * submission_ledger::* calls in this file bypass the gate, but
-         * any test that triggers an event flows through it. Reset the
-         * course_access memo for recycled courseids. */
+        /* Direct submission_ledger calls bypass the course_access gate, but
+         * the event-driven paths (group_member_added reaching
+         * reattribute_user()) need a course-context block instance. The memo
+         * is reset for recycled course ids. */
         $coursectx = \context_course::instance($course->id);
         $this->getDataGenerator()->create_block('feedback_tracker', [
             'parentcontextid' => $coursectx->id,
@@ -406,9 +425,8 @@ final class submission_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * Helper to insert an assign_grades row with a caller-chosen grade
-     * value. Used by the null/negative-grade regression test where the
-     * default 75.0 fixture would mask the bug.
+     * Insert an assign_grades row with a caller-chosen grade value, for the
+     * "no grade" cases the fixed 75.0 of insert_assign_grade() cannot express.
      *
      * @param int $assignid
      * @param int $userid

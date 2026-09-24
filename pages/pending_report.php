@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Pending grading · detailed report — React-driven full-page view of pending
+ * Pending grading · detailed report — Preact-driven full-page view of pending
  * and graded submissions for one course: a collapsible dashboard-style hero,
  * a last-30-academic-days heatmap, a status distribution with a graded view,
  * and a table with server-side search / sort / paging plus grade actions.
@@ -50,33 +50,26 @@ $PAGE->set_url('/blocks/feedback_tracker/pages/pending_report.php', [
 ]);
 $PAGE->set_context($context);
 $PAGE->set_title(get_string('pendingreport_title', 'block_feedback_tracker'));
-// The heading combines the report-purpose label and the course name so
-// the page is self-describing — and so the Behat scenario can assert
-// the visible H1 instead of relying on the browser-tab <title>.
+// Report label plus course name, so the page is self-describing; Behat
+// asserts this visible heading rather than the browser-tab <title>.
 $PAGE->set_heading(
     get_string('pendingreport_title', 'block_feedback_tracker')
         . ' — ' . format_string($course->fullname)
 );
 $PAGE->set_pagelayout('incourse');
 
-// Data loads asynchronously from the Preact app after mount (see
-// amd/src/views/PendingReportView.js), mirroring teacher_dashboard.php: the
-// first byte ships immediately and the page never blocks on the submissions
-// queries or — previously the dominant cost — the full responsiveness payload
-// (per-group trend series, peer stats and activity schedules, plus the course
-// paused aggregate and assign catalog) that was assembled here only to feed
-// the hero scopes and the class-filter dropdown. The app fetches the
-// submissions page first (the content the teacher came for) in parallel with
-// the lightweight get_report_scopes web service (one indexed rollup read),
-// then lazy-loads drafts and the academic-days strip. Each web service
-// re-applies the same capability + group-visibility gates, so moving the
-// fetch to the client does not widen visibility.
+// The page ships no data: the app fetches it after mount (fetch order in
+// amd/src/views/PendingReportView.js), as on teacher_dashboard.php. Do not
+// build responsiveness_payload::for_course() here for the hero scopes or the
+// class filter; get_report_scopes reads the rollup instead. Each web service
+// re-applies the capability and group-visibility gates, so fetching from the
+// client does not widen visibility.
 global $USER;
 
-// Shared block-level labels (band names, card_*, breakdown_*) + page-
-// specific overlay (pendingreport_*, modal_*, pause_reason_*). Both live
-// in the autoloaded helper so the block class doesn't have to be
-// require_once'd from a standalone page.
+// Shared block-level labels (band names, card_*, breakdown_*) plus the
+// page-specific ones (pendingreport_*, modal_*, pause_reason_*). Both come
+// from the autoloaded bootstrap helper, so the page need not require the
+// block class.
 $i18n = array_merge(
     \block_feedback_tracker\local\output\bootstrap::i18n_bundle(),
     \block_feedback_tracker\local\output\bootstrap::pending_report_i18n()
@@ -105,9 +98,9 @@ $reportcollapsed = (bool) get_user_preferences(
     (int) $USER->id
 );
 
-// Scheduled-pause notice ("Pausa prevista") — up to 3 pauses visible now
-// (3 days before → day after), course scope. Cheap calendar read; ships in
-// the bootstrap like the dashboard so the notice paints with the shell.
+// Scheduled-pause notice: up to 3 pauses visible now (from 3 days before to
+// the day after), course scope. A cheap calendar read, shipped in the
+// bootstrap as on the dashboard so the notice paints with the shell.
 $upcoming = [];
 try {
     $upcoming = \block_feedback_tracker\local\calendar\upcoming_pauses::for_display(
@@ -121,7 +114,8 @@ try {
 
 $initial = [
     'courseid' => (int) $courseid,
-    'coursename' => format_string($course->fullname),
+    // Plain text: the view renders it as a text node, which escapes it.
+    'coursename' => format_string($course->fullname, true, ['context' => $context, 'escape' => false]),
     // Filter parameters only — no rows. The view issues the first fetch with
     // these after mount.
     'pending' => [
@@ -155,8 +149,8 @@ $PAGE->requires->js(
 );
 $PAGE->requires->js_call_amd('block_feedback_tracker/pending_report_app', 'init');
 
-// Log this page view to the standard site log; user, IP and origin are
-// captured automatically. Fired once per navigation, not in the web services.
+// Log this page view to the standard site log, once per navigation. The web
+// services the page uses do not log.
 $event = \block_feedback_tracker\event\report_viewed::create([
     'context' => $context,
     'courseid' => (int) $courseid,

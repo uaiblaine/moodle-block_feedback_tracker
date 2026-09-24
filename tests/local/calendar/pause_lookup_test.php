@@ -123,7 +123,8 @@ final class pause_lookup_test extends \advanced_testcase {
         $this->insert_pause('site', 0, 1000, 2000);
 
         $a = pause_lookup::for_course_group(1, 0, 500, 2500);
-        // Insert a second pause; memoised result should NOT include it.
+        // A second pause must not appear: insert_pause() resets only the static
+        // memo, so the result comes from MUC under the unchanged calver.
         $this->insert_pause('site', 0, 1100, 1900);
         $b = pause_lookup::for_course_group(1, 0, 500, 2500);
 
@@ -131,12 +132,12 @@ final class pause_lookup_test extends \advanced_testcase {
     }
 
     /**
-     * Helper to insert a mock pause window record.
+     * Insert a pause window row and reset the static memo (not the MUC cache).
      *
      * @param string $scopelevel The scope level (site, course, group).
      * @param int $scopeid The ID corresponding to the scope.
      * @param int $tsstart The starting timestamp of the pause.
-     * @param int|null $tsend The ending timestamp of the pause.
+     * @param int|null $tsend The ending timestamp of the pause; null for open-ended.
      * @return void
      */
     private function insert_pause(string $scopelevel, int $scopeid, int $tsstart, ?int $tsend): void {

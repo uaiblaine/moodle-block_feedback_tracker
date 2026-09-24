@@ -17,7 +17,7 @@
  * Per-group responsiveness card. Collapsible: a clickable header (chevron +
  * title/subtitle + band badge) toggles the body — hero (ring + score) → KPI
  * row → trend row → stat-tile row (the three exclusive pending bands) →
- * optional peer context → optional activities → drilldown foot.
+ * optional activities → optional peer context → drilldown foot.
  *
  * Local open/closed state only (default open). Props mirror
  * responsiveness_payload::group_payload(); optional fields hide gracefully.
@@ -132,18 +132,18 @@ const effectiveKpi = (group, config) => {
 };
 
 /**
- * Format days as "Xd" or "—".
+ * Whole days (minimum 1) from an hours value, or "—"; the caller adds the unit.
  *
  * @param {number|null|undefined} h
- * @returns {string}
+ * @returns {string|number}
  */
 const fmtDaysFromHours = (h) => (h === null || h === undefined ? '—' : Math.max(1, Math.round(Number(h) / 24)));
 
 /**
- * Format compliance percentage as integer "X" (caller adds the % unit).
+ * Round a compliance percentage, or "—"; the caller adds the % unit.
  *
  * @param {number|null|undefined} p
- * @returns {string}
+ * @returns {string|number}
  */
 const fmtPct = (p) => (p === null || p === undefined ? '—' : Math.round(Number(p)));
 
@@ -152,7 +152,7 @@ const fmtPct = (p) => (p === null || p === undefined ? '—' : Math.round(Number
  * @param {object} props.group      One element of payload.groups.
  * @param {number} props.courseid   Course id (for drilldown URLs).
  * @param {object} props.i18n       Localised label map.
- * @param {object} props.config     Block config (weights, sla_goal_hours, score_thresholds).
+ * @param {object} props.config     Config bundle (sla_goal_hours, display_time_unit, show_peer_context).
  * @returns {object} vnode
  */
 // Branch count over the lint cap is acknowledged debt (refactor pass pending).

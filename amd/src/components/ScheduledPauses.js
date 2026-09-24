@@ -14,12 +14,12 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Scheduled-pause notice ("Pausa prevista"). Lists up to a few upcoming
+ * Scheduled-pause notice ("Upcoming pause"). Lists up to a few upcoming
  * calendar pauses, each with its label, date / time window and type, e.g.
  *
  *   Upcoming pause:
- *   ⚽ Copa do Mundo | Brasil x Japão
- *   29/06/2026 das 16h às 17h
+ *   ⚽ World Cup | Brazil v Japan
+ *   06/29/2026, 16:00–17:00
  *   Type: Optional
  *
  * Every entry arrives pre-formatted from the server (the `when` and

@@ -44,8 +44,11 @@ $PAGE->set_title(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
 
+// The notice and its error lines are plain text; the template escapes them,
+// so an exception message can never inject markup.
 $notice = null;
 $noticelevel = 'success';
+$noticeerrors = [];
 
 // Forms.
 $dayform = new calendar_day_form($PAGE->url->out(false));
@@ -94,16 +97,13 @@ try {
             'errors' => count($result['errors']),
         ]);
         if (!empty($result['errors'])) {
-            $errortext = '';
             foreach ($result['errors'] as $err) {
-                $errortext .= sprintf(
-                    "<br/>line %d: %s — %s",
-                    (int) $err['line'],
-                    s($err['raw']),
-                    s($err['message'])
-                );
+                $noticeerrors[] = get_string('caleditor_bulk_error_line', 'block_feedback_tracker', (object) [
+                    'line' => (int) $err['line'],
+                    'raw' => (string) $err['raw'],
+                    'message' => (string) $err['message'],
+                ]);
             }
-            $notice .= $errortext;
             $noticelevel = 'warning';
         }
     } else if ($data = $pauseform->get_data()) {
@@ -146,6 +146,7 @@ try {
 } catch (\Throwable $e) {
     $notice = $e->getMessage();
     $noticelevel = 'danger';
+    $noticeerrors = [];
 }
 
 // Inline GET-style delete actions (links from the data tables).
@@ -174,6 +175,7 @@ if ($action !== '' && confirm_sesskey()) {
     } catch (\Throwable $e) {
         $notice = $e->getMessage();
         $noticelevel = 'danger';
+        $noticeerrors = [];
     }
 }
 
@@ -193,9 +195,8 @@ foreach ($days as $d) {
         'daydate' => $d->daydate,
         'sesskey' => sesskey(),
     ]);
-    // V1.0.9 — render the localised daytype label (was the raw slug).
-    // For sub-day optional rows, append the HH:MM-HH:MM window so the
-    // editor's day list shows "Optional · 16:00-18:00".
+    // Localised day type; a sub-day optional row also shows its window,
+    // e.g. "Optional · 16:00-18:00".
     $typecell = \block_feedback_tracker\local\calendar\calendar::daytype_label((string) $d->daytype);
     if (
         (string) $d->daytype === \block_feedback_tracker\local\calendar\calendar::DAYTYPE_OPTIONAL
@@ -253,6 +254,7 @@ foreach ($pauses as $p) {
 }
 
 // Build the hours-section per-day list with each form rendered as a string.
+// Weekday names come from a known Monday (5 January 2026): dayofweek 0 is Monday.
 $basemonday = make_timestamp(2026, 1, 5, 0, 0, 0);
 $hoursdays = [];
 for ($dow = 0; $dow <= 6; $dow++) {
@@ -262,8 +264,8 @@ for ($dow = 0; $dow <= 6; $dow++) {
     ];
 }
 
-// Log this admin page view to the standard site log; user, IP and origin
-// are captured automatically. Fired once per render, after any POST redirect.
+// Log this admin page view to the standard site log. Fired after the POST
+// redirects so a form submit is not logged twice.
 $event = \block_feedback_tracker\event\tool_page_viewed::create([
     'context' => $context,
     'other' => ['page' => 'calendar'],
@@ -274,7 +276,12 @@ $event->trigger();
 echo $OUTPUT->header();
 echo $OUTPUT->render_from_template('block_feedback_tracker/calendar_editor', [
     'heading'  => get_string('caleditor_title', 'block_feedback_tracker'),
-    'notice'   => $notice !== null ? ['text' => $notice, 'level' => $noticelevel] : null,
+    'notice'   => $notice !== null ? [
+        'text' => $notice,
+        'level' => $noticelevel,
+        'haserrors' => !empty($noticeerrors),
+        'errors' => $noticeerrors,
+    ] : null,
     'days' => [
         'heading'      => get_string('caleditor_days_heading', 'block_feedback_tracker'),
         'addheading'   => get_string('caleditor_days_add', 'block_feedback_tracker'),

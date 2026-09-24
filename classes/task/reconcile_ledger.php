@@ -32,6 +32,7 @@ use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
 use block_feedback_tracker\local\sla\group_resolver;
 use block_feedback_tracker\local\sla\retention;
+use block_feedback_tracker\local\sla\rule_resolver;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
 
@@ -54,21 +55,22 @@ use block_feedback_tracker\local\sla\submission_status;
  *    signal.
  *
  * Each sweep walks its driving set in windows of `reconcile_batch_size` rows
- * behind its own keyset cursor — as many windows as its share of the tick's
- * time cap allows, see {@see self::walk()} — and is gated on
- * {@see course_access::is_processable()}. Seven sweeps dispatch their
- * repairs — six as {@see backfill_one_submission}, the allocation one as
+ * behind its own keyset cursor, as many windows as its share of the tick's
+ * time cap allows ({@see self::walk()}), and every sweep but the orphan one is
+ * limited to the courses {@see course_access::processable_course_ids()}
+ * returns. Seven sweeps dispatch their repairs — six as
+ * {@see backfill_one_submission}, the allocation one as
  * {@see stamp_allocations} — which keeps the academic-time engine out of this
  * task's own time budget.
  *
  * The two cleanup sweeps ({@see self::sweep_orphans()},
- * {@see self::sweep_departed_participants()}) still act directly, and must:
- * a repair task re-gates every row on processability and would silently skip
- * exactly the hidden or block-less courses whose rows most need removing.
+ * {@see self::sweep_departed_participants()}) delete directly: the repair
+ * task only upserts, and it re-gates every row on processability, which would
+ * skip the hidden or block-less courses whose orphan rows most need removing.
  *
- * Sweeps run in a rotating order — each tick resumes after the last one that
- * ran — because the deadline is tested between them and a fixed order meant the
- * tail was never reached on a site that runs out of budget.
+ * Sweeps run in a rotating order, each tick resuming after the last one that
+ * ran, because the deadline is tested between them and a fixed order would
+ * never reach the tail on a site that runs out of budget.
  */
 class reconcile_ledger extends \core\task\scheduled_task {
     /** Default driving rows per window. */
@@ -96,10 +98,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Ceiling on the window size, whatever the setting says. A window becomes
      * an `id IN (...)` list of that many placeholders in the probe, and
-     * PostgreSQL refuses a statement carrying more than 65 535 of them. The
-     * LIMIT this replaced tolerated any value, so a site that had set the
-     * batch high would otherwise break the task on its first tick after
-     * upgrading, and keep breaking it until someone found the setting.
+     * PostgreSQL refuses a statement carrying more than 65 535 of them.
      */
     private const MAX_BATCH = 10000;
 
@@ -112,8 +111,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * @var int Epoch second after which the sweep now running must stop
      *          starting windows: its share of what was left of the tick when
-     *          its turn came. Zero outside execute(), so a sweep driven directly
-     *          walks exactly one window.
+     *          its turn came. Zero outside execute(), so a window sweep driven
+     *          directly walks exactly one window (and the departed-participant
+     *          sweep visits no course).
      */
     private int $sweepdeadline = 0;
 
@@ -159,10 +159,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
      */
     public function execute(): void {
         /* Default-ON checkbox: an unset value (false) means enabled, and only
-         * an explicit '0' turns it off. The `?: 1` read this replaced could
-         * never see the off state — admin_setting_configcheckbox stores '0',
-         * which is falsy, so `'0' ?: 1` yielded 1 and the documented escape
-         * hatch never fired. Same read as bootstrap::config_bundle(). */
+         * an explicit '0' turns it off. A `?: 1` read would never see the off
+         * state, because the stored '0' is falsy. */
         $activecfg = get_config('block_feedback_tracker', 'reconcile_active');
         $active = ($activecfg === false || $activecfg === null) ? true : ((string) $activecfg !== '0');
         if (!$active) {
@@ -180,17 +178,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $batch = self::DEFAULT_BATCH;
         }
         $batch = min($batch, self::MAX_BATCH);
-        /* Its own cap since 2026081100. Sharing drain_time_cap_seconds meant one
-         * number sized a task that inserts a couple of hundred queue rows AND a
-         * task that runs nine diffs against the assignment tables. The upgrade
-         * step seeds this from the old key, so a site that had tuned the drain
-         * cap keeps the behaviour it had rather than silently reverting to the
-         * default. */
+        /* A cap of its own rather than drain_time_cap_seconds: the drain only
+         * queues a few hundred rows, while this runs nine diffs against the
+         * assignment tables. The upgrade step that introduced the setting
+         * seeded it from drain_time_cap_seconds. */
         $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
             ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
-        // Sweeps that iterate internally read this rather than taking it as a
-        // parameter, so the nine keep one signature.
         $this->deadline = $deadline;
 
         // Flush the memos the ledger consults; a long-lived cron process would
@@ -209,20 +203,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'rules' => 'sweep_rule_drift',
             'allocation' => 'sweep_unstamped_allocations',
         ];
-        /* Resume after the last sweep that actually RAN, so the tail of the
-         * registry stops starving. The cap is tested between sweeps and the
-         * order was fixed, so on a site whose ticks run out of budget the same
-         * sweeps at the end were never reached — not late, absent.
-         *
-         * The marker is the sweep KEY, never an index. An index re-points on
-         * its own the moment the registry changes, which is the exact bug the
-         * departed-participant cursor was just fixed for; and reordering the
-         * registry is precisely the sort of change nobody thinks to check a
-         * stored integer against.
-         *
-         * Rotation is a no-op on any tick that reaches every sweep: the last
-         * one to run is the last in the order, so the next tick starts at the
-         * beginning again. It only does anything once the cap bites. */
+        /* Resume after the last sweep that ran, so the tail of the registry is
+         * reached on a site whose ticks run out of budget. The marker is the
+         * sweep key, never an index, so it stays valid when the registry is
+         * reordered or extended. On a tick that reaches every sweep the last
+         * one to run is the last in the order, so rotation is a no-op. */
         $order = array_keys($sweeps);
         $lastran = (string) (get_config('block_feedback_tracker', self::LAST_SWEEP_KEY) ?: '');
         $resumeat = array_search($lastran, $order, true);
@@ -239,17 +224,15 @@ class reconcile_ledger extends \core\task\scheduled_task {
         $emptyms = 0;
         $skipped = [];
         $timecapped = false;
-        /* Seeded from the stored value, not left undefined and not blanked. A
-         * tick that is already past its deadline runs no sweep at all, and
-         * either of those would turn this into the starvation it exists to
-         * prevent — one by fatal warning under --fail-on-warning, the other by
-         * silently resetting every tick to registry order. */
+        /* Seeded from the stored marker: a tick already past its deadline runs
+         * no sweep, and must leave the rotation where it was rather than reset
+         * it to registry order. */
         $ranlast = $lastran;
         foreach ($order as $position => $key) {
             $method = $sweeps[$key];
             if (time() > $deadline) {
                 $timecapped = true;
-                // Sliced from the ROTATED order: what was skipped is what this
+                // Sliced from the rotated order: what was skipped is what this
                 // tick would have run next, not what the registry lists next.
                 $skipped = array_slice($order, (int) $position);
                 mtrace('reconcile_ledger: time cap reached; remaining sweeps run next tick.');
@@ -264,12 +247,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $repaired = $this->$method($processable, $batch, $key);
             $sweepms = (int) round((microtime(true) - $sweepstarted) * 1000);
             /* `exhausted` is null only for a sweep that never reached
-             * advance_cursor() — reported as null rather than false so "did not
-             * answer" stays distinguishable from "did not finish". Every sweep
-             * answers it today; the departed-participant one does so over the
-             * tracked-course list rather than over rows, which is also why its
-             * `examined` and `windows` stay null: it visits courses, not
-             * windows. */
+             * advance_cursor(), so "did not answer" stays distinguishable from
+             * "did not finish". The departed-participant sweep visits courses,
+             * not windows, so its `examined` and `windows` stay null. */
             $stats[$key] = [
                 'rows' => $repaired,
                 'examined' => $this->examined[$key] ?? null,
@@ -279,9 +259,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 'exhausted' => $this->exhausted[$key] ?? null,
             ];
             if ($repaired === 0) {
-                /* The cost of proving nothing was wrong. On a converged ledger
-                 * this is the whole tick, and it is the number that has to fall
-                 * before any throughput claim about this task means anything. */
+                /* The cost of proving nothing was wrong: on a converged ledger
+                 * this is the whole tick, the task's steady-state cost. */
                 $emptyms += $sweepms;
             }
             $total += $repaired;
@@ -293,13 +272,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
         set_config(self::LAST_SWEEP_KEY, $ranlast, 'block_feedback_tracker');
         mtrace(sprintf('reconcile_ledger: %d row(s) repaired this tick.', $total));
 
-        /* Recorded on EVERY tick, including the ones that found nothing. The
-         * empty tick is not noise here — it is the measurement. Nine diffs that
-         * prove a converged ledger correct are the steady-state cost of this
-         * task, and until now nothing anywhere recorded it, so no claim about
-         * making reconciliation faster could be checked against anything. Twelve
-         * rows a day against a 90-day prune is a fraction of what drain_queue
-         * already writes. */
+        /* Recorded on every tick, including those that repaired nothing: an
+         * empty tick's timings are the task's steady-state cost, which nothing
+         * else records. At the default two-hourly schedule that is twelve rows
+         * a day, pruned after 90 days. */
         recompute_log::record(
             recompute_log::REASON_RECONCILE,
             $total,
@@ -321,15 +297,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
-     * The oldest submission the row-creating sweeps may still resurrect.
+     * The oldest submission the row-creating sweeps may still recreate.
      *
-     * Without this the pruner and the reconciler fight: the pruner deletes a
-     * closed row past its retention window, the reconciler sees a submission
-     * with no ledger row and recreates it, and the pair burn a batch of work
-     * against each other on every tick, for ever. Both read the same cutoff.
-     *
-     * Returns 0 when retention is off, which admits everything — the historical
-     * behaviour.
+     * Shared with prune_ledger through {@see retention::cutoff()}, which says
+     * why the two must agree. Returns 0 when retention is off, which admits
+     * everything.
      *
      * @return int Epoch seconds, or 0 for no floor.
      */
@@ -361,27 +333,20 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * by it. `$act` probes one window for the rows that need acting on, acts
      * on them, and returns how many it found. The walk keeps going until the
      * driving set is spent or the sweep's share of the tick is, and moves the
-     * cursor on from the WINDOW — the last driving row examined — never from
+     * cursor on from the window (the last driving row examined), never from
      * what the probe returned.
      *
-     * That last point is the whole reason this exists. The sweeps used to run
-     * one statement whose LIMIT sat over the probe's own predicate, so the
-     * batch bounded the rows RETURNED, not the rows examined: on a converged
-     * ledger — nothing to repair, the normal state — every tick walked the
-     * whole table to prove it, read the short result as "pass complete", and
-     * wrapped the cursor to 0 to do it all again next time. Measured on a
-     * synthetic 1.07 M-row ledger, the latest-drift statement took 24 s for
-     * 300 courses and returned nothing; the same probe over a 500-row window
-     * takes 8 ms. Bounding the window rather than the answer is what makes the
-     * cost of a tick proportional to the rows it examined.
+     * The batch therefore bounds the rows examined, not the rows returned. A
+     * LIMIT over the probe's own predicate, which is false for almost every
+     * row of a converged ledger, makes the engine walk the whole driving set
+     * to prove there are fewer than `$batch` matches; bounding the window
+     * keeps a tick's cost proportional to the rows it examined.
      *
-     * Exhaustion is a claim about the window, and only about it: a window
-     * shorter than `$batch` (or empty) means the driving set ran out. Stopping
-     * because the share of time ran out is NOT exhaustion — the cursor stays
-     * where the last window ended and the next tick resumes there. That is the
-     * distinction {@see self::advance_cursor()} asks every caller to make
-     * deliberately, and deriving it from the window count is what keeps it
-     * true now that an in-sweep deadline exists.
+     * Exhaustion is a claim about the window alone: a window shorter than
+     * `$batch` (or empty) means the driving set ran out. Stopping because the
+     * time share ran out is not exhaustion; the cursor stays where the last
+     * window ended and the next tick resumes there
+     * ({@see self::advance_cursor()}).
      *
      * @param string $key Sweep key.
      * @param int $batch Window size.
@@ -465,24 +430,20 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
      * told about), of a restored course, and of any event lost in flight.
      *
-     * Restricted to users who are still active participants, matching
-     * {@see self::sweep_departed_participants()}'s
-     * `get_enrolled_sql($context, '', 0, true)` predicate — deleted account,
-     * suspended enrolment, suspended method, or an enrolment outside its
-     * start/end window all disqualify. Without that restriction the two sweeps
-     * fight: this one runs first on every tick and rebuilds exactly the rows
-     * the departed-participant sweep deleted on the previous one, so an
-     * unenrolled student's rows reappear for ever, each round trip costing a
-     * backfill dispatch and a rollup recompute. The predicate is spelled out
-     * inline rather than reusing `get_enrolled_sql()` because that helper is
-     * course-scoped while this sweep is deliberately cross-course.
+     * Restricted to users who are still active participants, and must agree
+     * with {@see self::sweep_departed_participants()}'s
+     * `get_enrolled_sql($context, '', 0, true)`: a deleted account, a
+     * suspended enrolment or method, or an enrolment outside its start/end
+     * window all disqualify. Otherwise the two sweeps fight, this one
+     * rebuilding on every pass the rows the other deleted, each round trip
+     * costing a backfill dispatch and a rollup recompute. The predicate is
+     * inlined because `get_enrolled_sql()` is course-scoped while this sweep is
+     * cross-course.
      *
-     * The site course is exempt, because core exempts it: `get_enrolled_join()`
-     * skips the whole enrolment join when the course context is SITEID —
-     * "all users are enrolled on the frontpage" — and nobody holds a
-     * {user_enrolments} row there. Without the exemption an activity on the
-     * front page would stop being repaired entirely, which is a quieter and
-     * worse failure than the oscillation this predicate exists to end.
+     * The site course is exempt, as in core: `get_enrolled_join()` skips the
+     * enrolment join when the course is SITEID, and nobody holds a
+     * {user_enrolments} row there. Without the exemption no front-page
+     * activity would ever be repaired.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -619,6 +580,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * not re-flagged for ever, and the mark tests mirror
      * {@see grading_state::resolve()} exactly — a divergence sweep that
      * disagrees with the writer would dispatch the same repair on every tick.
+     * That includes its grade type "None" branch (`a.grade = 0`), where the
+     * grade value is never read: core stores -1 on such a grading, so a value
+     * test would select every marked row of the activity on every pass.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -647,14 +611,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
                     AND (
                          (l.timemarked IS NULL
                           AND g.id IS NOT NULL
-                          AND g.grade IS NOT NULL
-                          AND g.grade >= 0
-                          AND g.timemodified > l.timesubmitted)
+                          AND g.timemodified > l.timesubmitted
+                          AND (a.grade = 0 OR (g.grade IS NOT NULL AND g.grade >= 0)))
                       OR (l.timemarked IS NOT NULL
                           AND (g.id IS NULL
-                               OR g.grade IS NULL
-                               OR g.grade < 0
-                               OR g.timemodified <= l.timesubmitted))
+                               OR g.timemodified <= l.timesubmitted
+                               OR (a.grade <> 0 AND (g.grade IS NULL OR g.grade < 0))))
                     )
                ORDER BY l.id ASC",
                 ['modname' => 'assign']
@@ -670,25 +632,21 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * The direct fingerprint of `add_attempt()`, which fires nothing at all.
      *
      * The source row is reached through two equality-only joins, one per
-     * submission mode, rather than one join with an OR between the modes. The
-     * OR looked harmless and defeated every index: each of its arms mixes
-     * columns from three tables, so neither PostgreSQL nor MariaDB could use
-     * more than `assignment` of the unique key (assignment, userid, groupid,
-     * attemptnumber) and read every submission of the activity for every
-     * ledger row — cost proportional to rows × submissions per activity,
-     * quadratic in class size, and no index made it otherwise. With the arms
-     * split each is a point lookup. The arms are mutually exclusive on the live
-     * `teamsubmission` flag, so at most one matches and the COALESCE below
-     * reads whichever did; the individual arm deliberately leaves `groupid`
-     * unconstrained, exactly as the writer's own lookup in
+     * submission mode, never one join with an OR between the modes: each arm
+     * of such an OR mixes columns from three tables, so neither PostgreSQL nor
+     * MariaDB can use more than `assignment` of the unique key (assignment,
+     * userid, groupid, attemptnumber), and every ledger row reads every
+     * submission of its activity. Split, each arm is a point lookup. The arms
+     * are mutually exclusive on the live `teamsubmission` flag, so the
+     * COALESCE below reads whichever matched; the individual arm leaves
+     * `groupid` unconstrained, as the writer's own lookup in
      * {@see submission_ledger} does, so selector and writer agree row for row.
      *
-     * The activity is still resolved through the course module, as it was —
-     * the writer resolves it that way too, and reaching {assign} directly via
-     * `l.iteminstance` would select rows the writer cannot repair (a module
-     * row gone with the activity row surviving, a module of another type),
-     * dispatching the same no-op on every pass until the orphan sweep removes
-     * them.
+     * The activity is resolved through the course module, as the writer
+     * resolves it. Reaching {assign} directly via `l.iteminstance` would
+     * select rows the writer cannot repair (the module row gone while the
+     * activity row survives), dispatching the same no-op on every pass until
+     * the orphan sweep removes them.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -736,30 +694,26 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * Ledger rows whose source submission is gone.
      *
      * Course reset deletes {assign_submission} with a bare
-     * `delete_records_select()`, and by default leaves the grades behind — so
-     * the probe keys on the submission, not the grade. Acts directly: a repair
-     * task would re-gate on processability and skip exactly the courses whose
-     * rows most need removing. For the same reason the driving set carries no
-     * course filter at all: the whole ledger is walked, a window at a time.
+     * `delete_records_select()` and keeps {assign_grades} unless gradebook
+     * grades are reset too, so the probe keys on the submission, not the
+     * grade. Acts directly, and the driving set carries no course filter at
+     * all: the whole ledger is walked, a window at a time, because a repair
+     * task would re-gate on processability and skip the courses whose rows
+     * most need removing.
      *
-     * Team-aware, or the fan-out and this sweep would delete and recreate each
-     * other's rows for ever — and the discriminator has to be the LIVE
-     * `assign.teamsubmission` flag, never the stored `teamgroupid`. mod_assign's
-     * default team group IS group 0, so a member row for it is stored with
-     * `teamgroupid = 0`, byte-identical to an individual row; the observer
-     * routes on the live flag for exactly this reason (see
-     * {@see \block_feedback_tracker\local\sla\observer}). Probing such a row as
-     * individual looks for `s.userid = l.userid` while the source row carries
-     * `userid = 0`, finds nothing, and deletes a perfectly good member row that
-     * {@see self::sweep_missing_team_rows()} then recreates on the next tick —
-     * one backfill dispatch plus one rollup recompute per round trip, for ever.
+     * Team-aware, discriminating on the live `assign.teamsubmission` flag,
+     * never on the stored `teamgroupid`: mod_assign's default team group is
+     * group 0, so a member row for it is stored with `teamgroupid = 0`, exactly
+     * like an individual row (the observer routes on the live flag for the
+     * same reason). Probed as an individual row it would find no source with
+     * its userid and be deleted, and {@see self::sweep_missing_team_rows()}
+     * would recreate it on the next pass.
      *
      * The two modes are two equality-only joins rather than one OR, for the
-     * reason {@see self::sweep_latest_drift()} gives: the OR could use no more
-     * than `assignment` of the unique key. An activity whose {assign} row is
-     * gone leaves `a.teamsubmission` NULL, so neither arm matches and the row
-     * is deleted. That is the intended reading: no activity means no
-     * submission to measure.
+     * reason {@see self::sweep_latest_drift()} gives. An activity whose
+     * {assign} row is gone leaves `a.teamsubmission` NULL, so neither arm
+     * matches and the row is deleted: no activity means no submission to
+     * measure.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -819,16 +773,15 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Open cycles the gradebook has already answered.
      *
-     * `user_graded` covers the low-latency case, but it cannot cover this one:
-     * flipping a grade to overridden or locked fires no event at all, and a
-     * re-grade to the same value fires none either, because core gates the
-     * event on the final grade *value* having changed. Both leave a response
-     * sitting in {grade_grades} that no signal will ever announce.
+     * `user_graded` covers the low-latency case, but not this one: flipping a
+     * grade to overridden or locked fires no event, and neither does a
+     * re-grade to the same value, because core triggers the event only when
+     * the final grade value changes. Both leave a response in {grade_grades}
+     * that no signal announces.
      *
-     * Visibility is part of the predicate, not an afterthought: a hidden grade
-     * has not reached the student, and core overloads `hidden` so that 1 means
-     * hidden while anything larger is a hidden-until instant that stops hiding
-     * once it passes.
+     * A hidden grade has not reached the student, so visibility is part of the
+     * predicate. Core's `hidden` is 1 for hidden, and a larger value is a
+     * hidden-until instant that stops hiding once it passes.
      *
      * Acts by dispatching the ordinary re-derivation rather than writing the
      * stamp here, so the writer stays the single place the earliest-wins rule
@@ -850,8 +803,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
              * user per item with no attempt dimension, so without this a single
              * gradebook response would close every unmarked attempt of that
              * user and be counted once per attempt in the graded window. The
-             * observer avoids it by resolving through latest_attempt_number();
-             * the sweep has to say so. */
+             * observer does the same through latest_attempt_number(). */
             $this->ledger_window(
                 "AND l.timeclosed IS NULL
                  AND l.iscurrent = 1
@@ -905,11 +857,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
      */
     private function sweep_departed_participants(array $processable, int $batch, string $key): int {
         /* Per course, because get_enrolled_sql() is course-scoped. The cursor is
-         * a COURSE ID, not an index into the list: the list is rebuilt from
-         * {block_instances} on every call, so adding the block to a course with
-         * a lower id used to shift every later position by one and silently skip
-         * a course for a whole cycle. A courseid survives the list changing
-         * under it. */
+         * a course id, not an index into the list: the list is rebuilt from
+         * {block_instances} on every call, and an index would shift, skipping
+         * a course for a whole cycle, whenever a course with a lower id gains
+         * or loses the block. */
         sort($processable);
         $after = $this->cursor($key);
         $remaining = array_values(array_filter(
@@ -921,13 +872,11 @@ class reconcile_ledger extends \core\task\scheduled_task {
         $visited = 0;
         $lastvisited = $after;
         foreach ($remaining as $cid) {
-            /* Deliberately NOT breaking when a course fills its batch. Doing so
-             * would let one course with a large backlog hold the cursor and
-             * starve every course after it — head-of-line blocking, which is a
-             * worse failure than the slow round-robin this replaces, because a
-             * blocked course's departed students keep counting in its pending
-             * totals with nothing saying why. A course that fills its batch
-             * simply sheds the rest on the next pass. */
+            /* No break when a course fills its batch: one course with a large
+             * backlog would then hold the cursor and starve every course after
+             * it, whose departed students would keep counting in their pending
+             * totals. A course that fills its batch sheds the rest on the next
+             * pass. */
             if ($visited >= self::COURSES_PER_TICK || time() > $this->sweepdeadline) {
                 break;
             }
@@ -936,9 +885,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $drained += $this->drain_departed_for_course((int) $cid, $batch);
         }
 
-        /* Exhausted only when the course list itself ran out — never when a
-         * budget stopped us. Getting that wrong wraps the cursor to 0 mid-pass
-         * and pins the sweep to the low-id courses for ever. */
+        /* Exhausted only when the course list itself ran out, never when a
+         * budget stopped the loop; otherwise the cursor would wrap to 0
+         * mid-pass and pin the sweep to the low-id courses. */
         $this->advance_cursor($key, $lastvisited, $visited === count($remaining));
         return $drained;
     }
@@ -946,11 +895,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Delete one course's rows for users who are no longer active participants.
      *
-     * Note the front-page cost: on SITEID `get_enrolled_sql()` degenerates to a
-     * scan of {user}, because `get_enrolled_join()` skips every enrolment join
-     * there — everybody participates on the front page. That is correct, and it
-     * is why this sweep leaves front-page rows alone unless the account itself
-     * is gone, but it is not cheap on a large site.
+     * On SITEID `get_enrolled_sql()` degenerates to a scan of {user}, because
+     * `get_enrolled_join()` skips every enrolment join on the front page. That
+     * is why front-page rows are left alone unless the account itself is gone,
+     * and it is not cheap on a large site.
      *
      * @param int $courseid
      * @param int $batch Row ceiling for this course.
@@ -994,12 +942,20 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
-     * Ledger rows whose stored due-date rule no longer matches the activity.
+     * Ledger rows whose stored rule no longer matches the activity.
      *
-     * Covers a changed due date or cut-off, and any override or extension
-     * whose event was lost — including a revoked extension, whose only
-     * remaining evidence is that the stored close time stopped matching the
-     * assignment's own due date.
+     * Covers a changed open date, due date or cut-off, an override or an
+     * extension whose event was lost, a group override edit that moved it to
+     * another group, a reordering of group overrides (core fires no event for
+     * it) and a change of group membership, which reattributes the row but
+     * does not re-resolve its dates.
+     *
+     * The expected dates come from the same SQL the writer stores them with
+     * ({@see rule_resolver::joins_sql()}, {@see rule_resolver::date_sql()}), so
+     * a row is selected exactly when a repair would change it; the repair
+     * writes only the current cycle, hence `iscurrent = 1`. The expressions
+     * give 0 for "no date" and the ledger stores NULL, so the stored side is
+     * read through COALESCE.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -1009,26 +965,26 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function sweep_rule_drift(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $drift = [];
+        foreach (['timeopens', 'timecloses', 'timecutoff'] as $column) {
+            $drift[] = "COALESCE(l.$column, 0) <> " . rule_resolver::date_sql($column, 'a');
+        }
         $acted = $this->walk(
             $key,
             $batch,
-            $this->ledger_window("AND l.courseid $csql", $cparams, $batch),
+            $this->ledger_window("AND l.iscurrent = 1 AND l.courseid $csql", $cparams, $batch),
             $this->repair_probe(
                 "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
                         l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
                    FROM {block_feedback_tracker_sub} l
-                   JOIN {assign} a ON a.id = l.iteminstance
-              LEFT JOIN {assign_user_flags} uf
-                     ON uf.assignment = l.iteminstance
-                    AND uf.userid = l.userid
+                   JOIN {course_modules} cm ON cm.id = l.cmid
+                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {assign} a ON a.id = cm.instance
+                   " . rule_resolver::joins_sql('a.id', 'l.userid') . "
                   WHERE l.id " . self::WINDOW_TOKEN . "
-                    AND ((COALESCE(uf.extensionduedate, 0) > 0
-                          AND COALESCE(l.timecloses, 0) <> uf.extensionduedate)
-                      OR (COALESCE(uf.extensionduedate, 0) = 0
-                          AND l.hasrule = 1
-                          AND COALESCE(l.timecloses, 0) <> COALESCE(a.duedate, 0)))
+                    AND (" . implode("\n                         OR ", $drift) . ")
                ORDER BY l.id ASC",
-                []
+                ['modname' => 'assign']
             )
         );
         $this->flush_repairs($key);
@@ -1040,16 +996,15 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * On Moodle 4.5 and 5.1 only the batch "Set allocated marker" operation
      * fires `marker_updated`; quick grading and the grading form write
-     * `assign_user_flags.allocatedmarker` in silence. On 5.2 and later every path fires,
+     * `assign_user_flags.allocatedmarker` in silence. On 5.2 every path fires,
      * but a de-allocation still does not. Without this sweep the marker
-     * turnaround is measurable only for batch-allocated work, which on most
-     * sites is a small and non-random slice.
+     * turnaround is measurable only for batch-allocated work, usually a small
+     * and non-random slice.
      *
      * The stamp it writes is the moment of discovery, not of allocation, so it
      * is recorded as `reconciled` and is accurate only to the sweep period.
-     * That distinction is the whole point of `allocsource`: a median built
-     * from discovery times would silently understate every turnaround, so the
-     * two populations stay separable.
+     * `allocsource` keeps the two populations separable, because a median
+     * built from discovery times would understate every turnaround.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -1100,11 +1055,10 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 [$wsql, $wparams] = $DB->get_in_or_equal(array_keys($window), SQL_PARAMS_NAMED, 'w');
                 $rows = $DB->get_records_sql(str_replace(self::WINDOW_TOKEN, $wsql, $template), $wparams);
                 foreach ($rows as $r) {
-                    /* One descriptor per (cmid, userid), not per ledger row.
+                    /* One descriptor per (cmid, userid), not per ledger row:
                      * stamp_allocation_for_user() already walks every row of the
-                     * pair — every attempt, every cycle — so a student with k
-                     * unstamped rows on one activity used to cost k full passes
-                     * over the same k rows. */
+                     * pair (every attempt, every cycle), so one descriptor per
+                     * row would make k passes over the same k rows. */
                     $dedupkey = (int) $r->cmid . ':' . (int) $r->userid;
                     if (isset($seen[$dedupkey])) {
                         continue;
@@ -1114,12 +1068,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                         'cmid' => (int) $r->cmid,
                         'userid' => (int) $r->userid,
                         'courseid' => (int) $r->courseid,
-                        /* The moment of DISCOVERY, carried so the worker records
-                         * what this sweep saw rather than whatever the clock says
-                         * when cron gets to it. That is the difference between a
-                         * number accurate to the sweep period, which
-                         * ALLOC_SOURCE_RECONCILED declares, and one that also
-                         * encodes how far behind cron is running. */
+                        // The moment of discovery; see stamp_allocations.
                         'when' => $now,
                     ];
                     if (count($buffer) >= self::REPAIR_CHUNK) {
@@ -1133,21 +1082,19 @@ class reconcile_ledger extends \core\task\scheduled_task {
         if (!empty($buffer)) {
             $this->queue_stamps($buffer);
         }
-        /* No dirty_queue::enqueue() here any more: stamp_allocation_for_user()
-         * does it for the tuples it actually touched, and it now runs on the
-         * worker. Enqueuing here as well would mark tuples dirty before — or
-         * without — the write that makes them so. */
+        /* No dirty_queue::enqueue() here: stamp_allocation_for_user() enqueues
+         * the tuples it actually touched when the worker runs, and enqueuing
+         * here would mark tuples dirty before, or without, that write. */
         return $acted;
     }
 
     /**
      * Queue one adhoc batch of allocation stamps.
      *
-     * Dispatched WITHOUT the dedup check that {@see self::queue_repair()} uses.
-     * Core compares custom_data as a string and every batch here embeds its own
-     * discovery instant, so no two payloads can ever match — asking would spend
-     * a query to be told what is already known. The sweep's cursor is what
-     * bounds re-dispatch.
+     * Dispatched without the dedup check that {@see self::queue_repair()} uses:
+     * core compares custom data as a string and every batch here embeds its
+     * own discovery instant, so no two payloads can match. The sweep's cursor
+     * is what bounds re-dispatch.
      *
      * @param array $rows Row descriptors for stamp_allocations.
      * @return void
@@ -1173,14 +1120,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * over. Neither touches the cursor: that is the walk's business, and it is
      * derived from the window, never from what a probe returned.
      *
-     * A team activity's ledger rows are per MEMBER while the repair is
-     * per GROUP: `upsert_for_cm_user_attempt()` re-routes any member of a team
-     * activity back through the whole-group fan-out. Emitting one descriptor
-     * per member therefore ran the entire fan-out once per member — quadratic
-     * in group size, and split across parallel adhoc tasks that then raced to
-     * write the same rows. Team rows collapse to one `userid = 0` container
-     * descriptor per (cmid, team group, attempt) instead, which is the shape
-     * {@see backfill_one_submission} already routes to
+     * A team activity's ledger rows are per member while the repair is per
+     * group: `upsert_for_cm_user_attempt()` re-routes any member of a team
+     * activity through the whole-group fan-out, so one descriptor per member
+     * would run the fan-out once per member, quadratic in group size and split
+     * across parallel tasks writing the same rows. Team rows therefore collapse
+     * to one `userid = 0` container descriptor per (cmid, team group,
+     * attempt), the shape {@see backfill_one_submission} routes to
      * `upsert_for_team_attempt()`.
      *
      * @param array $rows Probe result for one window.
@@ -1271,15 +1217,15 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Queue one adhoc repair batch, logging rather than propagating failures.
      *
-     * The return value of `queue_adhoc_task()` is not discardable. A `false`
-     * used to mean only "an identical payload is already pending", which is the
-     * dedup working as intended; since Moodle 5.2 it is also returned up front
-     * for a refused component, before the dedup check runs. And on 4.5 a
-     * retry-exhausted `{task_adhoc}` row still matches the dedup probe, so an
-     * identical payload stays blocked for as long as
-     * `task_adhoc_failed_retention` keeps the dead row — up to four weeks.
-     * Either way the caller has NOT queued anything, so it counts the outcome
-     * instead of assuming the repair is on its way.
+     * The return value of `queue_adhoc_task()` matters: `false` means nothing
+     * was queued. That is the dedup working when an identical payload is
+     * already pending, but Moodle 5.0 and later also return it up front for a
+     * task whose component is deprecated. And before 5.1.5 and 5.2.1 (so on
+     * 4.5, 5.0, 5.1.0 to 5.1.4 and 5.2.0) the dedup probe does not skip a
+     * retry-exhausted {task_adhoc} row, so an identical payload stays blocked
+     * while `task_adhoc_failed_retention` keeps the dead row (four weeks by
+     * default). The caller counts the outcome instead of assuming the repair
+     * is on its way.
      *
      * @param array $rows Row descriptors for backfill_one_submission.
      * @return bool True when a new adhoc task was created.
@@ -1302,21 +1248,16 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Move a sweep's cursor on, or start its pass over.
      *
-     * `$exhausted` is a claim the caller has to make deliberately: it means the
-     * driving set had no more rows to give, so the pass is complete and the
-     * next tick starts a fresh one. {@see self::walk()} derives it from the
-     * size of the last WINDOW it fetched — shorter than the batch, or empty —
-     * and from nothing else. A walk that stopped because its share of the tick
-     * ran out passes false, and keeps its cursor where the last window ended.
+     * `$exhausted` means the driving set had no more rows to give: the pass is
+     * complete, the cursor resets to 0 and the next tick starts a fresh pass.
+     * {@see self::walk()} derives it from the size of the last window it
+     * fetched (shorter than the batch, or empty) and from nothing else; a walk
+     * stopped by its time share passes false and keeps its cursor.
      *
-     * The distinction is what makes an in-sweep deadline safe. Derived from
-     * the probe result instead, the way the sweeps once did with
-     * `count($rows) < $batch`, a full window with nothing to repair reads as
-     * "pass complete", the cursor wraps to 0, and the sweep rescans the head
-     * of the table for ever while never reaching its tail — silently, and
-     * indistinguishable from a converged ledger in every log. Passing the
-     * claim in rather than re-deriving it here is what makes that a decision
-     * someone has to get right rather than an accident of arithmetic.
+     * Never derive it from a probe result. A full window with nothing to
+     * repair would read as "pass complete", wrap the cursor to 0, and the
+     * sweep would rescan the head of the table for ever without reaching its
+     * tail, indistinguishable from a converged ledger in every log.
      *
      * @param string $key Sweep key.
      * @param int $lastid Highest keyset value examined this pass.

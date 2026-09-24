@@ -84,8 +84,8 @@ final class submission_browser_test extends \advanced_testcase {
 
     /**
      * Pending rows whose effectivedays was never backfilled must still be
-     * classified. The row badge treats a missing day count as zero, so the
-     * distribution has to agree.
+     * classified: the counts fall back to the elapsed calendar days
+     * (see submission_browser::days_expr()).
      *
      * @return void
      */
@@ -240,8 +240,8 @@ final class submission_browser_test extends \advanced_testcase {
     }
 
     /**
-     * The hours ruler is unaffected — effectivehours is not nullable in
-     * practice and this pins that the fix did not disturb the default mode.
+     * Hours mode, which does not use the day-count fallback, also partitions
+     * every row into exactly one band.
      *
      * @return void
      */

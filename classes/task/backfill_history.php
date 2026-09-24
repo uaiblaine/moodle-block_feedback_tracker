@@ -30,24 +30,21 @@ use block_feedback_tracker\local\sla\backfill_cursor;
 use block_feedback_tracker\local\sla\course_access;
 
 /**
- * Inactive by default. When admin enables `backfill_active = 1`, iterates
- * every block-enabled course that has an active per-course cursor row in
- * {block_feedback_tracker_bfcursor} and dispatches its next chunk of
- * historical {assign_submission} rows as `backfill_one_submission`
- * adhoc tasks (one per sub-chunk of `backfill_sub_chunk`).
+ * Inactive unless `backfill_active` is 1. Walks every block-enabled course
+ * that has an active cursor row in {block_feedback_tracker_bfcursor} and
+ * dispatches its next slice of historical {assign_submission} rows as
+ * `backfill_one_submission` adhoc tasks, one per `backfill_sub_chunk` rows.
  *
- * Per-course cursors (v1.7.0+) mean:
- *  - Adding the block to a new course later → fresh cursor=0 row → next
- *    tick walks that course from the start, independent of every other
- *    course's progress.
- *  - Re-running backfill on one course doesn't re-walk the others.
- *  - When a course's SQL returns 0 rows the cursor row flips to active=0;
- *    admins can reset to active=1 via the CLI tool or the reset page to
- *    retry.
+ * Cursors are per course, so:
+ *  - a course that gains the block later gets a fresh cursor at 0 and is
+ *    walked from the start, independently of every other course;
+ *  - re-running the backfill on one course does not re-walk the others;
+ *  - a course whose slice comes back shorter than its quota is marked
+ *    complete (active = 0). `cli/backfill_course.php --reset` re-arms one
+ *    course; a data reset with backfill re-enabled drops every cursor.
  *
- * Per-tick total dispatch is capped at `backfill_chunk` (master quota),
- * per-course slice at `backfill_chunk_per_course`. Soft time cap applies
- * to the whole tick.
+ * Per tick, dispatch is capped at `backfill_chunk` rows in total and
+ * `backfill_chunk_per_course` per course, under the shared soft time cap.
  */
 class backfill_history extends \core\task\scheduled_task {
     /** Default per-tick total dispatch cap (rows across all courses). */
@@ -91,9 +88,8 @@ class backfill_history extends \core\task\scheduled_task {
         $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
 
-        // Lazily create cursor rows for any block-enabled course that
-        // doesn't have one yet. This makes "admin adds the block to a new
-        // course" Just Work — the next tick picks it up with cursor=0.
+        // Create a cursor at 0 for every processable course that has none, so
+        // a course that gains the block is picked up on the next tick.
         $processable = course_access::processable_course_ids();
         if (empty($processable)) {
             mtrace('backfill_history: no processable courses (no course-context block on a visible course) — auto-disabling.');

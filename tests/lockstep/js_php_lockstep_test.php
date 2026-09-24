@@ -36,10 +36,8 @@ use block_feedback_tracker\output\score_gauge;
  * constants drift silently — a colour changed on one side alone shows up as a
  * block and a dashboard disagreeing, with nothing failing.
  *
- * The JS is read from disk rather than mirrored into an expected array here.
- * A mirrored copy would be a third copy, free to drift like the other two;
- * reading the real file cannot. tests/external/services_coverage_test.php
- * already reads db/services.php the same way, so this is in-convention.
+ * The JS is read from disk rather than mirrored into an expected array here:
+ * a mirrored copy would be a third copy, free to drift like the other two.
  *
  * @coversNothing
  */

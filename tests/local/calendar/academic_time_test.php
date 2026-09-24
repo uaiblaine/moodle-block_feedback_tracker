@@ -27,10 +27,10 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\calendar;
 
 /**
- * Verifies the worked examples documented in the plan's §6 algorithm:
- * weekend gaps, holiday clusters, manual pause overlap (course / group),
- * split shifts, timezone-aware day boundaries, and calver-driven cache
- * invalidation.
+ * Hand-computed worked examples: weekend gaps, holiday clusters, manual pause
+ * overlap (course / group), split shifts, timezone-aware day boundaries, and
+ * calver-driven cache invalidation. academic_time_fastpath_test relies on
+ * these to trust the day-by-day walker as its oracle.
  *
  * @covers \block_feedback_tracker\local\calendar\academic_time
  */
@@ -145,7 +145,7 @@ final class academic_time_test extends \advanced_testcase {
 
     /**
      * Manual pause at course scope subtracts from effective hours and emits
-     * a coursepaused audit record clipped to the active intervals.
+     * one coursepaused audit record per active interval it overlaps.
      */
     public function test_manual_pause_course_subtracted(): void {
         $this->resetAfterTest();
@@ -353,8 +353,8 @@ final class academic_time_test extends \advanced_testcase {
     /**
      * Insert a {block_feedback_tracker_cday} row.
      *
-     * @param string $daydate The day date string.
-     * @param string $daytype The day type string.
+     * @param string $daydate The day date as YYYYMMDD.
+     * @param string $daytype The day type slug.
      * @param string|null $note The note.
      */
     private function add_cday(string $daydate, string $daytype, ?string $note = null): void {
@@ -376,7 +376,7 @@ final class academic_time_test extends \advanced_testcase {
      * @param int $scopeid Scope ID.
      * @param int $contextid Context ID.
      * @param int $tsstart Start timestamp.
-     * @param int|null $tsend End timestamp.
+     * @param int|null $tsend End timestamp; null for open-ended.
      */
     private function add_cpause(
         string $scopelevel,

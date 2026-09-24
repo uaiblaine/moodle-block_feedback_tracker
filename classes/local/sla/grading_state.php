@@ -30,19 +30,16 @@ namespace block_feedback_tracker\local\sla;
  * The single decision point for "does this cycle carry a real mark, and has
  * that mark reached the student?".
  *
- * The mark-exists test mirrors mod_assign's own `assign::get_grading_status()`
- * (mod/assign/locallib.php, identical on every supported branch): a grade is real when
- * it is not null and not negative. It deliberately does NOT test `grader`.
- * That column is NOTNULL DEFAULT 0 and restore maps it through
- * `get_mappingid()`, which yields 0 for an unmapped grader, so a restored
- * genuine grading would be misread as ungraded. The `grade >= 0` test alone
- * already rejects every placeholder row mod_assign auto-creates (those carry
- * grade = -1), which is exactly what core itself relies on.
+ * A mark is real when its grade is not null and not negative, as in
+ * {@see \assign::get_grading_status()}; that alone rejects the placeholder
+ * rows mod_assign auto-creates with grade -1. `grader` is deliberately not
+ * tested: restore maps it through get_mappingid(), which stores 0 for an
+ * unmapped grader, so a restored genuine grading would read as ungraded.
  *
- * The mark-belongs-to-this-cycle test mirrors the needs-grading counter's
- * `s.timemodified >= g.timemodified` clause, applied to the cycle's own frozen
- * hand-in time rather than to the live, mutable submission row. That is the
- * whole point: the comparison is preserved, its reference is made immutable.
+ * A mark belongs to this cycle when it postdates the hand-in, mirroring the
+ * `s.timemodified >= g.timemodified` clause of
+ * {@see \assign::count_submissions_need_grading()}, but compared with the
+ * cycle's frozen hand-in time rather than the live, mutable submission row.
  */
 final class grading_state {
     /** Marking-workflow state in which the grade is visible to the student. */
@@ -88,35 +85,27 @@ final class grading_state {
                 && $gradetime > 0
                 && $grade->grade !== null
                 && (float) $grade->grade >= 0.0;
-            /* Strictly later, matching core's needs-grading counter, whose
-             * clause is `s.timemodified >= g.timemodified` — i.e. a tie counts
-             * as still needing grading. Core needs that direction because it
-             * auto-creates placeholder grade rows with the submission's own
-             * timestamp copied verbatim, so equality is its signal for "this
-             * grade row is not a grading". The grade >= 0 test above already
-             * rejects those placeholders here, but the boundary is kept
-             * identical anyway: a plugin that disagreed with core at the tie
-             * would report a different pending count for the same activity,
-             * and the reconciler would chase the difference for ever. */
+            /* Strictly later: core's needs-grading counter treats a tie as
+             * still needing grading, because the placeholder grade row copies
+             * the submission's timemodified. The grade >= 0 test already
+             * rejects placeholders here, but the boundary matches core so both
+             * report the same pending count and the reconciler has no
+             * difference to chase. */
             $markbelongs = $hasmark && $gradetime > $timesubmitted;
         } else {
             /* Grade type "None": no numeric mark is ever possible, so the
-             * grade-value test would leave the row pending for ever. Mirror
-             * the needs-grading counter instead, which is the only core
-             * surface that can clear such a submission: a grade row whose
-             * timemodified is strictly later than the hand-in. Strict
-             * greater-than excludes the auto-created placeholder, whose
+             * grade-value test would leave the row pending for ever. Follow the
+             * needs-grading counter instead: any grade row strictly later than
+             * the hand-in, which excludes the auto-created placeholder whose
              * timemodified is copied from the submission. */
             $hasmark = $grade !== null && $gradetime > 0;
             $markbelongs = $hasmark && $gradetime > $timesubmitted;
         }
 
-        /* Marking workflow: the student sees nothing until the state is
-         * released, so that — not the moment the marker typed the grade — is
-         * when the response actually lands. Mirrors the workflow branch of
-         * get_grading_status(). An empty workflowstate means notmarked: core
-         * seeds the flags row with an empty string, so a bare comparison
-         * against 'notmarked' would match almost nothing. */
+        /* Under marking workflow the student sees nothing until the state is
+         * released, so the cycle closes on release, not on marking. Mirrors
+         * the workflow branch of get_grading_status(), including reading an
+         * empty workflowstate (how core seeds the flags row) as notmarked. */
         $workflow = null;
         if (!empty($assign->markingworkflow)) {
             $workflow = ($flags !== null && !empty($flags->workflowstate))

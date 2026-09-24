@@ -88,10 +88,8 @@ $tasks = [
         'dayofweek' => '*',
         'month'     => '*',
     ],
-    /* Repairs the mutations mod_assign performs with no usable event:
-     * add_attempt, blind marking, non-latest grading, gradebook overrides,
-     * course reset, unenrolment and due-date changes. Runs off-peak-ish but
-     * often enough that a stale pending item is measured in hours, not days. */
+    /* Repairs what mod_assign changes without a usable event (see the task
+     * class). Every two hours, so a stale pending item lasts hours, not days. */
     [
         'classname' => 'block_feedback_tracker\task\reconcile_ledger',
         'blocking'  => 0,

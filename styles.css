@@ -3,10 +3,9 @@
  * Block Feedback tracker — block content styles.
  */
 
-/* Design tokens — calm "Academic Responsiveness" palette.
- * Per-band foreground/background pairs match the design mock; keep them in
- * lockstep with classes/output/score_gauge.php::BAND_COLOURS and
- * amd/src/lib/bands.js::BAND_COLOURS. */
+/* Design tokens. The --bft-band-*-fg colours mirror BAND_COLOURS in
+ * classes/output/score_gauge.php and amd/src/lib/bands.js, except nodata
+ * (#94a3b8 there); keep them in step when a band changes. */
 :root {
     --bft-surface: #fff;
     --bft-surface-alt: #f7f8fa;
@@ -110,8 +109,8 @@
     font-size: var(--bft-fs-body);
 }
 
-/* Error banner and empty-state utility classes are global (used by the
- * block, the pending report page, the dashboard, and the spike harness). */
+/* Error banner and empty state. Global: also used on the standalone report
+ * and dashboard pages, outside the block wrapper. */
 
 .bft-error {
     background: #fee2e2;
@@ -353,7 +352,7 @@
     font-size: var(--bft-fs-title);
     font-weight: 700;
     color: var(--bft-text);
-    /* Clamp long group names to 2 lines with an ellipsis; full name on hover. */
+    /* Clamp long group names to 2 lines; GroupCard's title attribute shows the full name on hover. */
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -383,8 +382,9 @@
     padding: 0.75rem;
 }
 
-/* Server card (no-JS) uses a native <details>/<summary>: hide the default
- * disclosure marker and show a chevron consistent with the JS card. */
+/* The server-rendered card (responsiveness_card.mustache) uses a native
+ * <details>/<summary>: hide the default disclosure marker and show a chevron
+ * consistent with GroupCard. */
 .block_feedback_tracker summary.bft-card-head {
     list-style: none;
 }
@@ -473,11 +473,9 @@
     cursor: progress;
 }
 
-/* Refresh-button rules are global (no `.block_feedback_tracker` ancestor
- * scope) so the same button styles work in the in-course block, on
- * pages/pending_report.php, on pages/teacher_dashboard.php, and on the
- * pages/spike_react.php harness — none of the standalone pages live
- * inside the block's `.block_feedback_tracker` wrapper. */
+/* Refresh button. Global: also used on pages/pending_report.php,
+ * pages/teacher_dashboard.php and pages/spike_react.php, which sit outside the
+ * block's .block_feedback_tracker wrapper. */
 
 .bft-refresh {
     background: none;
@@ -581,11 +579,10 @@
     line-height: 0;
 }
 
-/* The sparkline has two homes: the in-course block (under .block_feedback_tracker)
- * and the standalone dashboard courses table (under .bft-dashboard). These rules
- * are deliberately UNSCOPED so the geometry + zone colours apply in both — when
- * they were nested under .block_feedback_tracker the dashboard copy rendered the
- * zone <rect> with no fill (black) and the SVG never took the full cell width. */
+/* Unscoped: the sparkline also renders in the dashboard courses table
+ * (.bft-dashboard), outside the block wrapper, where block-scoped rules would
+ * leave the zone <rect> with the default black fill and the SVG narrower than
+ * its cell. */
 .bft-sparkline {
     width: 100%;
     height: 30px;
@@ -687,9 +684,8 @@
     font-size: 0.9rem;
 }
 
-/* Band-badge utility class is global — `<Badge>` renders inside the
- * block, the report table, the dashboard hero, the dashboard courses
- * table, the Grade Now panel, and the timeline modal. */
+/* Band badge. Global: <Badge> also renders on the report, dashboard and
+ * simulator pages, outside the block wrapper. */
 
 .bft-badge {
     display: inline-block;
@@ -753,9 +749,9 @@
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
 }
-/* Drafts had no rule at all, so under Bootstrap 5 a bare .badge sets
-   color:#fff with no background and the label rendered white on white.
-   Reuses the pending tokens, de-emphasised to match how drafts are shown. */
+/* Needs its own rule: under Bootstrap 5 a bare .badge sets color: #fff and no
+   background, so the label renders white on white. Reuses the pending tokens,
+   de-emphasised like .bft-badge-draft. */
 .badge.badge-draft {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
@@ -763,11 +759,10 @@
 }
 
 /* ------------------------------------------------------------------------
- * Teacher dashboard (Phase 2D) — pages/teacher_dashboard.php
+ * Teacher dashboard — pages/teacher_dashboard.php
  *
- * Rules are global (no .block_feedback_tracker prefix) because the
- * dashboard lives at a standalone admin URL, not inside the block's
- * sidebar wrapper.
+ * Global (no .block_feedback_tracker prefix): the dashboard is a standalone
+ * page, outside the block wrapper.
  * ------------------------------------------------------------------------ */
 
 .bft-dashboard {
@@ -776,9 +771,7 @@
     gap: 1.25rem;
     font-family: var(--bft-font-display);
 
-    /* Type-scale + tracking tokens now live in :root (shared with the block).
-     * Lift faint text to WCAG AA: #94a3b8 was ~2.6:1 on white (fail);
-     * #6b7280 is ~4.8:1, a touch lighter than --bft-text-muted. */
+    /* Faint text lifted to WCAG AA: #94a3b8 is 2.6:1 on white, #6b7280 is 4.8:1. */
     --bft-text-faint: #6b7280;
 }
 
@@ -896,7 +889,7 @@
     font-size: 0.85rem;
 }
 
-/* Grade Now panel (Phase 3A). */
+/* Grade Now panel. */
 
 .bft-gradenow-head {
     margin-bottom: 0.5rem;
@@ -966,7 +959,7 @@
 }
 
 /* ------------------------------------------------------------------------
- * Pending grading report page (Phase 2C) — pages/pending_report.php
+ * Pending grading report page — pages/pending_report.php
  * ------------------------------------------------------------------------ */
 
 .bft-report {
@@ -1092,13 +1085,8 @@
 }
 
 /* ------------------------------------------------------------------------
- * Mobile responsive — narrow viewports.
- *
- * Report tables reflow into stacked cards (column captions come from each
- * cell's data-label), matching the dashboard courses table — see the rules
- * below. Hero KPI tiles stack via existing flex-wrap; we just remove the
- * score block's left border when it wraps below the KPI row so it doesn't
- * look orphaned.
+ * Narrow viewports: report tables reflow into cards, and the dashboard hero's
+ * score block drops its left border once it wraps below the KPI row.
  * ------------------------------------------------------------------------ */
 
 @media (max-width: 640px) {
@@ -1197,11 +1185,10 @@
 }
 
 /* ------------------------------------------------------------------------
- * Pause timeline modal (Phase 2C) — components/PauseTimelineModal.js
+ * Pause timeline modal — components/PauseTimelineModal.js
  *
- * Lives inside Moodle's modal chrome (.modal-dialog .modal-body), so these
- * rules are global (not scoped under .block_feedback_tracker) — the body
- * isn't a descendant of the block when rendered into a modal.
+ * Global (not scoped under .block_feedback_tracker): the body renders inside
+ * Moodle's modal (.modal-dialog .modal-body), outside the block.
  * ------------------------------------------------------------------------ */
 
 .bft-modal-loading,
@@ -1314,12 +1301,10 @@ table.bft-sortable th.bft-sort-desc::after {
 }
 
 /* ------------------------------------------------------------------------
- * Phase 3B atoms — block-view recomposition.
+ * Block-view components (GroupCard and its parts).
  *
- * The rules here are global (no .block_feedback_tracker prefix) so the
- * components can be reused from the report and dashboard views in 3D / 3E
- * without restyling. Visual tokens come from the :root block at the top
- * of this file.
+ * Global (no .block_feedback_tracker prefix) so the report and dashboard
+ * views can reuse them. Tokens come from :root at the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* ScoreRing — flex: 0 0 auto so it never shrinks inside a hero row. */
@@ -1399,9 +1384,8 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text-muted);
 }
 
-/* Scheduled-pause notice ("Pausa prevista") — amber "attention" card shared
-   by the in-course block (compact variant), dashboard and report. Carries
-   the bft-rh-tone-regular class for theming alignment with the hero. */
+/* Scheduled-pause notice ("Upcoming pause"): amber attention card shared by
+   the in-course block (compact variant), the dashboard and the report. */
 .bft-scheduled {
     display: flex;
     gap: 0.6rem;
@@ -1487,7 +1471,7 @@ table.bft-sortable th.bft-sort-desc::after {
     font-size: 0.8rem;
 }
 
-/* KpiTile — 3-column grid container styled by GroupCard / report views. */
+/* KpiTile row in GroupCard: three tiles that wrap in a narrow block column. */
 .bft-kpi-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
@@ -1613,7 +1597,7 @@ table.bft-sortable th.bft-sort-desc::after {
     flex: 0 0 auto;
 }
 
-/* StatTile — clickable Pending / At risk / Priority tiles. */
+/* StatTile: the clickable Waiting / Attention / Priority tiles in GroupCard. */
 .bft-stat-row {
     display: flex;
     flex-wrap: wrap;
@@ -1926,8 +1910,9 @@ table.bft-sortable th.bft-sort-desc::after {
     text-decoration: underline;
 }
 
-/* Clickable action chip: links to the group-override editor. Variant colour
- * signals the state — done (teal), override (orange), create (neutral). */
+/* Activity action chip, a link to the group-override editor when the viewer
+ * can edit it. Colour signals the state: done (teal), override (orange),
+ * create (neutral). */
 .bft-activity-action {
     flex: none;
     font-size: 0.55rem;
@@ -1961,8 +1946,8 @@ a.bft-activity-action:focus {
     border: 1px solid var(--bft-border);
 }
 
-/* Static, non-editable badge: "Sem regra" (no manage capability + no schedule).
- * Same look as the old rule_off chip, but as a non-interactive span. */
+/* "No rule" chip: the viewer cannot manage the activity and it has no
+ * schedule. Rendered as a plain span, not a link. */
 .bft-activity-action-norule {
     color: var(--bft-text-muted);
     background: var(--bft-surface-dim);
@@ -1970,11 +1955,10 @@ a.bft-activity-action:focus {
 }
 
 /* ------------------------------------------------------------------------
- * Phase 3D — pending report page atoms.
+ * Pending report page components — pages/pending_report.php
  *
- * Rules are global (no .block_feedback_tracker scope) so they apply on
- * pages/pending_report.php which sits outside the block wrapper. Tokens
- * come from the :root block at the top of this file.
+ * Global (no .block_feedback_tracker scope): the page sits outside the block
+ * wrapper. Tokens come from :root at the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* Breadcrumb above the title. */
@@ -2375,7 +2359,7 @@ a.bft-activity-action:focus {
     text-overflow: ellipsis;
 }
 
-/* Segmented filter — used by the status toolbar. */
+/* Segmented filter (components/SegmentedFilter.js). */
 .bft-segmented {
     display: inline-flex;
     background: var(--bft-surface-dim);
@@ -2414,8 +2398,8 @@ a.bft-activity-action:focus {
     background: var(--bft-band-critical-fg);
 }
 
-/* Report controls (toolbar) — keep existing widths, just tweak alignment.
-   The existing .bft-report-controls flexbox layout is reused. */
+/* Spacer that pushes the controls after it to the end of the
+   .bft-report-controls row. */
 .bft-report-controls-spacer {
     flex: 1;
 }
@@ -2628,10 +2612,11 @@ a.bft-activity-action:focus {
 }
 
 /* ----------------------------------------------------------------------
- * Phase 3E — dashboard redesign atoms.
+ * Dashboard components: header, responsiveness hero, insight and priority
+ * cards, courses table.
  *
- * Decorative palette extensions for the warm hero gradient + insight
- * card tones. Plum / sand are new tokens scoped to the dashboard.
+ * Plum and sand extend the palette for the warm hero gradient and the
+ * insight-card tones.
  * ---------------------------------------------------------------------- */
 
 :root {
@@ -2642,9 +2627,8 @@ a.bft-activity-action:focus {
     --bft-sand-bg: #fbf6ec;
 }
 
-/* Override the legacy Phase 2D dashboard hero block with a no-op so the
-   new flex-based header takes over. The class name persists to keep the
-   .min.js mount-point selector valid. */
+/* Repeats the .bft-dashboard rule in the teacher-dashboard section above and
+   adds the page padding. */
 .bft-dashboard {
     display: flex;
     flex-direction: column;
@@ -2707,10 +2691,9 @@ a.bft-activity-action:focus {
     color: var(--bft-text-muted);
 }
 
-/* v1.0.11 — most-recent named optional event from the academic calendar.
-   Sits in the subline alongside the business-chip. Uses the plum tone
-   from the design's "warm" accents so the event reads as celebratory
-   rather than alarmist. */
+/* Most recent named optional event from the academic calendar, beside the
+   business-hours chip in the subline. Plum, so the event reads as
+   celebratory rather than alarmist. */
 .bft-dashboard-event-chip {
     color: var(--bft-text);
     background: var(--bft-plum-bg, #f5f0fb);
@@ -2846,8 +2829,8 @@ a.bft-activity-action:focus {
     color: var(--bft-plum-fg);
     letter-spacing: var(--bft-ls-eyebrow);
     text-transform: uppercase;
-    /* Clear the floating collapse button (top:16px right:18px) — the copy
-     * column now spans to the panel's right edge in the 2-column layout. */
+    /* Clears the floating collapse button (top: 16px, right: 18px), which
+     * overlaps the copy column in the two-column layout. */
     padding-right: 5rem;
 }
 
@@ -2866,9 +2849,8 @@ a.bft-activity-action:focus {
     max-width: 540px;
 }
 
-/* Mini stats now live at the foot of the copy column, laid out as a
- * horizontal row (mirrors the slim hero), separated from the body text by a
- * dashed top rule. Wraps on narrow screens (see the 1024px breakpoint). */
+/* Mini stats: a horizontal row at the foot of the copy column, like the slim
+ * hero's stats. Wraps on narrow screens (see the 1024px breakpoint). */
 .bft-rh-mini-col {
     display: flex;
     flex-direction: row;
@@ -3757,8 +3739,8 @@ a.bft-activity-action:focus {
 }
 
 /* ====================================================================
- * MVP3 report redesign — hero chips, distribution mode toggle,
- * last-30-academic-days heatmap, and the table action column.
+ * Pending report: hero chips, distribution mode toggle, last-30-academic-days
+ * heatmap and the table action column.
  * ==================================================================== */
 
 /* Optional chips in the reused dashboard hero (SLA %, at-risk, critical). */
@@ -3805,7 +3787,7 @@ a.bft-activity-action:focus {
     color: var(--bft-band-pending-fg);
 }
 
-/* Distribution bar — "Já avaliados" / "Pendentes" mode toggle. */
+/* Distribution bar: the button that switches between the pending and graded views. */
 .bft-dist-modebtn {
     display: inline-flex;
     align-items: center;
@@ -3950,7 +3932,7 @@ a.bft-activity-action:focus {
     color: var(--bft-text-faint);
 }
 
-/* Report table — action column (Grade / Review + pause timeline). */
+/* Report table action column: the Grade / Review link. */
 .bft-report-col-action {
     text-align: right;
     white-space: nowrap;
@@ -3976,14 +3958,12 @@ a.bft-activity-action:focus {
     opacity: 0.9;
 }
 
-/* Bulk block-removal tool. The collapsed rows are present in the DOM from the
- * first render so a tick survives every reveal — refetching would silently
- * discard a selection an administrator had already made. */
-/* Scoped under .bft-bulk so these beat Bootstrap's own single-class rules on
- * the same elements — .btn sets display: inline-block at equal specificity, so
- * an unscoped .bft-hidden loses on source order and the control stays visible
- * while the JS believes it hid it. !important is not available: the fleet
- * gate runs stylelint with declaration-no-important. */
+/* Bulk block-removal tool. Collapsed rows are in the DOM from the first render,
+ * so a ticked checkbox survives every reveal; refetching would drop it. */
+/* Scoped under .bft-bulk to beat Bootstrap's single-class rules on the same
+ * elements: .btn sets display: inline-block at equal specificity and the theme
+ * CSS loads after plugin CSS, so an unscoped .bft-hidden would lose on source
+ * order. Moodle's stylelint config forbids !important. */
 .bft-bulk .bft-bulk-row-collapsed {
     display: none;
 }

@@ -18,13 +18,14 @@
  * activity's open and close timestamps as a coloured progress bar with
  * dates flanking the track.
  *
- * Three phases drive the colour and the thumb position:
- *   - before  (now <= open):   teal track, thumb pinned at the left.
- *   - running (open < now < close): orange track, thumb at the elapsed %.
- *   - closed  (now >= close):   dark-orange track, thumb pinned at the end.
+ * Three phases set the track colour (styles.css) and the thumb position:
+ *   - before  (now <= open):   thumb pinned at the left.
+ *   - running (open < now < close): thumb at the elapsed %.
+ *   - closed  (now >= close):   thumb pinned at the end, close date flagged.
  *
- * Renders an "EMPTY" pill when the activity has no open/close rule rather
- * than guessing — a "no rule" assignment is information, not an error.
+ * Renders the `norulelabel` pill when the activity has no usable open/close
+ * pair rather than guessing — a "no rule" assignment is information, not an
+ * error.
  *
  * @module    block_feedback_tracker/components/TimelineBar
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -34,7 +35,7 @@
 import {html} from 'block_feedback_tracker/lib/preact';
 
 /**
- * Format a unix-seconds timestamp as DD/MM.
+ * Format a unix-seconds timestamp as DD/MM in the browser's timezone.
  *
  * @param {number} ts
  * @returns {string}
@@ -47,8 +48,8 @@ const fmtDay = (ts) => {
 };
 
 /**
- * Pick the calendar phase: teal before the open date, orange while running,
- * dark-orange once the close date is reached or passed.
+ * Pick the calendar phase: before the open date, running, or closed once the
+ * close date is reached or passed.
  *
  * @param {number} opens
  * @param {number} closes

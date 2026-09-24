@@ -14,11 +14,8 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Responsiveness-band → colour and CSS-class lookups.
- *
- * Mirrors the PHP constants in
- * classes/output/score_gauge.php::BAND_COLOURS — keep them in lockstep when
- * a band is added or renamed.
+ * Responsiveness-band → colour and CSS-class lookups, and the client-side
+ * score → band classifier.
  *
  * @module    block_feedback_tracker/lib/bands
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -27,7 +24,8 @@
 
 /**
  * Band slug → primary stroke / chip colour. Mirrors
- * classes/output/score_gauge.php::BAND_COLOURS.
+ * classes/output/score_gauge.php::BAND_COLOURS; keep both in step when a band
+ * is added or recoloured (tests/lockstep/js_php_lockstep_test.php fails on drift).
  *
  * @type {Object<string, string>}
  */
@@ -60,8 +58,8 @@ export const colourFor = (band) => BAND_COLOURS[band] || BAND_COLOURS.pending;
 export const badgeClass = (band) => 'bft-badge-' + (BAND_COLOURS[band] ? band : 'pending');
 
 /**
- * Default score-band cutoffs. Match the design palette and PHP
- * responsiveness_calculator::parse_thresholds_band().
+ * Default score-band cutoffs. Must equal the fallback in
+ * responsiveness_calculator::parse_thresholds_band() (pinned by the lockstep test).
  *
  * @type {{excellent: number, good: number, regular: number}}
  */
@@ -72,13 +70,11 @@ export const DEFAULT_SCORE_THRESHOLDS = {
 };
 
 /**
- * Classify a 0..100 responsiveness score into a band slug. The cutoffs
- * normally come from the server via the bootstrap config payload
- * (`config.score_thresholds`); when no cutoffs are supplied we fall back
- * to the design defaults. The block + report pages receive band labels
- * straight from the server payload, so this client-side helper only
- * matters for client-derived aggregates (e.g. the overall-banner score
- * averaged across groups).
+ * Classify a 0..100 responsiveness score into a band slug. Pass the bootstrap
+ * bundle's `config.score_thresholds`; missing cutoffs fall back to
+ * DEFAULT_SCORE_THRESHOLDS. Server payloads already carry their band, so this
+ * serves client-derived scores (averages across groups, the simulator) and
+ * rows that arrive without a band.
  *
  * @param {number|null|undefined} score
  * @param {{excellent?: number, good?: number, regular?: number}} [thresholds]

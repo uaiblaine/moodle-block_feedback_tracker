@@ -39,8 +39,9 @@ use core_external\external_value;
  * SLA bucket / pending band, and a free-text name search, sorted by any
  * column. Returns student names, activity names, group, submission timestamp,
  * current effective/wall-clock waits, plus the pending-band distribution
- * counts for the whole filtered set. Delegates the query to
- * {@see submission_browser}.
+ * counts for the whole filtered set. With status 'draft' it lists saved but
+ * unsubmitted work instead, which never counts toward the SLA. Delegates the
+ * query to {@see submission_browser}.
  */
 class get_pending_submissions extends external_api {
     /** Default page size. */
@@ -204,10 +205,10 @@ class get_pending_submissions extends external_api {
             'submissionid'   => new external_value(PARAM_INT, ''),
             'cmid'           => new external_value(PARAM_INT, ''),
             'userid'         => new external_value(PARAM_INT, ''),
-            'studentname'    => new external_value(PARAM_TEXT, ''),
-            'activityname'   => new external_value(PARAM_TEXT, ''),
+            'studentname'    => new external_value(PARAM_TEXT, 'Student full name as plain text, not HTML-escaped'),
+            'activityname'   => new external_value(PARAM_TEXT, 'Activity name as plain text, not HTML-escaped'),
             'groupid'        => new external_value(PARAM_INT, ''),
-            'groupname'      => new external_value(PARAM_TEXT, ''),
+            'groupname'      => new external_value(PARAM_TEXT, 'Group name as plain text, not HTML-escaped; empty when ungrouped'),
             'timesubmitted'  => new external_value(PARAM_INT, ''),
             'timegraded'     => new external_value(PARAM_INT, '0 while pending'),
             'waitinghours'   => new external_value(PARAM_FLOAT, ''),

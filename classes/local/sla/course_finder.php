@@ -29,17 +29,15 @@ namespace block_feedback_tracker\local\sla;
 /**
  * The candidate list behind the bulk block-removal tool.
  *
- * Deliberately does NOT go through {@see course_access::is_processable()}.
- * That method excludes hidden courses, and a hidden course is exactly what an
- * archived one looks like — so the tool would be blind to the very courses it
- * exists to clear.
+ * Deliberately does not go through {@see course_access::is_processable()}:
+ * that method excludes hidden courses, and archived courses are usually
+ * hidden, so the tool would be blind to the courses it exists to clear.
  *
- * Every filter is optional and they combine with AND. `enddate` is the natural
- * way to ask "which courses are over", but it is optional in Moodle and is
- * frequently 0, especially on older courses — which is why "started before"
- * and "has no end date" are separate, combinable questions rather than a
- * silent fallback. A tool that quietly reinterpreted one as the other would
- * either miss most of an old archive or sweep in courses still running.
+ * Every filter is optional. The three date filters are OR-ed with each other
+ * and the result AND-ed with the rest. `enddate` is optional in Moodle and
+ * often 0 on older courses, so "started before" and "has no end date" are
+ * explicit filters rather than a silent fallback for a missing end date,
+ * which would either miss most of an old archive or sweep in running courses.
  */
 final class course_finder {
     /** Rows revealed at a time by the "load more" control. */
@@ -49,9 +47,8 @@ final class course_finder {
      * Hard ceiling on one selection.
      *
      * Four pages' worth. Past this the tool asks for a narrower filter rather
-     * than paginating: with paging, "select all" acquires two meanings — this
-     * page, or every match — and the difference between them is a few hundred
-     * courses cleared by accident. A ceiling has one meaning.
+     * than paginating: with pages, "select all" could mean this page or every
+     * match; with a ceiling it has one meaning.
      */
     public const MAX_RESULTS = 100;
 
@@ -66,8 +63,10 @@ final class course_finder {
      *  - `hiddenonly`    (bool) only courses hidden from students
      *
      * @param array $filters See the description for the recognised keys.
-     * @return array Rows of id, fullname, shortname, visible, startdate,
-     *               enddate, categoryname and ledgerrows, keyed by course id.
+     * @return array Rows of id, fullname, shortname, category, visible,
+     *               startdate, enddate, categoryname and ledgerrows, keyed by
+     *               course id. Names are stored values, not yet formatted
+     *               ({@see \block_feedback_tracker\local\output\bulk_remove_rows}).
      */
     public static function candidates(array $filters): array {
         global $DB;
@@ -80,7 +79,7 @@ final class course_finder {
         /* The ledger count is what makes the confirmation informed: an
          * administrator should see how much measured history each course would
          * eventually lose, not just how many courses they ticked. */
-        $sql = "SELECT c.id, c.fullname, c.shortname, c.visible, c.startdate, c.enddate,
+        $sql = "SELECT c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate,
                        cat.name AS categoryname,
                        (SELECT COUNT(1)
                           FROM {block_feedback_tracker_sub} l
@@ -91,7 +90,7 @@ final class course_finder {
                   JOIN {block_instances} bi ON bi.parentcontextid = ctx.id
                                            AND bi.blockname = :blockname
                  WHERE $wheresql
-              GROUP BY c.id, c.fullname, c.shortname, c.visible, c.startdate, c.enddate, cat.name
+              GROUP BY c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate, cat.name
               ORDER BY c.fullname ASC";
 
         return $DB->get_records_sql($sql, $params, 0, self::MAX_RESULTS);
@@ -101,8 +100,7 @@ final class course_finder {
      * How many courses match, ignoring the ceiling.
      *
      * Reported beside the visible rows so an administrator can tell a complete
-     * selection from a truncated one. Without it, a filter matching 340
-     * courses and a filter matching 100 look identical on screen.
+     * selection from one truncated at {@see self::MAX_RESULTS}.
      *
      * @param array $filters Same keys as {@see self::candidates()}.
      * @return int
@@ -127,9 +125,7 @@ final class course_finder {
     /**
      * Build the shared WHERE clause and its parameters.
      *
-     * One implementation so the list and its total can never disagree — a
-     * counter reading 340 beside a list built from a different predicate is
-     * worse than no counter at all.
+     * Shared by the list and its total so the two can never disagree.
      *
      * @param array $filters Same keys as {@see self::candidates()}.
      * @return array{0:string|null, 1:array} Null clause when the filter can
@@ -145,9 +141,8 @@ final class course_finder {
         $startedbefore = (int) ($filters['startedbefore'] ?? 0);
         $noenddate = !empty($filters['noenddate']);
 
-        /* The three date questions are OR-ed with each other and AND-ed with
-         * everything else: an administrator asking for "ended before July, or
-         * never had an end date" means one set of courses, not two searches. */
+        /* The date filters are OR-ed: "ended before July, or never had an end
+         * date" is one set of courses, not two searches. */
         $dateclauses = [];
         if ($endedbefore > 0) {
             $dateclauses[] = '(c.enddate > 0 AND c.enddate < :endedbefore)';
@@ -186,11 +181,10 @@ final class course_finder {
     /**
      * A predicate matching one category and every descendant of it.
      *
-     * `{course_categories}.path` looks like `/1/3/17`. The obvious
-     * `LIKE '%/3/%'` is wrong twice over: it matches `/1/30/…` because 3 is a
-     * prefix of 30, and it matches a category that merely has 3 somewhere in
-     * its ancestry rather than under the one asked for. Anchoring on the
-     * target's own full path and requiring a trailing slash fixes both.
+     * `{course_categories}.path` looks like `/1/3/17`. Descendants are matched
+     * on the target's full path plus a trailing slash (`/1/3/%`); without the
+     * slash `/1/3%` would also match `/1/30`. The target's own path has no
+     * trailing slash, hence the separate id test.
      *
      * @param int $categoryid
      * @return array{0:string|null, 1:array} Clause and params; clause null when

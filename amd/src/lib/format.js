@@ -17,7 +17,7 @@
  * Number / hours / date formatters shared by every component.
  *
  * These mirror the PHP-side rendering choices in classes/output/responsiveness_card.php:
- *   median_eff_h          → "12.3 h"
+ *   cur_median_eff_h      → "12.3 h"
  *   compliance_pct        → "78%"
  *   trend_pct_30d         → "▲ 5%" / "▼ 12%" / "→ 0%"
  *
@@ -53,9 +53,9 @@ export const formatNumber = (value, digits = 0) => {
 let groupingSeparator = ',';
 
 /**
- * Set the thousands separator used by formatCount. Each entrypoint calls this
- * once at mount from initial.config.thousandssep so the JS surfaces group
- * counts exactly like the PHP server card does
+ * Set the thousands separator used by formatCount. The block, dashboard and
+ * report entrypoints call this once at mount from initial.config.thousandssep
+ * so the JS surfaces group counts exactly like the PHP server card does
  * (\block_feedback_tracker\local\output\numfmt::count). A non-string or empty
  * value is ignored, keeping the current separator.
  *
@@ -70,9 +70,8 @@ export const setGroupingSeparator = (sep) => {
 
 /**
  * Format an integer submission count with the active language's thousands
- * separator, e.g. 1232123 → "1,232,123". Null / undefined / NaN coerce to 0
- * (matching the bare `Number(x) || 0` the count surfaces used before), so a
- * missing count renders "0" rather than the em-dash.
+ * separator, e.g. 1232123 → "1,232,123". Null / undefined / NaN coerce to 0,
+ * so a missing count renders "0" rather than the em-dash.
  *
  * @param {number|string|null|undefined} value  The count to format.
  * @returns {string}
@@ -142,8 +141,9 @@ export const formatPercent = (value, digits = 0) => {
  * Trend value rendered on the speed model with a directional arrow. The
  * value is the change in median effective hours; fewer hours (negative) means
  * faster turnaround, shown as ▲, while more hours (positive) is slower (▼).
- * Magnitude is unsigned. See lib/trend.js for the shared classification used
- * by the live components.
+ * Magnitude is unsigned. Only exactly 0 reads as →, like the server card;
+ * the live components use lib/trend.js classifySpeed, which treats |value| < 2
+ * as stable.
  *
  * @param {number|null|undefined} value Percentage delta (negative = faster, positive = slower).
  * @param {number} digits

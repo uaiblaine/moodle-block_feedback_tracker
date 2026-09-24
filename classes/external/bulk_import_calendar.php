@@ -36,10 +36,13 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Parse pasted CSV text and upsert calendar days in one transaction.
- * Per-line errors are returned (line number + raw + reason); valid rows
- * are saved. Fires one `cal_day_updated` event on success so the calendar
- * observer bumps calver and enqueues every rollup tuple for recompute.
+ * Parse pasted CSV text and upsert calendar days.
+ *
+ * Rows are saved one by one with no enclosing transaction: valid rows are
+ * kept and each invalid line comes back in `errors` (line number, raw text,
+ * reason). When at least one row was saved, one `cal_day_updated` event fires
+ * so the calendar observer bumps calver and enqueues every rollup tuple.
+ * {@see \block_feedback_tracker\local\calendar\csv_importer::import()}
  */
 class bulk_import_calendar extends external_api {
     /**

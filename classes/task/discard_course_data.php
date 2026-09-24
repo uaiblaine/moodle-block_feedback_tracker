@@ -34,23 +34,19 @@ use block_feedback_tracker\local\sla\submission_ledger;
  * Runs once, no earlier than the grace period after the block was removed from
  * a course, and discards that course's measured history.
  *
- * The delay exists so an accidental removal is recoverable. The **run-time
- * re-check** is what makes the delay meaningful: by the time this executes,
- * the reason it was queued may no longer hold, and several perfectly ordinary
- * administrative actions remove and then restore the block within seconds.
+ * The delay makes an accidental removal recoverable, and the run-time re-check
+ * is what makes the delay work: ordinary operations remove the block and put
+ * it back within seconds. Restoring or importing into an existing course with
+ * "delete the current contents" runs `remove_course_contents()`, which calls
+ * `blocks_delete_all_for_context()` on the course context, and the restore
+ * then recreates the block. Without the re-check such a restore would destroy
+ * the course's history when this task ran, with nothing in any log connecting
+ * the two.
  *
- * Course restore into an existing course with "delete the current contents"
- * runs `remove_course_contents()`, which calls `blocks_delete_all_for_context()`
- * on the course context and takes this block with it — then the restore puts
- * the block back. So does importing from another course, and so does a course
- * copy. Without the re-check, a routine restore would quietly destroy a year
- * of measurement a week later, with nothing in any log connecting the two.
- *
- * The check deliberately does NOT use {@see course_access::is_processable()}.
- * That method also requires the course to be visible, so hiding a course —
- * which is exactly what happens to a course being archived — would read as
- * "the block is gone" and trigger the deletion. Block presence is asked
- * directly.
+ * Block presence is asked directly, not through
+ * {@see course_access::is_processable()}: that method also requires the course
+ * to be visible, so hiding a course, as archiving does, would read as "the
+ * block is gone" and trigger the deletion.
  */
 class discard_course_data extends \core\task\adhoc_task {
     /**

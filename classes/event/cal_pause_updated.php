@@ -27,9 +27,12 @@ declare(strict_types=1);
 namespace block_feedback_tracker\event;
 
 /**
- * Fired by the calendar editor when a row in {block_feedback_tracker_cpause}
- * is created, updated, or deleted. The `other` payload carries scopelevel +
- * scopeid + time window so the observer can target re-enqueue precisely.
+ * Fired by save_pause_window and delete_pause_window when a row in
+ * {block_feedback_tracker_cpause} is created, updated or deleted.
+ *
+ * `other` carries 'scopelevel' and 'scopeid', which the observer uses to
+ * re-enqueue only that scope, plus 'rowid' and, on delete, 'deleted' => true.
+ * {@see \block_feedback_tracker\local\calendar\observer::pause_updated()}
  */
 class cal_pause_updated extends \core\event\base {
     /**
@@ -40,8 +43,8 @@ class cal_pause_updated extends \core\event\base {
     protected function init(): void {
         $this->data['crud'] = 'u';
         $this->data['edulevel'] = self::LEVEL_OTHER;
-        // No 'objecttable' — single-row save/delete callers still pass
-        // 'objectid', but it's no longer mandatory at validate time.
+        // No 'objecttable': the row id travels in other['rowid'] instead, and
+        // Moodle requires 'objectid' and 'objecttable' together or not at all.
     }
 
     /**

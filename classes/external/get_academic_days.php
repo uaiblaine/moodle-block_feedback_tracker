@@ -41,10 +41,11 @@ use core_external\external_value;
 
 /**
  * Returns the last 30 calendar days for a course (optionally one group), each
- * classified as paused (with its bucketed reason) or academic (coloured by
- * that day's responsiveness band, derived from the per-day median effective
- * hours in the trend table). Powers the report page's "last 30 academic days"
- * heatmap, loaded asynchronously after first paint.
+ * classified as paused (with its bucketed reason) or academic, coloured by that
+ * day's responsiveness band: from the per-day median effective hours in the
+ * trend table, or from the median elapsed business days of that day's grading
+ * when the display unit is business days. Powers the report page's
+ * "last 30 academic days" heatmap, loaded asynchronously after first paint.
  */
 class get_academic_days extends external_api {
     /** Window length in days. */
@@ -227,10 +228,10 @@ class get_academic_days extends external_api {
 
     /**
      * Per-day median elapsed business days (date-based) of the submissions
-     * graded each day in the window — the heatmap tooltip figure when the
-     * display unit is business days. Read-time companion to day_medians():
-     * the window's graded rows are fetched once and day-counted via the
-     * memoised calendar resolver, so the cost is bounded by the 30-day set.
+     * graded each day in the window: the heatmap's band and tooltip figure when
+     * the display unit is business days. Read-time companion to day_medians():
+     * only rows graded inside the window are fetched, and day counting goes
+     * through day_rule_resolver's cached per-day classification.
      *
      * @param int $courseid Course id.
      * @param int $groupid 0 = aggregate over visible groups.
@@ -332,7 +333,7 @@ class get_academic_days extends external_api {
                 'date'      => new external_value(PARAM_INT, 'YYYYMMDD'),
                 'starttime' => new external_value(PARAM_INT, 'Minutes since midnight'),
                 'endtime'   => new external_value(PARAM_INT, 'Minutes since midnight'),
-                'label'     => new external_value(PARAM_TEXT, ''),
+                'label'     => new external_value(PARAM_TEXT, 'Event note as plain text: tags stripped, not HTML-escaped'),
             ])),
             'lastsynced' => new external_value(PARAM_INT, ''),
         ]);

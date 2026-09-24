@@ -32,29 +32,27 @@ use block_feedback_tracker\local\calendar\day_counter;
 /**
  * One-time, resumable backfill of {block_feedback_tracker_sub}.effectivedays.
  *
- * The column lands NULL on every pre-existing ledger row when db/upgrade.php
- * adds it (v1.0.31). The v1.0.32 upgrade step "arms" this task by setting
- * `effectivedays_backfill_done = 0`; it then fills the column in the
- * background instead of in-line during the upgrade, which previously did one
- * UPDATE per ledger row and made large-site upgrades pathologically slow.
+ * The upgrade step that adds the column leaves it NULL on existing ledger
+ * rows; a later step arms this task by setting
+ * `effectivedays_backfill_done = 0`, so the column is filled in the
+ * background rather than by one UPDATE per row inside the upgrade, which is
+ * slow on large sites.
  *
  * Each tick:
  *  - keyset-pages past `effectivedays_backfill_lastid` for rows still missing
- *    the column (PK range scan, so already-filled low ids aren't re-read),
- *  - computes the elapsed business days per row under a soft time cap,
- *  - groups ids by computed value and applies one `UPDATE ... WHERE id IN`
- *    per distinct value inside a single transaction (set-based, not row-by-
- *    row), then advances the cursor.
+ *    the value (a primary-key range scan, so filled low ids are not re-read),
+ *  - computes each row's elapsed business days under a soft time cap,
+ *  - applies one `UPDATE ... WHERE id IN` per distinct value inside a single
+ *    transaction, then advances the cursor.
  *
- * When a tick finds no more rows past its cursor it flips the done flag and
- * every later tick is a single get_config no-op. Fresh installs never arm the
- * flag (install.xml already ships the column populated), so the task is inert
- * there.
+ * When a tick finds no row past its cursor it sets the done flag, and every
+ * later tick is a single get_config() no-op. A fresh install never arms the
+ * flag (the ledger writer fills the column from the first row), so the task
+ * is inert there.
  *
- * The dashboard day-ruler columns do NOT depend on this backfill: the rollup
- * recomputes day counts from timestamps on demand, and the v1.0.31 step
- * already re-enqueued every tuple. This task only restores the per-row column
- * invariant ("maintained wherever effectivehours is").
+ * Dashboard day counts do not depend on this backfill: the rollup computes
+ * them from timestamps. This task only restores the per-row column, which the
+ * ledger otherwise maintains wherever it writes effectivehours.
  */
 class backfill_effectivedays extends \core\task\scheduled_task {
     /** Default rows fetched per tick. */

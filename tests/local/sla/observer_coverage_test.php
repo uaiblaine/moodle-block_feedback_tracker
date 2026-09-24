@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Event coverage added for mod_assign lifecycle actions.
+ * Tests for the observers of mod_assign subplugin, workflow, allocation and blind-marking events.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -29,10 +29,9 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\local\calendar\academic_time;
 
 /**
- * Covers the observers registered for the mod_assign actions the plugin used
- * to miss entirely: subplugin submission edits (whose event carries the
+ * Covers the observers for subplugin submission edits (whose event carries the
  * subplugin row id, not the submission id), marking-workflow release, marker
- * allocation and blind-marking reveal.
+ * allocation and the blind-marking identity reveal.
  *
  * @covers \block_feedback_tracker\local\sla\observer
  * @covers \block_feedback_tracker\local\sla\submission_ledger
@@ -51,8 +50,8 @@ final class observer_coverage_test extends \advanced_testcase {
 
     /**
      * The assignsubmission_* events override objecttable, so their objectid is
-     * the subplugin row id. Reading it against {assign_submission} looks up one
-     * table's id in another; the real id is in other['submissionid'].
+     * the subplugin row id; the submission id is in other['submissionid'].
+     * See observer::submission_changed().
      *
      * @return void
      */
@@ -69,9 +68,8 @@ final class observer_coverage_test extends \advanced_testcase {
             'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
         ]);
 
-        /* An objectid that deliberately does NOT match the submission row, as
-         * the real subplugin events guarantee: the id space is the
-         * assignsubmission_onlinetext table's, not assign_submission's. */
+        /* An objectid that does not match the submission row, as with the real
+         * events: it is an {assignsubmission_onlinetext} id. */
         $event = \assignsubmission_onlinetext\event\submission_created::create([
             'context' => $context,
             'courseid' => $cm->course,
@@ -85,8 +83,8 @@ final class observer_coverage_test extends \advanced_testcase {
                 'onlinetextwordcount' => 12,
             ],
         ]);
-        /* assignfeedback_editpdf observes this event and calls get_assign() on
-         * it; core's own trigger sites always seed the object first. */
+        /* assignfeedback_editpdf observes the parent mod_assign event and calls
+         * get_assign() on it; core's own trigger sites always set it first. */
         $event->set_assign($this->assign_object($cm, $context));
         $event->trigger();
 
@@ -97,9 +95,10 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * A student editing an already-submitted piece of work fires only the
-     * subplugin *_updated event when submissiondrafts is on. Without that
-     * registration the ledger never learns the work moved.
+     * With submissiondrafts on, saving changes to a draft fires only the
+     * subplugin *_updated event (assign::save_submission() triggers
+     * assessable_submitted only when drafts are off), so that event is the
+     * ledger's only signal that the draft changed.
      *
      * @return void
      */
@@ -138,9 +137,9 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Releasing a marking-workflow grade is the moment the feedback reaches
-     * the student. Core stores no timestamp for it, so the observed instant is
-     * the only record there will ever be.
+     * Releasing a marking-workflow grade is when the feedback reaches the
+     * student. mod_assign stores no release timestamp, so the ledger takes the
+     * instant from the event. See observer::workflow_state_changed().
      *
      * @return void
      */
@@ -184,9 +183,8 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Allocating a marker records when marking responsibility landed — a fact
-     * mod_assign keeps no column for, so it is unrecoverable if not captured
-     * as it happens.
+     * Allocating a marker records when marking responsibility landed, which
+     * mod_assign keeps no column for, so it can only be captured from the event.
      *
      * @return void
      */
@@ -229,9 +227,9 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Blind marking suppresses submission_graded outright, so every grading on
-     * the activity is invisible until identities are revealed. That event must
-     * re-derive the activity rather than leaving it permanently pending.
+     * Unless markinganonymous is set, blind marking suppresses submission_graded,
+     * so every grading stays invisible until identities are revealed; that event
+     * must re-derive the activity. See observer::identities_revealed().
      *
      * @return void
      */

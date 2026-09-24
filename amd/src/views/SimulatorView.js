@@ -14,11 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Interactive Academic Responsiveness Score simulator. A sandbox where a
- * site admin moves sliders for a hypothetical group (and the five score
- * weights) and watches the score + band + term breakdown update live — so
- * they can tune the weights and build intuition before touching the real
- * settings. Pure client-side: nothing is saved.
+ * Interactive Academic Responsiveness Score simulator. A sandbox where the
+ * user moves sliders for a hypothetical group (and the five score weights)
+ * and watches the score + band + term breakdown update live, to tune the
+ * weights and build intuition before touching the real settings. Pure
+ * client-side: nothing is saved. Access rules live in pages/score_simulator.php.
  *
  * @module    block_feedback_tracker/views/SimulatorView
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -85,6 +85,8 @@ const Slider = ({label, value, min, max, step, unit, disabled, onInput, valuenod
 `;
 
 /**
+ * Top-level simulator view.
+ *
  * @param {object} props
  * @param {object} props.initial  Mount payload: {config, i18n}.
  * @returns {object} vnode

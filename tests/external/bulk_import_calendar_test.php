@@ -43,10 +43,9 @@ final class bulk_import_calendar_test extends \advanced_testcase {
         $this->resetAfterTest();
         $this->setAdminUser();
 
-        // A line containing only "; " parses as two empty fields, which is
-        // a malformed row (NOT a separator-only line) — so it counts as a
-        // 4th error. Comment lines starting with "#" are skipped, as are
-        // truly-empty lines.
+        // The ";" line splits into two empty fields and is reported as a
+        // malformed row, not skipped; only empty lines and lines starting
+        // with "#" are skipped.
         $csv = <<<CSV
 2026-04-03, holiday, Good Friday
 2026-04-06, holiday, Easter Monday

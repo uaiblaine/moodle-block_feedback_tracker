@@ -27,13 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\audit;
 
 /**
- * Wraps {block_feedback_tracker_log}. Used to record bulk recomputes, large
- * calendar edits, and admin resets so they can be explained later.
+ * Wraps {block_feedback_tracker_log}, the audit trail of bulk recomputes,
+ * queue drains, reconciliation ticks, block removals and data resets, so they
+ * can be explained later.
  *
  * Rows are pruned daily after 90 days by the `prune_audit_log` task.
  */
 class recompute_log {
-    /** Reason: admin reset. */
+    /** Reason: admin data reset, or a settings save that re-queued every rollup. */
     public const REASON_MANUAL_RESET = 'manual_reset';
     /** Reason: a calendar day was saved. */
     public const REASON_CALENDAR_SAVE = 'calendar_save';
@@ -105,7 +106,7 @@ class recompute_log {
     /**
      * Delete rows older than a cutoff timestamp; returns the count removed.
      *
-     * @param int $cutoffts
+     * @param int $cutoffts Unix timestamp; rows whose timestarted is earlier are deleted.
      * @return int
      */
     public static function prune_older_than(int $cutoffts): int {

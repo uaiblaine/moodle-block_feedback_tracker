@@ -17,11 +17,10 @@
 /**
  * Behat page-name resolvers for block_feedback_tracker.
  *
- * Behat's "I am on the ... page" steps consult resolvers on per-component
- * classes. Without this class, scenarios that say
- * `I am on the "block_feedback_tracker > Teacher dashboard" page` fail with
- * "Step definition not found" — there's no built-in resolver for our
- * plugin-owned pages.
+ * Core's "I am on the ... page" steps resolve a "block_feedback_tracker > <name>"
+ * page through this class (behat_navigation::resolve_page_helper() and
+ * resolve_page_instance_helper()), so every plugin page a scenario opens that
+ * way needs a case here.
  *
  * @package    block_feedback_tracker
  * @category   test

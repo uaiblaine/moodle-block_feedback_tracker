@@ -28,11 +28,10 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\score;
 
 /**
- * Builds the "how does this group compare" benchmark. Two things carry real
- * consequence: a group is excluded from its own comparison, and the benchmark
- * is suppressed entirely below a minimum sample — otherwise a teacher is being
- * compared against themselves, or against one other group presented as a
- * department norm.
+ * Pins the "how does this group compare" benchmark. A group is excluded from
+ * its own comparison, and the benchmark is withheld below peer_stats::MIN_SAMPLE;
+ * otherwise a teacher is compared against themselves, or against one other
+ * group presented as a department norm.
  *
  * @covers \block_feedback_tracker\local\score\peer_stats
  */

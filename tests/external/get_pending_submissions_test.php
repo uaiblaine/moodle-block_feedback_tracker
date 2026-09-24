@@ -219,6 +219,100 @@ final class get_pending_submissions_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(90.0, $desc['submissions'][0]['effectivehours'], 0.01);
     }
 
+    /**
+     * Activity and group names reach the caller filtered, in the plain
+     * spelling: the multilang filter picks the English half, and the
+     * ampersand is not escaped.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        global $DB;
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $row = $this->seed_named_row($course, 'Alice', 'Anderson', 5.0);
+        $DB->set_field('assign', 'name', $multilang, ['id' => $row->iteminstance]);
+        $DB->set_field('block_feedback_tracker_sub', 'groupid', $group->id, ['id' => $row->id]);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_pending_submissions',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['submissions']);
+        $submission = $response['data']['submissions'][0];
+        $this->assertSame((int) $group->id, (int) $submission['groupid']);
+        $this->assertSame('A & B', $submission['activityname']);
+        $this->assertSame('A & B', $submission['groupname']);
+    }
+
+    /**
+     * The student name follows the site's full-name format rather than a
+     * hard-coded "first last", as it does everywhere else in Moodle.
+     *
+     * @return void
+     */
+    public function test_student_name_follows_fullnamedisplay(): void {
+        global $CFG;
+        $this->resetAfterTest();
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $this->seed_named_row($course, 'Alice', 'Anderson', 5.0);
+        $this->setUser($teacher);
+
+        $result = external_api::clean_returnvalue(
+            get_pending_submissions::execute_returns(),
+            get_pending_submissions::execute((int) $course->id)
+        );
+        $this->assertSame('Alice Anderson', $result['submissions'][0]['studentname'], 'Control: the default format.');
+
+        $CFG->fullnamedisplay = 'lastname firstname';
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_pending_submissions',
+            ['courseid' => (int) $course->id]
+        );
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('Anderson Alice', $response['data']['submissions'][0]['studentname']);
+    }
+
+    /**
+     * The search matches the student name as the table shows it, so a name
+     * copied from a row finds that row under any full-name format.
+     *
+     * @return void
+     */
+    public function test_search_matches_the_displayed_name(): void {
+        global $CFG;
+        $this->resetAfterTest();
+        $CFG->fullnamedisplay = 'lastname firstname';
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $this->seed_named_row($course, 'Alice', 'Anderson', 5.0);
+        $this->seed_named_row($course, 'Bob', 'Brown', 6.0);
+        $this->setUser($teacher);
+
+        $displayed = external_api::clean_returnvalue(
+            get_pending_submissions::execute_returns(),
+            get_pending_submissions::execute((int) $course->id, 0, '', 'longestwait', 0, 25, 'submitted', '', 'Anderson Alice')
+        );
+        $firstlast = external_api::clean_returnvalue(
+            get_pending_submissions::execute_returns(),
+            get_pending_submissions::execute((int) $course->id, 0, '', 'longestwait', 0, 25, 'submitted', '', 'Alice Anderson')
+        );
+
+        $this->assertSame(1, (int) $displayed['total']);
+        $this->assertSame('Anderson Alice', $displayed['submissions'][0]['studentname']);
+        $this->assertSame(0, (int) $firstlast['total'], 'The needle follows the displayed order, not a fixed one.');
+    }
+
     // Helpers.
 
     /**
@@ -283,9 +377,9 @@ final class get_pending_submissions_test extends \advanced_testcase {
      * @param string $first Student first name.
      * @param string $last Student last name.
      * @param float $effective Effective wait in hours.
-     * @return void
+     * @return \stdClass The ledger row as inserted, with its id.
      */
-    private function seed_named_row(\stdClass $course, string $first, string $last, float $effective): void {
+    private function seed_named_row(\stdClass $course, string $first, string $last, float $effective): \stdClass {
         global $DB;
 
         $student = $this->getDataGenerator()->create_and_enrol(
@@ -300,7 +394,7 @@ final class get_pending_submissions_test extends \advanced_testcase {
         $cm = get_coursemodule_from_instance('assign', $assign->id);
 
         $now = time();
-        $DB->insert_record('block_feedback_tracker_sub', (object) [
+        $row = (object) [
             'courseid'         => (int) $course->id,
             'groupid'          => 0,
             'cmid'             => (int) $cm->id,
@@ -318,7 +412,9 @@ final class get_pending_submissions_test extends \advanced_testcase {
             'slabucket'        => 'good',
             'timecreated'      => $now - 7200,
             'timemodified'     => $now,
-        ]);
+        ];
+        $row->id = (int) $DB->insert_record('block_feedback_tracker_sub', $row);
+        return $row;
     }
 
     /**

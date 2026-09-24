@@ -14,12 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Slim variant of the dashboard hero — a single horizontal strip that
- * compresses the hero down to the same vertical height as the old streak
- * banner. Toggled into view via the ResponsivenessModule when the user
- * collapses the full hero.
+ * Slim variant of the responsiveness hero — a single horizontal strip shown
+ * when the user collapses the full hero.
  *
- * Stateless; the parent ResponsivenessModule owns the full ↔ slim toggle.
+ * Stateless; ResponsivenessModule picks this or the full variant from the
+ * collapsed state its calling view owns.
  *
  * @module    block_feedback_tracker/components/ResponsivenessHeroSlim
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

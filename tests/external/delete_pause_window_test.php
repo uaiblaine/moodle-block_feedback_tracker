@@ -30,9 +30,10 @@ namespace block_feedback_tracker\external;
 use core_external\external_api;
 
 /**
- * This function already derives its context from the stored row rather than
- * from anything the caller supplies — the shape save_pause_window had to be
- * corrected to. These tests pin that so it stays that way.
+ * Tests for delete_pause_window.
+ *
+ * The capability gate is evaluated at the stored row's context, never at
+ * anything the caller supplies; these tests pin that.
  *
  * @covers \block_feedback_tracker\external\delete_pause_window
  */

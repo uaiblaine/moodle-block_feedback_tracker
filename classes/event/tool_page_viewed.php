@@ -28,21 +28,18 @@ namespace block_feedback_tracker\event;
 
 /**
  * Fired once, server-side, when an administrator opens one of the plugin's
- * tool pages: the academic calendar editor, the audit log viewer, or the
- * data-reset page. The viewed page is in `other['page']`
- * ('calendar' | 'audit' | 'reset').
+ * tool pages. `other['page']` names it: 'calendar' (academic calendar editor),
+ * 'audit' (audit log viewer), 'reset' (data reset) or 'bulkremove' (bulk block
+ * removal).
  *
- * The slug 'manage' is legacy: it names a tools landing page that no longer
- * exists, and it survives only in log rows written before the page was
- * removed. Those rows still have to resolve to something, so the default
- * branch of get_url() sends them to the plugin's admin settings page, which
- * carries the tool links now.
+ * Log rows written before the tools landing page was removed carry the slug
+ * 'manage'. They still have to resolve to a URL, so the default branch of
+ * get_url() sends them to the plugin's admin settings page, which now holds
+ * the tool links.
  *
- * Read-only access event with no observer of its own — the standard logstore
- * subscribes to every event, so triggering it is all that is needed for the
- * access to land in the site logs. It is separate from `report_viewed` only
- * because `edulevel` is fixed per class: tool-page views are administrative
- * (LEVEL_OTHER), report views are teaching participation (LEVEL_PARTICIPATING).
+ * No observer is needed; the standard logstore records every event. This is a
+ * separate class from report_viewed only because `edulevel` is fixed per class:
+ * tool pages are LEVEL_OTHER, reports LEVEL_PARTICIPATING.
  */
 class tool_page_viewed extends \core\event\base {
     /**

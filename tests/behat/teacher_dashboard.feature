@@ -16,11 +16,10 @@ Feature: Teacher dashboard renders for a multi-course editing teacher
       | user     | course | role           |
       | teacher1 | CA     | editingteacher |
       | teacher1 | CB     | editingteacher |
-    # Editingteacher's archetype-default viewdashboard should propagate
-    # automatically, but cap propagation can be flaky in Behat envs when
-    # a plugin-defined cap meets a course-context archetype role. Set
-    # explicitly at system level so the scenario doesn't depend on the
-    # implicit chain.
+    # Repeats the editingteacher archetype default in db/access.php, so on a
+    # standard install it changes nothing (role_change_permission() skips a
+    # permission the role already has); it keeps the scenario independent of
+    # that default.
     And the following "permission overrides" exist:
       | capability                              | permission | role           | contextlevel | reference |
       | block/feedback_tracker:viewdashboard    | Allow      | editingteacher | System       |           |
@@ -31,9 +30,8 @@ Feature: Teacher dashboard renders for a multi-course editing teacher
     Then I should see "Terry"
     And I should see "Your courses"
 
-  # Negative path (student lacks viewdashboard → page throws
-  # required_capability_exception) is covered by PHPUnit
-  # get_dashboard_test::test_student_is_rejected, not here. Moodle's
-  # behat_navigation auto-detects rendered exceptions during
-  # `I am on the page` and re-throws them as Behat failures, so
-  # "user is intentionally blocked" scenarios don't translate cleanly.
+  # The refusal path (a student has no dashboard scope) is covered by PHPUnit
+  # get_dashboard_test::test_student_is_rejected: the page and the web service
+  # share dashboard_scope. Behat fails any step whose page renders an exception
+  # (behat_session_trait::look_for_exceptions()), so the refusal cannot be
+  # asserted here.

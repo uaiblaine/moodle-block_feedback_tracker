@@ -36,22 +36,17 @@ use block_feedback_tracker\local\sla\submission_status;
  *
  * Two rules make this safe to run unattended:
  *
- *  - **Only closed rows are ever deleted.** A row still awaiting feedback is
- *    outstanding work, and its age is precisely the signal this plugin exists
- *    to surface — deleting the oldest pending items would hide exactly what a
- *    coordinator needs to see. They leave the ledger only when their
- *    submission, course or enrolment does, which the reconciler already
- *    handles.
- *  - **The reconciler agrees on the boundary.** Its first sweep recreates a
- *    ledger row for any submission that lacks one, so without a shared cutoff
- *    it would resurrect everything deleted here on the next tick, for ever.
- *    Both read {@see retention::cutoff()}.
+ *  - Only closed rows are deleted. A row still awaiting feedback is
+ *    outstanding work whose age is the signal this plugin exists to surface;
+ *    it leaves the ledger only when its submission, course or enrolment does,
+ *    which the reconciler handles.
+ *  - The reconciler's row-creating sweeps read the same
+ *    {@see retention::cutoff()}, so they do not recreate what is deleted here.
  *
  * The rollup is not re-enqueued afterwards: every statistical window is 30
- * days and the retention floor is a month, so no pruned row could have been
+ * days and the retention floor is 30 days, so no pruned row could have been
  * contributing to a displayed figure. The report's all-time Graded tab does
- * shrink to the window — that is the trade the setting makes, and it is
- * stated in the setting's own description.
+ * shrink to the window, as the setting's description states.
  */
 class prune_ledger extends \core\task\scheduled_task {
     /** Default rows deleted per table per run. */
@@ -148,10 +143,10 @@ class prune_ledger extends \core\task\scheduled_task {
     /**
      * Delete daily aggregate rows older than the cutoff.
      *
-     * These carry no per-user data and no audit value: the sparkline reads a
-     * fortnight and `cli/backfill_trends.php` rebuilds at most a couple of
-     * months, so anything past the retention floor is unreachable by any
-     * surface.
+     * These rows carry no per-user data. The sparklines read the last 14 days
+     * and the academic-days strip 30, but get_school_comparison accepts up to
+     * 365 days of site rows, so a retention window shorter than a year also
+     * shortens that comparison.
      *
      * @param string $table Either the trend or the site-stats table.
      * @param int $cutoff Epoch seconds.
@@ -161,9 +156,8 @@ class prune_ledger extends \core\task\scheduled_task {
     private function prune_daily_table(string $table, int $cutoff, int $batch): int {
         global $DB;
 
-        /* `day` is a YYYYMMDD integer, not an epoch, so the cutoff is
-         * converted rather than compared directly — a raw comparison would
-         * silently match nothing and read as "there was nothing to delete". */
+        /* `day` is a YYYYMMDD integer, not an epoch: compared raw, the cutoff
+         * would match nothing and read as "there was nothing to delete". */
         $cutoffday = (int) userdate($cutoff, '%Y%m%d');
         $ids = $DB->get_fieldset_sql(
             "SELECT id FROM {" . $table . "} WHERE day < :cutoffday ORDER BY day ASC",

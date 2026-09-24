@@ -110,8 +110,8 @@ foreach ($draftresult['submissions'] as $s) {
 
 $PAGE->requires->js_call_amd('block_feedback_tracker/pending_table', 'init');
 
-// Log this page view to the standard site log; user, IP and origin are
-// captured automatically. Fired once per navigation, not in the web services.
+// Log this page view to the standard site log, once per navigation. The web
+// services the page uses do not log.
 $event = \block_feedback_tracker\event\report_viewed::create([
     'context' => $context,
     'courseid' => (int) $courseid,

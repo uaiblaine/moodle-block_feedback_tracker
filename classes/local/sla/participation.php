@@ -29,31 +29,25 @@ namespace block_feedback_tracker\local\sla;
 /**
  * One answer to "is this person still someone whose work is outstanding".
  *
- * The reconciler's delete-side sweep decides this with core's
- * `get_enrolled_sql($context, '', 0, true)`, because it is course-scoped and
- * asks about a whole course at once. The repair path needs the same answer for
- * a single (course, user) pair, and asking it with an inlined copy of that SQL
- * would be the wrong shape twice over: the copy has to be kept in step with a
- * moving core helper, and it samples the clock at a different instant from the
- * sweep it must agree with.
+ * The reconciler's delete-side sweep answers it for a whole course with core's
+ * `get_enrolled_sql($context, '', 0, true)`. The repair path
+ * ({@see \block_feedback_tracker\task\backfill_one_submission}) needs the same
+ * answer for one (course, user) pair, and asks core's `is_enrolled()` rather
+ * than an inlined copy of that SQL that would have to track core by hand.
  *
- * So this defers to core per user instead. `is_enrolled()` carries the rule
- * that matters most here and is the easiest to lose in a hand-written
- * predicate: **everybody participates on the front page**. Core skips the
- * entire enrolment join when the course context is SITEID, and nobody holds a
- * {user_enrolments} row there — so a predicate that demands one silently stops
- * repairing every front-page activity, which is quieter and worse than the
- * problem it was written to solve.
+ * The rule easiest to lose in a hand-written predicate: everybody
+ * participates on the front page. Core skips the enrolment join for SITEID,
+ * where nobody holds a {user_enrolments} row, so a predicate demanding one
+ * would silently stop repairing every front-page activity.
  */
 class participation {
     /**
      * Whether the user is an active participant of the course.
      *
-     * Deleted accounts are excluded separately because `is_enrolled()` does not
-     * test for them, while core's `get_enrolled_sql()` applies `u.deleted = 0`
-     * OUTSIDE its front-page branch — that is, on every course including the
-     * site one. Without the extra test the two would disagree about exactly the
-     * population the delete-side sweep removes.
+     * Deleted accounts are excluded separately: `is_enrolled()` does not test
+     * for them on the front page, while `get_enrolled_sql()` filters
+     * `u.deleted = 0` on every course, the site course included. Without this
+     * test the two would disagree about the users the delete-side sweep removes.
      *
      * @param int $courseid
      * @param int $userid
@@ -73,9 +67,9 @@ class participation {
         } catch (\Throwable $e) {
             return false;
         }
-        // The fourth argument is $onlyactive, matching the delete-side sweep's
-        // get_enrolled_sql($context, '', 0, true): a suspended enrolment, a
-        // disabled method, or an enrolment outside its window all disqualify.
+        // The fourth argument is $onlyactive, as in the sweep's get_enrolled_sql():
+        // a suspended enrolment, a disabled method or an enrolment outside its
+        // window all disqualify.
         return is_enrolled($context, $userid, '', true);
     }
 }

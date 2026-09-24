@@ -31,8 +31,8 @@ use core_external\external_api;
 
 /**
  * Covers the 30-day heatmap series: window length, per-day pause classification
- * (a holiday overrides into a paused day) and per-day band derivation from the
- * trend table.
+ * (a holiday overrides into a paused day), per-day band derivation from the
+ * trend table and the plain-text event labels.
  *
  * @covers \block_feedback_tracker\external\get_academic_days
  */
@@ -144,6 +144,47 @@ final class get_academic_days_test extends \advanced_testcase {
 
         $this->assertTrue($result['success']);
         $this->assertSame([], $result['days']);
+    }
+
+    /**
+     * A sub-day event's label arrives as plain text: the note "A & B" is not
+     * HTML-escaped, since the report renders it as a text node.
+     *
+     * @return void
+     */
+    public function test_event_label_is_plain_text(): void {
+        global $DB;
+        $this->resetAfterTest();
+        group_access::reset_memo();
+        set_config('calver', '1', 'block_feedback_tracker');
+        set_config('timezone', 'UTC', 'block_feedback_tracker');
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+
+        // Five days ago is always inside the 30-day window.
+        $today = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->setTime(0, 0, 0);
+        $DB->insert_record('block_feedback_tracker_cday', (object) [
+            'daydate' => (int) $today->modify('-5 days')->format('Ymd'),
+            'daytype' => 'optional',
+            'starttime' => 16 * 60,
+            'endtime' => 17 * 60,
+            'note' => 'A & B',
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_academic_days',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], (string) json_encode($response['exception'] ?? null));
+        $result = external_api::clean_returnvalue(get_academic_days::execute_returns(), $response['data']);
+        $this->assertCount(1, $result['events']);
+        $this->assertSame('A & B', $result['events'][0]['label']);
     }
 
     /**

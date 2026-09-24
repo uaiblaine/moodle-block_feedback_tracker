@@ -30,30 +30,24 @@ namespace block_feedback_tracker\local\sla;
  * Reads the one thing {assign_grades} cannot show: a grade a teacher entered
  * straight into the gradebook.
  *
- * The plugin measures when a response reached the *student*, and the student
- * reads the gradebook — mod_assign's own student page derives "is there a
- * grade", "can they see it" and "when was it graded" from {grade_grades}, not
- * from its own table. So a gradebook grade is a response, and this is where it
- * is read.
+ * The plugin measures when a response reached the student, and the student
+ * reads the gradebook: mod_assign's own feedback summary decides whether there
+ * is a grade and whether the student may see it from the gradebook
+ * ({@see \assign::get_assign_feedback_status_renderable()}), not from its own
+ * table. So a gradebook grade is a response. Two rules make the read safe.
  *
- * Two rules make that read safe, and both are load-bearing.
+ * The instant comes from `overridden`, never from `timemodified`. Core stamps
+ * `overridden` when a grade or feedback is entered outside the activity
+ * ({@see \grade_item::update_final_grade()}); rescaling an assign item goes
+ * through its raw grade and leaves it alone. A course regrade, a calculated
+ * item recompute and the grade penalty manager (not on 4.5) all move
+ * `timemodified` without touching `overridden`, so keying on it would credit
+ * every teacher with a response whenever an admin changed a category
+ * aggregation.
  *
- * **The instant comes from `overridden`, never from `timemodified`.** Core sets
- * `overridden` when a human grades outside the activity, and suppresses it
- * for the bulk rescale that would otherwise look like mass grading. That
- * suppression is not universal — only one of core's three rescale entry points
- * clears the flag — but a plain assign item takes the raw-grade branch, which
- * never touches `overridden` at all. Meanwhile a course regrade, a calculated
- * item recompute and 5.2's penalty manager all move `timemodified` and never
- * touch `overridden`. Keying on `timemodified` would therefore have credited
- * every teacher on a site with a response the moment an admin changed a
- * category aggregation.
- *
- * **A hidden grade is not a response.** If the grade or its item is hidden, or
- * hidden until a future date, the student sees no feedback block at all and
- * core will not even email them. That is the same reasoning the marking-workflow
- * branch already applies to an unreleased mark, applied to the gradebook's own
- * release gate.
+ * A hidden grade is not a response. While the grade or its item is hidden, or
+ * hidden until a future date, the student sees no feedback at all; this is the
+ * gradebook's counterpart of an unreleased mark under marking workflow.
  */
 final class gradebook_response {
     /** The response was measured from a mark inside the activity. */
@@ -78,10 +72,9 @@ final class gradebook_response {
     public static function for_assign_user(int $assignid, int $userid, ?int $now = null): array {
         global $CFG, $DB;
 
-        /* GRADE_TYPE_NONE lives in a file core loads with gradelib, which the
-         * PHPUnit bootstrap happens to pull in and an ordinary web-service
-         * request does not — so relying on it being defined passes every test
-         * and then fatals in the browser. */
+        /* GRADE_TYPE_NONE is defined in this file. PHPUnit always has it loaded
+         * but a web-service request may not, so without this line tests pass
+         * while the browser gets a fatal "undefined constant". */
         require_once($CFG->libdir . '/grade/constants.php');
 
         $none = ['respondedat' => null, 'hidden' => false, 'hasgrade' => false];
@@ -89,11 +82,9 @@ final class gradebook_response {
             return $none;
         }
 
-        /* itemnumber = 0 is the activity's own grade item. Outcome items
-         * attached to the same activity carry itemtype 'mod' and itemmodule
-         * 'assign' too, and are told apart only by itemnumber (>= 1000) —
-         * matching on type and module alone would read an outcome's grade as
-         * the assignment's. */
+        /* Itemnumber 0 is the activity's own grade item. Outcome items on the
+         * same activity share itemtype and itemmodule and differ only by
+         * itemnumber (1000 and up). */
         $row = $DB->get_record_sql(
             "SELECT gg.id, gg.finalgrade, gg.feedback, gg.overridden,
                     gg.hidden AS gradehidden, gi.hidden AS itemhidden, gi.gradetype
@@ -117,19 +108,17 @@ final class gradebook_response {
         }
 
         /* Grade type "None" shows the student nothing, whatever the row holds.
-         * A stale override survives the switch — regrade_final_grades() skips
-         * overridden rows — so without this an activity later set to ungraded
-         * would keep reporting a visible response. */
+         * A stale override survives the switch (regrade_final_grades() skips
+         * overridden rows), so without this check an activity later set to
+         * ungraded would keep reporting a visible response. */
         if ((int) $row->gradetype === GRADE_TYPE_NONE) {
             return $none;
         }
 
-        /* Feedback alone is a response. The gradebook's feedback field goes
-         * through the same update_final_grade() path and gets the same
-         * `overridden` stamp, but leaves finalgrade untouched — so an emptiness
-         * test on the grade value alone would miss a teacher who returned
-         * written feedback and no mark, and leave that submission pending for
-         * ever. The student reads it in the user report either way. */
+        /* Feedback alone is a response. Gradebook feedback gets the same
+         * `overridden` stamp from update_final_grade() but leaves finalgrade
+         * untouched, so testing the grade alone would leave a submission with
+         * written feedback and no mark pending for ever. */
         $hasgrade = $row->finalgrade !== null || trim((string) $row->feedback) !== '';
         if (!$hasgrade) {
             return $none;
@@ -139,16 +128,13 @@ final class gradebook_response {
         $release = self::release_instant((int) $row->gradehidden, (int) $row->itemhidden, $now);
         $overridden = (int) $row->overridden;
 
-        /* The response landed when the student could SEE it. Core overloads
-         * `hidden` so that any value above 1 is a hide-until date, which is the
-         * ordinary held-results workflow: mark in March, publish in April. The
-         * entry instant would understate that interval by the whole hold, on a
-         * column documented as "when the response reached the student". Taking
-         * the later of the two is the only honest answer.
+        /* The response lands when the student can see it: for a grade held
+         * with a hide-until date (mark in March, publish in April) that is the
+         * later of entry and release, not the entry instant.
          *
          * The plain hidden flag (exactly 1) carries no date, so a grade
-         * un-hidden by hand is still dated at entry — core keeps no record of
-         * when that happened, and inventing one would be worse. */
+         * un-hidden by hand is still dated at entry: core keeps no record of
+         * when that happened. */
         $respondedat = null;
         if ($overridden > 0 && $release !== false) {
             $respondedat = max($overridden, $release);

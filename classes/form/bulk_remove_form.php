@@ -89,9 +89,6 @@ class bulk_remove_form extends \moodleform {
         );
         $mform->addHelpButton('hiddenonly', 'bulk_filter_hiddenonly', $plugin);
 
-        /* Named rather than the default submitbutton: the page carries a second
-         * form (the removal itself) and add_action_buttons() hardcodes the
-         * element name, which would duplicate id_submitbutton in the DOM. */
         $mform->addElement('submit', 'applyfilter', get_string('bulk_filter_apply', $plugin));
         $mform->closeHeaderBefore('applyfilter');
     }
@@ -100,8 +97,7 @@ class bulk_remove_form extends \moodleform {
      * Reject a filter that would offer the whole site.
      *
      * With every control empty the tool would list every course carrying the
-     * block, which is not a considered selection — it is the default. Bulk
-     * removal should be the result of answering a question.
+     * block, so at least one filter must be set.
      *
      * @param array $data
      * @param array $files

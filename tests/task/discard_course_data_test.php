@@ -41,7 +41,8 @@ use block_feedback_tracker\local\sla\removal_grace;
  */
 final class discard_course_data_test extends \advanced_testcase {
     /**
-     * Swallow the task's mtrace() output, which PHPUnit 11 treats as risky.
+     * Swallow the task's mtrace() output, which Moodle's PHPUnit configuration
+     * (beStrictAboutOutputDuringTests) reports as a risky test.
      *
      * @return void
      */
@@ -76,9 +77,8 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
-     * A recycle bin set to never expire must not become an infinite grace —
-     * that would silently disable the cleanup, which is the failure this whole
-     * feature exists to prevent.
+     * A recycle bin set never to expire must not become an infinite grace,
+     * which would silently disable the cleanup; the plugin's own window applies.
      *
      * @return void
      */
@@ -86,9 +86,8 @@ final class discard_course_data_test extends \advanced_testcase {
         $this->resetAfterTest();
         set_config('removal_grace_seconds', (string) (2 * DAYSECS), 'block_feedback_tracker');
         set_config('removal_grace_follow_recyclebin', '1', 'block_feedback_tracker');
-        /* The course bin ships enabled with a one-week expiry, so it has to be
-         * switched off explicitly to isolate the never-expiring category bin —
-         * otherwise this asserts nothing about the zero case. */
+        /* The course bin ships enabled with a one-week expiry; switch it off so
+         * the result depends only on the never-expiring category bin. */
         set_config('coursebinenable', '0', 'tool_recyclebin');
         set_config('categorybinenable', '1', 'tool_recyclebin');
         set_config('categorybinexpiry', '0', 'tool_recyclebin');
@@ -129,9 +128,8 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
-     * The headline behaviour: with the block genuinely gone, the course's
-     * history is discarded and the reason is recorded — Moodle logs nothing at
-     * all when a block is deleted, so this row is the only trace.
+     * With the block really gone, the course's history is discarded and the
+     * removal is recorded in the plugin's log, the only trace it leaves.
      *
      * @return void
      */
@@ -156,12 +154,9 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
-     * The defence that makes the delay worth having. Restoring a backup into an
-     * existing course with "delete the current contents" calls
-     * remove_course_contents(), which removes every block from the course and
-     * then the restore puts them back. Course import does the same. Without the
-     * run-time re-check, a routine restore would destroy a year of measurement
-     * a week later with nothing linking the two.
+     * A restore or import that deletes the current contents removes every block
+     * and then recreates it; the run-time re-check must keep the history
+     * ({@see discard_course_data}).
      *
      * @return void
      */
@@ -255,8 +250,8 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
-     * Removing the block queues the discard, and queues it once however many
-     * times it happens inside one window.
+     * Removing the block queues one discard task, scheduled no earlier than the
+     * minimum grace period.
      *
      * @return void
      */
@@ -285,8 +280,8 @@ final class discard_course_data_test extends \advanced_testcase {
     }
 
     /**
-     * With the feature off, removing the block queues nothing — the historical
-     * behaviour, where the data simply stops being processed.
+     * With the feature off, removing the block queues nothing; the course's
+     * data simply stops being processed.
      *
      * @return void
      */

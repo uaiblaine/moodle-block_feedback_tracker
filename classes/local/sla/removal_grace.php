@@ -29,24 +29,20 @@ namespace block_feedback_tracker\local\sla;
 /**
  * How long a course's measured history survives after the block is removed.
  *
- * Moodle's own convention is to delete a block's data immediately, in
- * `instance_delete()`. That fits a block whose data belongs to the instance —
- * `block_html` deleting its own files. It does not fit this one: the block is
- * a gate, the data belongs to the course, and removing a block from a course
- * page is a small, easily-mistaken act with a large, irreversible consequence.
- * The plugin's tables are not in course backups either, so there is nothing to
- * restore from. Hence a grace period.
+ * Moodle's convention is to delete a block's data immediately, in
+ * `instance_delete()`. That fits data owned by the instance (`block_html`
+ * deleting its own files), not this block: it is a gate, the data belongs to
+ * the course, removing the block is an easy mistake, and the plugin's tables
+ * are not in course backups, so nothing could be restored. Hence a grace
+ * period.
  *
- * By default the window follows the site's own recycle-bin retention, because
- * that is the period during which an administrator is already used to being
- * able to undo things. The longest enabled window wins, floored at the
- * plugin's own setting: being more careful with a year of measurement than the
- * site is with a deleted course is the safe direction.
+ * By default the window follows the site's recycle-bin retention, the period
+ * in which administrators already expect to be able to undo things: the
+ * longest enabled window wins, floored at the plugin's own setting.
  *
- * A recycle bin configured to never expire (`expiry <= 0`, which
- * `tool_recyclebin`'s cleanup tasks read as "keep forever") is deliberately
- * NOT treated as an infinite grace. That would silently disable the cleanup
- * altogether — the failure mode this whole feature exists to prevent.
+ * A recycle bin that never expires (`expiry <= 0`, which `tool_recyclebin`'s
+ * cleanup tasks read as "keep forever") is deliberately not treated as an
+ * infinite grace, which would silently disable the cleanup altogether.
  */
 final class removal_grace {
     /** Fallback window when nothing is configured: one week. */
@@ -66,19 +62,14 @@ final class removal_grace {
      * Record that every block instance is being deleted by an uninstall.
      *
      * Static because the two halves of the signal reach different objects:
-     * core calls the block's `before_delete()` once on an instance-less object,
-     * then `instance_delete()` on a different object per instance. An instance
-     * property would silently never be seen.
+     * core's block uninstall calls `before_delete()` on an instance-less object,
+     * then `instance_delete()` on a new object per instance, so an instance
+     * property would never be seen.
      *
-     * It lives here rather than on the block class for a second reason.
-     * `moodle-plugin-ci validate` parses `block_feedback_tracker.php` with a
-     * php-parser that, on the Moodle 5.2 leg, resolves a v4 `ParserAbstract`
-     * against a v5 `Class_`; the first combined member modifier in that file
-     * (`private static`) reaches `Class_::verifyModifier()`, which v5 removed,
-     * and the step dies with a PHP fatal. Nothing is wrong with the PHP — no
-     * other file is affected, because that file is the only one the validator
-     * parses this way. Keeping its members to single modifiers costs nothing
-     * and this is where the lifecycle state belongs anyway.
+     * It lives here rather than on the block class also because
+     * `moodle-plugin-ci validate` dies with a PHP fatal on Moodle 5.2 when
+     * `block_feedback_tracker.php` declares a member with two modifiers
+     * (`private static`); that file must keep single-modifier members.
      *
      * @return void
      */
@@ -98,11 +89,10 @@ final class removal_grace {
     /**
      * Clear the uninstall flag.
      *
-     * A web request either uninstalls the plugin or it does not, so production
-     * never needs this. A PHPUnit process is one request running many tests: a
-     * test that exercises the uninstall path would otherwise leave the flag set
-     * for every test after it, silently disabling the queuing those tests are
-     * checking. Mirrors course_access::reset_memo().
+     * Production never needs this: a request either uninstalls the plugin or
+     * does not. A PHPUnit process runs many tests, and a test exercising the
+     * uninstall path would otherwise leave the flag set for every later test,
+     * disabling the queuing they check.
      *
      * @return void
      */
@@ -122,12 +112,16 @@ final class removal_grace {
             $explicit = self::MIN_SECONDS;
         }
 
-        if ((int) (get_config('block_feedback_tracker', 'removal_grace_follow_recyclebin') ?: 0) !== 1) {
+        // Default ON: an unset key (false, as after a web upgrade before the new
+        // settings are saved) follows the recycle bin; only an explicit '0' does not.
+        $follow = get_config('block_feedback_tracker', 'removal_grace_follow_recyclebin');
+        if ($follow !== false && $follow !== null && (string) $follow === '0') {
             return $explicit;
         }
 
         $windows = [$explicit];
         foreach (['course', 'category'] as $bin) {
+            // An unset key reads as disabled, as {@see \tool_recyclebin\course_bin::is_enabled()} reads it.
             if ((int) (get_config('tool_recyclebin', $bin . 'binenable') ?: 0) !== 1) {
                 continue;
             }

@@ -35,28 +35,21 @@ use core_privacy\local\request\userlist;
 use core_privacy\local\request\writer;
 
 /**
- * Declares which tables the plugin stores personal data in and implements
- * export / delete on behalf of GDPR-driven requests.
+ * Declares the plugin's personal data and exports / deletes it.
  *
- * The one user-bearing table is:
- *  - {block_feedback_tracker_sub} — the per-submission ledger (userid).
- *
- * Calendar config tables (cday / chours / cpause) carry only `usermodified`
- * (who edited a row), declared as such.
- *
- * Rollup / trend / site / queue / bfcursor tables hold aggregates or
- * operational state and are not declared.
- *
- * Since v2.0.0 there is no longer a per-submission pause audit table —
- * pause windows are recomputed on demand from the calendar engine
- * (get_pause_timeline). They're derived data, not stored personal data,
- * so they aren't declared here.
- *
- * User preferences (v1.0.8+):
- *  - block_feedback_tracker_dashboard_collapsed — declared via
- *    user_preference_provider. Deletion is handled by Moodle's core
- *    privacy machinery (no plugin-side delete path needed for
- *    preferences declared this way).
+ *  - {block_feedback_tracker_sub}, the per-submission ledger, holds the
+ *    student (userid); it is exported and deleted per course context.
+ *  - The calendar tables (cday / chours / cpause) record who last edited a
+ *    row (`usermodified`) and the audit log who triggered a recompute
+ *    (`triggeredby`). They live at system context; erasure clears the
+ *    attribution and keeps the rows.
+ *  - The rollup / trend / site / queue / bfcursor tables hold aggregates or
+ *    operational state with no user link and are not declared.
+ *  - Pause windows are derived from the calendar on demand
+ *    (get_pause_timeline), not stored, so they are not declared either.
+ *  - The two collapse-state preferences are declared through
+ *    user_preference_provider; core_user's provider deletes a user's
+ *    preferences, so there is no plugin-side delete path for them.
  */
 class provider implements
     \core_privacy\local\metadata\provider,
@@ -137,14 +130,12 @@ class provider implements
             'privacy:metadata:log'
         );
 
-        // V1.0.8 — dashboard hero+insights collapse state. Declared via
-        // the user-preference channel so subject-access exports include
-        // the value and core can auto-delete it on user deletion.
+        // Collapse state of the dashboard's hero and insights panels.
         $collection->add_user_preference(
             'block_feedback_tracker_dashboard_collapsed',
             'privacy:metadata:preference:dashboard_collapsed'
         );
-        // V1.0.27 — report page hero+heatmap collapse state.
+        // Collapse state of the pending report's hero and academic-days strip.
         $collection->add_user_preference(
             'block_feedback_tracker_report_collapsed',
             'privacy:metadata:preference:report_collapsed'
@@ -210,10 +201,10 @@ class provider implements
             ['userid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
         );
 
-        // The system-context branch must return ctx.id from {context} so the
-        // outer contextlist query sees a properly-typed bigint column. The
-        // previous SELECT :systemctxid pattern made PostgreSQL infer text and
-        // fail the bigint comparison in contextlist::get_contexts().
+        // Select ctx.id from {context} rather than a bare :placeholder:
+        // PostgreSQL types a selected placeholder as text, and the join that
+        // contextlist::add_from_sql() wraps around this query compares it with
+        // a bigint.
         $sql = "SELECT ctx.id
                   FROM {context} ctx
                  WHERE ctx.id = :sysctxid
@@ -275,7 +266,8 @@ class provider implements
     }
 
     /**
-     * Export the user's submission ledger + pause audit per course context.
+     * Export the user's ledger rows per course context, and the
+     * site-configuration rows they are attributed on at system context.
      *
      * @param approved_contextlist $contextlist
      * @return void
@@ -301,11 +293,8 @@ class provider implements
                 continue;
             }
 
-            // V2.0.0+: pause windows are no longer stored — they're
-            // derived from the calendar on demand. Per GDPR convention
-            // we only export *stored* personal data, so pause windows
-            // are intentionally omitted from the export. Users wanting
-            // the pause breakdown can hit get_pause_timeline.
+            // Pause windows are not exported: they are derived from the
+            // calendar on demand (get_pause_timeline), not stored.
             $export = ['submissions' => []];
             foreach ($rows as $r) {
                 $export['submissions'][] = [
@@ -341,7 +330,8 @@ class provider implements
     }
 
     /**
-     * Delete all ledger data for one course context.
+     * Delete every user's ledger rows in a course context, or clear every
+     * attribution at system context.
      *
      * @param \context $context
      * @return void
@@ -358,7 +348,8 @@ class provider implements
     }
 
     /**
-     * Delete the contextlist user's ledger data.
+     * Delete the user's ledger rows in the approved course contexts, and clear
+     * their attribution at system context.
      *
      * @param approved_contextlist $contextlist
      * @return void

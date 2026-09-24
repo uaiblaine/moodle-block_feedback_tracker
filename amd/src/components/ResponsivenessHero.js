@@ -14,11 +14,12 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Full-state dashboard hero — warm gradient panel with a centred score ring
+ * Full-state responsiveness hero — warm gradient panel with a score ring
  * and supportive copy, with a three-stat row (Effective / Perceived / Trend)
  * tucked horizontally beneath the copy.
  *
- * Stateless; the parent ResponsivenessModule owns the full ↔ slim toggle.
+ * Stateless; ResponsivenessModule picks this or the slim variant from the
+ * collapsed state its calling view owns.
  *
  * @module    block_feedback_tracker/components/ResponsivenessHero
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

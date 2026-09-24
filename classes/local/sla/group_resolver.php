@@ -30,15 +30,16 @@ namespace block_feedback_tracker\local\sla;
  * Resolves which group a user "belongs to" within a course for SLA attribution.
  *
  * Strategy: the group the user joined most recently in that course
- * ({groups_members}.timeadded DESC). Ties broken by group id. Returns 0 if
- * the user is not in any group.
+ * ({groups_members}.timeadded), ties going to the higher group id. Returns 0
+ * if the user is not in any group.
  *
- * Memoised per-request because the same (course, user) pair is read multiple
- * times per upsert pass.
+ * Memoised because the same (course, user) pair is read several times per
+ * upsert pass. The memo lives as long as the PHP process, so callers reset it
+ * after membership changes and between long-running batches.
  */
 class group_resolver {
     /**
-     * @var array Per-request memo: "courseid:userid" → groupid.
+     * @var array Per-process memo: "courseid:userid" → groupid.
      */
     private static array $memo = [];
 
@@ -73,8 +74,7 @@ class group_resolver {
     }
 
     /**
-     * Drop the per-request memo (test helper, and called after group
-     * membership changes).
+     * Drop the memo (tests, group membership changes, reconcile batches).
      *
      * @return void
      */

@@ -15,8 +15,7 @@
 
 /**
  * Segmented-control filter. Tightly-packed pill row where exactly one
- * button is active at a time. Used in the pending-report toolbar for the
- * status filter; reusable elsewhere (Phase 3E dashboard).
+ * button is active at a time.
  *
  * Stateless — the caller owns the selected value.
  *

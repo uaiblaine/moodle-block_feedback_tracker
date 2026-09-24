@@ -62,7 +62,8 @@ final class course_finder_test extends \advanced_testcase {
 
     /**
      * A hidden course is what an archived one looks like, so the tool must see
-     * it — unlike every SLA read path, which deliberately does not.
+     * it, unlike course_access::is_processable(), which skips hidden courses by
+     * default.
      *
      * @return void
      */
@@ -83,10 +84,8 @@ final class course_finder_test extends \advanced_testcase {
     }
 
     /**
-     * The three date questions are separate and combinable, because
-     * course.enddate is optional and frequently zero — treating "no end date"
-     * as a silent fallback for "ended before" would either miss most of an old
-     * archive or sweep in courses still running.
+     * The three date filters are separate and OR-ed together; see
+     * course_finder for why "no end date" is an explicit filter.
      *
      * @return void
      */
@@ -134,9 +133,9 @@ final class course_finder_test extends \advanced_testcase {
     }
 
     /**
-     * The category filter includes descendants — and must not match a sibling
-     * whose id merely starts with the same digits. `path` is `/1/3/17`, so a
-     * naive LIKE '%/3/%' matches `/1/30/...` as well.
+     * The category filter includes descendants, and must not match a sibling
+     * whose id merely starts with the same digits: `path` is `/1/3/17`, so a
+     * naive LIKE '/1/3%' matches `/1/30` as well.
      *
      * @return void
      */
@@ -164,14 +163,11 @@ final class course_finder_test extends \advanced_testcase {
         $this->assertSame($expected, $ids);
         $this->assertNotContains((int) $inother->id, $ids);
 
-        /* Force the prefix collision the naive query would hit: a category
-         * whose path literally begins with the target's path but is a
-         * different branch — the /1/3 vs /1/30 case.
-         *
-         * The course is created FIRST and the path forced afterwards, because
+        /* Force the prefix collision: a category whose path begins with the
+         * target's path but is a different branch (the /1/3 vs /1/30 case).
+         * The course is created before the path is forced, because
          * create_course() runs fix_course_sortorder(), which rebuilds category
-         * paths and would quietly undo the collision — leaving a test that
-         * asserts nothing and passes against the very bug it names. */
+         * paths and would undo the collision, leaving the assertion vacuous. */
         $collider = $this->getDataGenerator()->create_category(['name' => 'Collider']);
         $incollider = $this->course_with_block(['category' => $collider->id]);
         $parentpath = $DB->get_field('course_categories', 'path', ['id' => $parent->id]);

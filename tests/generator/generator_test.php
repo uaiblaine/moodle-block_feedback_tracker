@@ -30,8 +30,8 @@ namespace block_feedback_tracker;
 use block_feedback_tracker\local\sla\course_access;
 
 /**
- * The fixture helpers are shared by every other test file, so a defect here
- * shows up as a confusing failure somewhere else. Pin their contracts.
+ * The fixture helpers are shared by most test files, so a defect here shows
+ * up as a confusing failure somewhere else. Pin their contracts.
  *
  * @covers \block_feedback_tracker_generator
  */
@@ -47,7 +47,7 @@ final class generator_test extends \advanced_testcase {
 
     /**
      * A tracked course carries a course-context block, so the strict opt-in
-     * gate lets it through. This is the whole reason the helper exists.
+     * gate lets it through; a plain course is the control.
      *
      * @return void
      */
@@ -106,8 +106,8 @@ final class generator_test extends \advanced_testcase {
     }
 
     /**
-     * Prohibiting a capability takes effect immediately — the accesslib cache
-     * flush inside the helper is what makes this assertion pass.
+     * Prohibiting a capability takes effect for has_capability() within the
+     * same request.
      *
      * @return void
      */
@@ -199,9 +199,9 @@ final class generator_test extends \advanced_testcase {
      * The graded-submission helper drives the real observer path: a ledger row
      * appears with the grade time recorded.
      *
-     * Crucially this must NOT raise "Unexpected debugging() call detected" —
-     * advanced_testcase fails the test if the record snapshot is missing a
-     * column, which is exactly what the helper's re-read prevents.
+     * It also pins that no debugging() notice is raised: advanced_testcase
+     * fails on an unexpected one, which a grade snapshot missing a column
+     * would trigger (see the re-read in create_graded_submission()).
      *
      * @return void
      */
