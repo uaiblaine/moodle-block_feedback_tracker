@@ -132,6 +132,27 @@ final class pause_lookup_test extends \advanced_testcase {
     }
 
     /**
+     * Every scope level maps to its own reason slug, each with a lang string;
+     * an unknown level reads as a site pause.
+     *
+     * @return void
+     */
+    public function test_reason_for_scope(): void {
+        $this->assertSame('sitepaused', pause_lookup::reason_for_scope('site'));
+        $this->assertSame('coursepaused', pause_lookup::reason_for_scope('course'));
+        $this->assertSame('grouppaused', pause_lookup::reason_for_scope('group'));
+        $this->assertSame('sitepaused', pause_lookup::reason_for_scope('category'));
+
+        $strings = get_string_manager();
+        foreach (['site', 'course', 'group'] as $level) {
+            $this->assertTrue(
+                $strings->string_exists('pause_reason_' . pause_lookup::reason_for_scope($level), 'block_feedback_tracker'),
+                $level
+            );
+        }
+    }
+
+    /**
      * Insert a pause window row and reset the static memo (not the MUC cache).
      *
      * @param string $scopelevel The scope level (site, course, group).

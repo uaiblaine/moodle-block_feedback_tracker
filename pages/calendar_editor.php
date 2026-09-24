@@ -29,10 +29,8 @@
 
 require(__DIR__ . '/../../../config.php');
 
-use block_feedback_tracker\form\bulk_import_form;
 use block_feedback_tracker\form\business_hours_form;
-use block_feedback_tracker\form\calendar_day_form;
-use block_feedback_tracker\form\pause_window_form;
+use block_feedback_tracker\form\calendar_editor_forms;
 
 require_login();
 $context = context_system::instance();
@@ -51,32 +49,11 @@ $noticelevel = 'success';
 $noticeerrors = [];
 
 // Forms.
-$dayform = new calendar_day_form($PAGE->url->out(false));
-$bulkform = new bulk_import_form($PAGE->url->out(false));
-$pauseform = new pause_window_form($PAGE->url->out(false));
-
-$hoursforms = [];
-for ($dow = 0; $dow <= 6; $dow++) {
-    $existing = $DB->get_records(
-        'block_feedback_tracker_chours',
-        ['dayofweek' => $dow, 'enabled' => 1],
-        'starttime ASC',
-        'id, starttime, endtime'
-    );
-    $defaults = ['dayofweek' => $dow];
-    $i = 0;
-    foreach ($existing as $row) {
-        if ($i >= business_hours_form::SLOTS_PER_DAY) {
-            break;
-        }
-        $defaults["start_$i"] = (int) $row->starttime;
-        $defaults["end_$i"] = (int) $row->endtime;
-        $i++;
-    }
-    $form = new business_hours_form($PAGE->url->out(false), null, 'post', '', ['id' => 'bft-hours-' . $dow]);
-    $form->set_data($defaults);
-    $hoursforms[$dow] = $form;
-}
+$forms = calendar_editor_forms::build($PAGE->url->out(false));
+$dayform = $forms['day'];
+$bulkform = $forms['bulk'];
+$pauseform = $forms['pause'];
+$hoursforms = $forms['hours'];
 
 // Dispatch form submissions.
 try {

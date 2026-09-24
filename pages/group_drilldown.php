@@ -72,12 +72,12 @@ foreach ($result['submissions'] as $s) {
         'submitted'    => userdate((int) $s['timesubmitted']),
         'submittedts'  => (int) $s['timesubmitted'],
         'waiting'      => $usedays
-            ? (int) $s['perceived_days'] . ' d'
-            : format_float((float) $s['waitinghours'], 1) . ' h',
+            ? get_string('drilldown_value_days', 'block_feedback_tracker', (int) $s['perceived_days'])
+            : get_string('drilldown_value_hours', 'block_feedback_tracker', format_float((float) $s['waitinghours'], 1)),
         'waitingnum'   => (float) $s['waitinghours'],
         'effective'    => $usedays
-            ? (int) $s['effective_days'] . ' d'
-            : format_float((float) $s['effectivehours'], 1) . ' h',
+            ? get_string('drilldown_value_days', 'block_feedback_tracker', (int) $s['effective_days'])
+            : get_string('drilldown_value_hours', 'block_feedback_tracker', format_float((float) $s['effectivehours'], 1)),
         'effectivenum' => (float) $s['effectivehours'],
         'status'       => (string) $s['slabucket'],
         'bucket'       => (string) $s['slabucket'],

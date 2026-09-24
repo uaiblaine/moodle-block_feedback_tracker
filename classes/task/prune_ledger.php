@@ -26,8 +26,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\retention;
-use block_feedback_tracker\local\sla\submission_status;
 
 /**
  * Bounds the ledger's growth by dropping closed measurements older than the
@@ -71,6 +71,7 @@ class prune_ledger extends \core\task\scheduled_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
 
         $cutoff = retention::cutoff();
         if ($cutoff === null) {

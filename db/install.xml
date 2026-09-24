@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260811" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
+<XMLDB PATH="blocks/feedback_tracker/db" VERSION="20260924" COMMENT="XMLDB file for blocks/feedback_tracker. Tables track per-submission SLA ledger, materialized rollups, daily trend, site stats, dirty queue, the platform academic calendar (days + weekly business hours + manual pause windows), a recompute audit log, and per-course backfill cursors (renamed cursor → lastsubid because CURSOR is reserved in MariaDB). Pause-window data is derived on demand by the calendar engine — no persisted pause ledger since v2.0.0."
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -93,11 +93,6 @@
         <FIELD NAME="comp_pending" TYPE="number" LENGTH="5" DECIMALS="4" NOTNULL="false" COMMENT="Pending term value [0,1]." SEQUENCE="false"/>
         <FIELD NAME="comp_trend" TYPE="number" LENGTH="5" DECIMALS="4" NOTNULL="false" COMMENT="Trend term value [0,1]; defaults to 0.5 when no prior window exists." SEQUENCE="false"/>
         <FIELD NAME="trend_pct_30d" TYPE="number" LENGTH="6" DECIMALS="2" NOTNULL="false" SEQUENCE="false"/>
-        <FIELD NAME="nextpause_ts" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
-        <FIELD NAME="nextpause_reason" TYPE="char" LENGTH="40" NOTNULL="false" SEQUENCE="false"/>
-        <FIELD NAME="nextpause_note" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false"/>
-        <FIELD NAME="lastpause_endts" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" SEQUENCE="false"/>
-        <FIELD NAME="lastpause_reason" TYPE="char" LENGTH="40" NOTNULL="false" SEQUENCE="false"/>
         <FIELD NAME="unallocated" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Pending submissions with no marker allocated yet: work nobody has been made responsible for. Null when the activity set does not use marking allocation." SEQUENCE="false"/>
         <FIELD NAME="median_queue_h" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Median effective hours from hand-in to first allocation over the graded window; the coordination lead time." SEQUENCE="false"/>
         <FIELD NAME="median_alloc_h" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Median effective hours from allocation to grading over the graded window; the marker turnaround, with the coordination queue excluded." SEQUENCE="false"/>

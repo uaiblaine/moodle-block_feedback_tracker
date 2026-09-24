@@ -244,6 +244,45 @@ final class get_report_scopes_test extends \advanced_testcase {
     }
 
     /**
+     * A rollup row whose group no longer exists is named by the plugin's lang
+     * string, the same name the block gives it, so a string customisation
+     * reaches the report's class filter too.
+     *
+     * @return void
+     */
+    public function test_a_row_without_its_group_gets_the_localised_fallback_name(): void {
+        global $CFG;
+        $this->resetAfterTest();
+        $this->seed_config();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => 987654,
+        ]);
+        group_access::reset_memo();
+        $this->setUser($teacher);
+
+        // The en_local file is how a customised string (tool_customlang) reaches get_string().
+        $dir = $CFG->langlocalroot . '/en_local';
+        make_writable_directory($dir);
+        $file = $dir . '/block_feedback_tracker.php';
+        file_put_contents($file, "<?php\n\$string['card_groupfallback'] = 'Removed group {\$a}';\n");
+        get_string_manager()->reset_caches();
+        try {
+            $result = get_report_scopes::execute((int) $course->id);
+        } finally {
+            unlink($file);
+            get_string_manager()->reset_caches();
+        }
+
+        $this->assertCount(1, $result['groups']);
+        $this->assertSame(987654, $result['groups'][0]['groupid']);
+        $this->assertSame('Removed group 987654', $result['groups'][0]['name']);
+    }
+
+    /**
      * Callers without viewresponsiveness are rejected.
      *
      * @return void

@@ -38,9 +38,11 @@ namespace block_feedback_tracker\local\calendar;
  *               'schoolday' row in {block_feedback_tracker_cday} opts it into
  *               the working week.
  *  - holiday  — a 'holiday' row, while holidays are excluded.
- *  - recess   — a 'recess', 'closed' or full-day 'optional' row while recesses
- *               are excluded, or any manual pause (site, the course, or a
- *               group of the course) touching the day.
+ *  - recess   — a 'recess' row while recesses are excluded, a 'closed' or
+ *               full-day 'optional' row always (both are inactive whatever the
+ *               settings, as in {@see calendar::is_active_day()}), or any
+ *               manual pause (site, the course, or a group of the course)
+ *               touching the day.
  *
  * Sub-day optional events (an 'optional' row with starttime and endtime set)
  * do not pause the day; they are returned in the `events` sidecar with their
@@ -173,7 +175,7 @@ class paused_aggregator {
                 $perday[$ymd] = ['paused' => true, 'reason' => 'holiday'];
                 continue;
             }
-            if (($type === calendar::DAYTYPE_RECESS || $type === calendar::DAYTYPE_CLOSED) && $excluderecesses) {
+            if (($type === calendar::DAYTYPE_RECESS && $excluderecesses) || $type === calendar::DAYTYPE_CLOSED) {
                 $perday[$ymd] = ['paused' => true, 'reason' => 'recess'];
                 continue;
             }
@@ -195,7 +197,7 @@ class paused_aggregator {
                             ['context' => $sysctx, 'escape' => false]
                         ),
                     ];
-                } else if ($excluderecesses) {
+                } else {
                     // Full-day optional — fold into the recess bucket.
                     $perday[$ymd] = ['paused' => true, 'reason' => 'recess'];
                     continue;

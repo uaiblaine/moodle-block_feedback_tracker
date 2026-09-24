@@ -179,6 +179,73 @@ final class save_pause_window_test extends \advanced_testcase {
     }
 
     /**
+     * Moving a window to another course re-enqueues the course it left as
+     * well as the one it joined: the vacated course's rollups counted the
+     * window until now. The new course's tuple is the control that the event
+     * reached the observer at all.
+     *
+     * @return void
+     */
+    public function test_rescoping_an_update_requeues_both_scopes(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $from = $this->generator()->create_tracked_course();
+        $to = $this->generator()->create_tracked_course();
+        $this->generator()->create_rollup_row(['courseid' => (int) $from->id]);
+        $this->generator()->create_rollup_row(['courseid' => (int) $to->id]);
+        $id = $this->generator()->create_pause_window([
+            'scopelevel' => 'course',
+            'scopeid' => (int) $from->id,
+            'contextid' => (int) \context_course::instance($from->id)->id,
+        ]);
+        $DB->delete_records('block_feedback_tracker_queue');
+
+        $now = time();
+        save_pause_window::execute($id, 'course', (int) $to->id, 'other', $now + 60, $now + 120, '');
+
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_queue', ['courseid' => (int) $to->id, 'groupid' => 0]),
+            'The course the window moved to is queued.'
+        );
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_queue', ['courseid' => (int) $from->id, 'groupid' => 0]),
+            'The course the window left is queued too.'
+        );
+    }
+
+    /**
+     * An update that keeps the scope fires the event once: there is no
+     * vacated scope to announce.
+     *
+     * @return void
+     */
+    public function test_update_in_place_fires_one_event(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $course = $this->generator()->create_tracked_course();
+        $id = $this->generator()->create_pause_window([
+            'scopelevel' => 'course',
+            'scopeid' => (int) $course->id,
+            'contextid' => (int) \context_course::instance($course->id)->id,
+        ]);
+
+        $sink = $this->redirectEvents();
+        $now = time();
+        save_pause_window::execute($id, 'course', (int) $course->id, 'other', $now + 60, $now + 120, '');
+        $events = array_values(array_filter(
+            $sink->get_events(),
+            static fn ($e) => $e instanceof \block_feedback_tracker\event\cal_pause_updated
+        ));
+        $sink->close();
+
+        $this->assertCount(1, $events);
+        $this->assertSame((int) $course->id, (int) $events[0]->other['scopeid']);
+    }
+
+    /**
      * A student has no business managing pause windows.
      *
      * Every parameter here is deliberately valid: the guard clauses run before

@@ -236,6 +236,70 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
+     * The courses-table sparkline follows the same (course, group) filter as
+     * the aggregates: a separate-groups teacher in group A sees group A's
+     * trend, not the mean over groups they cannot see. An admin with the
+     * view-all setting is the control that the other groups' rows are there
+     * and do enter the mean when visible.
+     *
+     * @return void
+     */
+    public function test_separategroups_trend_series_excludes_hidden_groups(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_config();
+
+        $course = $this->getDataGenerator()->create_course([
+            'groupmode' => SEPARATEGROUPS,
+            'groupmodeforce' => 1,
+        ]);
+        $groupa = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $groupb = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->seed_rollup($course, 3, 1, 1, 75, 'good', (int) $groupa->id);
+        $this->seed_rollup($course, 10, 5, 4, 30, 'critical', (int) $groupb->id);
+        $this->seed_rollup($course, 0, 0, 0, 95, 'excellent', 0);
+
+        $today = (int) (new \DateTimeImmutable('@' . time()))
+            ->setTimezone(\block_feedback_tracker\local\calendar\calendar::timezone())
+            ->format('Ymd');
+        foreach ([(int) $groupa->id => 10.0, (int) $groupb->id => 50.0, 0 => 90.0] as $groupid => $hours) {
+            $DB->insert_record('block_feedback_tracker_trend', (object) [
+                'courseid' => (int) $course->id,
+                'groupid' => $groupid,
+                'day' => $today,
+                'medianh_eff' => $hours,
+                'numgraded' => 1,
+                'timemodified' => time(),
+            ]);
+        }
+
+        $coursectx = \context_course::instance($course->id);
+        $roleid = create_role('Test teacher (no allgroups)', 'tnoallgroups_trend', 'Test role without accessallgroups');
+        assign_capability('block/feedback_tracker:viewdashboard', CAP_ALLOW, $roleid, $coursectx->id);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'tnoallgroups_trend');
+        $this->getDataGenerator()->create_group_member(['groupid' => $groupa->id, 'userid' => $teacher->id]);
+        $this->setUser($teacher);
+
+        $result = external_api::clean_returnvalue(get_dashboard::execute_returns(), get_dashboard::execute(''));
+
+        $this->assertCount(1, $result['courses']);
+        $series = $result['courses'][0]['trend_series'];
+        $this->assertCount(14, $series);
+        $this->assertSame($today, $series[13]['day']);
+        $this->assertEqualsWithDelta(10.0, $series[13]['value'], 0.001, 'Only group A enters the teacher\'s trend.');
+
+        set_config('enable_admin_view_all', 1, 'block_feedback_tracker');
+        $this->setAdminUser();
+        \block_feedback_tracker\local\sla\dashboard_scope::reset_memo();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        $result = external_api::clean_returnvalue(get_dashboard::execute_returns(), get_dashboard::execute(''));
+
+        $this->assertCount(1, $result['courses']);
+        $this->assertEqualsWithDelta(50.0, $result['courses'][0]['trend_series'][13]['value'], 0.001);
+    }
+
+    /**
      * Band filter narrows the result. Teacher in two courses; only one of
      * them has a "good" band.
      */
@@ -263,7 +327,7 @@ final class get_dashboard_test extends \advanced_testcase {
     /**
      * The per-course row carries the include-pending headline medians
      * (cur_median_eff_h / cur_median_raw_h) plus the trend and compliance
-     * figures DashboardView's aggregate() reads for the hero; a key the WS
+     * figures aggregate() (amd/src/lib/aggregate.js) reads for the hero; a key the WS
      * omits leaves the hero's trend and SLA blank without any error.
      */
     public function test_returns_headline_trend_and_compliance(): void {

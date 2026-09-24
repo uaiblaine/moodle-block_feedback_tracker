@@ -132,8 +132,6 @@ final class course_finder {
      *                                       match nothing at all.
      */
     private static function build_filter(array $filters): array {
-        global $DB;
-
         $where = ['c.id <> :siteid'];
         $params = ['siteid' => SITEID, 'blockname' => 'feedback_tracker'];
 

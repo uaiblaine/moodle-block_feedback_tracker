@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\calendar\day_counter;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * One-time, resumable backfill of {block_feedback_tracker_sub}.effectivedays.
@@ -78,6 +79,7 @@ class backfill_effectivedays extends \core\task\scheduled_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
 
         // Not armed (fresh installs) or already finished → cheap no-op.
         $done = get_config('block_feedback_tracker', 'effectivedays_backfill_done');

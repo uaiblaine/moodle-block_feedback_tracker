@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list that is rarely empty — the deferred repairs spread across the nine
   sweeps instead of pinning to the same names every tick.
 
+- **Deleting a large group no longer re-attributes every member inside the
+  request.** Up to 50 users are still moved to their current group at once; a
+  larger group is handed to the new adhoc task `reattribute_users` in chunks
+  of 50. The deletion now works from users rather than ledger rows, up to 20
+  000 of them (it used to stop silently at 10 000 rows), and raises a
+  debugging notice when it reaches that ceiling.
+
 ### Fixed
 - **The reconciler no longer walks the whole ledger to find out it has nothing
   to do.** Every sweep ran one statement whose `LIMIT` sat over its own repair
@@ -130,6 +137,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   administrators were recorded, and a removed block's history was kept only for
   the plugin's own grace period even when the recycle bin keeps the course
   longer.
+
+- **A teacher allocated to mark submissions is covered by privacy requests.**
+  The allocated marker's user id was declared as personal data but never
+  found, exported or erased for that teacher. An export now lists the
+  teacher's current allocations (activity, attempt, allocation time and
+  turnaround, without the student's identity); an erasure clears the teacher's
+  id from those submissions and keeps the students' rows. `timeallocmarker` is
+  declared too.
+
+- **The teacher dashboard's course sparkline no longer shows trends from
+  groups the teacher cannot see.** The courses table was already filtered to
+  the teacher's groups, but the sparkline beside it averaged every group of
+  the course, which in separate groups mode showed other groups' turnaround.
+
+- **Removing the block again inside the grace period restarts the grace
+  period.** If the block was removed, put back and removed again, the pending
+  discard kept the first removal's deadline and could delete the course's
+  history early.
+
+- **The data reset no longer claims to delete the audit log.** It never did,
+  and it should not: the reset records itself there. "Rows removed" no longer
+  lists audit rows, and the warning no longer says pause or audit rows are
+  deleted.
+
+- **A cron process no longer carries one task's decisions into the next.**
+  Moodle's cron runs many tasks in one process, and the plugin's memos
+  (whether a course has the block, a user's group, the calendar lookups) lived
+  as long as the process, so a block added or removed between two tasks could
+  be missed. Every task now starts with fresh memos.
+
+- **The queue drain counts only what it dispatched.** A recompute core refused
+  to queue was reported as dispatched, whether one was already pending or, on
+  4.5, 5.0, 5.1.0 to 5.1.4 and 5.2.0, a retry-exhausted task was still
+  blocking it. Refusals are counted apart (`refused`) and traced.
+
+- **Moving a pause window to another course or group recalculates the one it
+  left.** Only the new scope was recalculated, so the old one kept counting
+  the pause.
+
+- **Re-importing a calendar day by CSV clears an old partial-day window,** as
+  the editor form already did, and **removing a day that has no entry no
+  longer recalculates every course on the site.**
+
+- **Closed days and full-day optional days count as paused whatever the recess
+  setting,** as the time engine counts them, and **the upcoming-pause notice
+  no longer announces holidays or recesses that count as working time.**
+
+- **An optional event with a start and end time is announced at the right time
+  on a daylight-saving day.** Its minutes are read as wall-clock time, as
+  business hours are.
+
+- **Calendar edits are recorded in the recompute audit log and purge the
+  per-day calendar and pause-window caches.** A day save, a CSV import, a
+  business-hours save and a pause-window save or deletion each leave one row
+  (`calendar_save`, `bulk_import`, `business_hours_save` or `pause_save`) with
+  the rollups re-queued and the user; the reasons existed but nothing wrote
+  them. The caches are keyed by the calendar version and have no expiry, so
+  each edit used to leave every entry in the store.
+
+- **A course's ungrouped card is no longer part of its own peer benchmark.**
+  Group id 0 is the ungrouped card of every course, so excluding by group id
+  alone left the course's own row in the "Department" and "Top 10%" pool; the
+  exclusion now uses the (course, group) pair. **The hours benchmarks need
+  their own minimum sample:** a card with pending work and nothing graded has
+  a score but no median wait, so one group's median could be published as the
+  department norm.
+
+- **Pending report, business-days mode.** A submission not yet given its
+  business-day count took its Status badge from a different measure than the
+  distribution bar and the band filter, so the badge could name another band.
+  Both use the same estimate, and sorting by Status follows the day count.
+
+- **The dashboard's "gentle watch" insight counts in business days when the
+  display unit is business days,** and **a tie for the "bright spot" goes to
+  the group with more graded submissions,** as documented.
+
+- **Every trend sparkline has a localised accessible name,** instead of the
+  English "30-day trend" over a 14-day series, and **the score simulator's
+  gauge has one too** (the page never sent the label, and the string held a
+  mistyped placeholder).
+
+- **The score simulator starts from the weights the groups are scored with.**
+  A weight stored as 0 came back as its default in the simulator while the
+  real score dropped that term.
+
+- **Numbers and dates on the JavaScript pages follow the user's language and
+  time zone.** Fractional hours and days use the language's decimal separator,
+  and the block's last-sync stamp, the report's dates and the activity
+  timeline use the language pack's locale and the user's Moodle time zone
+  instead of a fixed DD/MM/YYYY or the browser's zone.
+
+- **The dashboard's Effective column sorts on the figure it shows,** and **the
+  block's Perceived tile no longer changes with the display unit** (an item
+  waiting 0 hours no longer reads "1d").
+
+- **The pending report's loading state reaches screen readers,** and **every
+  form on the calendar editor has unique element ids** (ten forms shared
+  `id_submitbutton`, `id_note` and the business-hours fields). The bulk
+  removal table's checkbox column has its own hidden "Select" header instead
+  of a repeated "Course" in Bootstrap 4's deprecated `sr-only`.
+
+- **Text fixed in English is translatable:** the fallback "Group #N" name, the
+  CSV import format hint, and the day and hour suffixes on the drilldown.
+
+- **Bulk-removal page views in the site log link to that page** instead of the
+  plugin settings, the "No submissions" badge has colours again, and the
+  queue-to-turnaround chip and the bulk-removal count use the plugin's
+  monospace font.
+
+- **Team submission events no longer run one group query per participant,**
+  and **`cli/recompute_one.php` requires `--courseid`;** both recompute
+  scripts report a rollup they could not recompute because another process
+  held its lock, and exit with status 1.
 
 ### Changed
 - **The academic-time engine no longer runs inside the reconciler's tick.** The
@@ -267,6 +387,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changed; the AMD build is regenerated because its source maps carry the
   comment text.
 
+- **The block, the dashboard and the report pages use the theme's colours and
+  follow Moodle's dark mode.** Surfaces, text, borders and focus rings read
+  the theme's Bootstrap tokens (the `--bs-*` set on 5.1 and later, the
+  Bootstrap 4 names on 4.5), so a site's brand colour reaches the focus rings
+  and a dark colour mode no longer shows light slabs. The band, plum and sand
+  colours keep their light values and gain dark ones, and the JavaScript draws
+  gauges, rings, peer bars and sparklines from those tokens instead of fixed
+  light-mode colours. Every text colour keeps at least 4.5:1 on its surface in
+  both modes, which darkened muted text and the "no data" band slightly
+  (`#5f6b7f`), the "watch" insight tone (`#8a6420`) and the retry button
+  (`#c2410c`); draft badges and stat-tile labels no longer fade their text
+  with opacity.
+
+- **The rollup no longer stores a next and last pause, and the upgrade
+  recomputes every rollup.** The five `nextpause_*` and `lastpause_*` columns
+  were written on every recompute and read by nothing; the upgrade drops them.
+  It also queues every (course, group) for recompute, because `unallocated`
+  and `overgoal_days` changed meaning in this version; `drain_queue` rebuilds
+  them with no CLI run needed.
+
+- **`unallocated` counts only activities that allocate markers.** On an
+  activity without marking allocation every pending row read as unallocated,
+  so the figure equalled `pending`. It now counts pending work in activities
+  with marking allocation on, and is null when none of the pending work
+  belongs to one, as the column always documented.
+
+- **The business-days over-goal count uses the SLA goal in days.**
+  `overgoal_days` was bounded by the first business-days bucket threshold
+  while the day compliance figure used `sla_goal_days`; the hour pair has
+  always used `sla_goal_hours` for both. The pending report's business-days
+  bands use the same pair, so the block and the report still agree.
+
+- **The score-band and wait-time bucket thresholds are checked on save.** Each
+  setting must hold exactly three numbers in the order its bands are read:
+  decreasing and within 0-100 for the score bands, increasing and not negative
+  for the effective-hours and business-days buckets, with no two equal. A
+  value typed out of order used to be saved and silently misclassified every
+  score or submission on the site. Stored values are read as before and
+  checked the next time the settings page is saved; the descriptions now state
+  the expected order.
+
+- **Two setting descriptions say what the code does.** The reconciliation
+  batch size is capped at 10000, and the retention window also prunes the
+  daily site and trend tables, which limits how far back the school comparison
+  reaches.
+
+- **The academic calendar web service rejects date ranges longer than 366 days
+  and values that are not real dates.** The limit was declared but not
+  enforced.
+
+- **The dashboard and the pending report compute their hero figures in one
+  shared module** (`amd/src/lib/aggregate.js`), so the two cannot drift apart.
+
+- **CI runs on pushes to `main` and `MOODLE_*_STABLE`, on pull requests and on
+  manual dispatch,** and a newer push supersedes a running pull-request run,
+  never one on `main`.
+
 ### Added
 - **Three lifecycle events are now observed**, closing gaps where a ledger row
   stops describing reality without any of its own values changing — the shape
@@ -344,6 +521,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tool_page_viewed` keeps accepting the `manage` slug: log rows written before
   this change still carry it, and they resolve to the settings page rather than
   to a dead URL.
+
+- **The unused server-rendered group card.** The block has rendered only its
+  JavaScript view since the no-JavaScript fallback became a short message; the
+  card, gauge and sparkline renderables and their four templates had no
+  caller.
+
+- **Unread fields in the block's web service response:** the 30-day paused-day
+  aggregates, the next and last pause fields and `perceived_median_hours`,
+  computed on every load and read by no client. This also removes a 30-day
+  calendar walk from every uncached block load.
+
+- **Unused JavaScript, strings and styles.** Five components nothing loaded
+  (the grade-now panel, hero metric card, pause timeline modal, paused-periods
+  callout and segmented filter), the never-loaded `responsiveness` module,
+  unused formatter and web service wrapper exports, the strings only they
+  used, and the rules for elements that no longer exist. The web services stay
+  registered.
+
+- **Two settings that nothing read:** "Wall-clock bucket thresholds" and
+  "Enable school comparison overlay" (the school comparison is governed by the
+  `viewschoolcomparison` capability alone). The upgrade removes their stored
+  values.
+
+- `dirty_queue::remove()`, which only a test called.
 
 ### Added
 - **A tool to remove the block from many courses at once**, for the

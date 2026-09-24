@@ -107,12 +107,13 @@ final class dirty_queue_test extends \advanced_testcase {
     }
 
     /**
-     * Reading a batch returns the oldest tuples first, and removing one takes
-     * it out of the batch.
+     * Reading a batch returns the oldest tuples first and consumes nothing:
+     * a tuple leaves the queue only when its row is deleted, as recompute_one
+     * does after a successful recompute.
      *
      * @return void
      */
-    public function test_the_batch_is_fifo_and_removable(): void {
+    public function test_the_batch_is_fifo_and_leaves_the_rows_in_place(): void {
         global $DB;
         $this->resetAfterTest();
 
@@ -125,7 +126,8 @@ final class dirty_queue_test extends \advanced_testcase {
         $this->assertCount(2, $batch);
         $this->assertSame(1, (int) $batch[0]->courseid, 'Oldest first.');
 
-        dirty_queue::remove((int) $batch[0]->id);
+        $this->assertSame(2, dirty_queue::size(), 'Reading a batch removes nothing.');
+        $DB->delete_records('block_feedback_tracker_queue', ['id' => $batch[0]->id]);
 
         $this->assertSame(1, dirty_queue::size());
         $remaining = array_values(dirty_queue::pop_batch(10));

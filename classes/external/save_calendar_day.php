@@ -36,7 +36,8 @@ use core_external\external_value;
 /**
  * Upsert one row in {block_feedback_tracker_cday}. Sending daytype = 'remove'
  * deletes the row. Fires `cal_day_updated` so the calendar observer bumps
- * calver and enqueues every rollup (course, group) tuple.
+ * calver and enqueues every rollup (course, group) tuple; removing a date that
+ * has no row changes nothing and fires nothing.
  */
 class save_calendar_day extends external_api {
     /** Sentinel passed by the editor to delete a day. */
@@ -145,9 +146,11 @@ class save_calendar_day extends external_api {
         $now = time();
 
         if ($daytype === self::ACTION_REMOVE) {
-            if ($existing) {
-                $DB->delete_records('block_feedback_tracker_cday', ['id' => $existing->id]);
+            if (!$existing) {
+                // Nothing changed, so no event: cal_day_updated re-enqueues every rollup on the site.
+                return ['success' => true, 'id' => 0, 'calver' => calendar::current_version()];
             }
+            $DB->delete_records('block_feedback_tracker_cday', ['id' => $existing->id]);
             $rowid = 0;
         } else {
             $record = (object) [

@@ -146,7 +146,8 @@ class get_report_scopes extends external_api {
                     ? get_string('card_nogroup', 'block_feedback_tracker')
                     : get_string('card_ungrouped', 'block_feedback_tracker');
             } else {
-                $name = $titles[$gid]['title'] ?? ($groupnames[$gid] ?? sprintf('Group #%d', $gid));
+                $name = $titles[$gid]['title']
+                    ?? ($groupnames[$gid] ?? responsiveness_payload::fallback_group_name($gid));
             }
             $groups[] = [
                 'groupid'              => $gid,

@@ -205,7 +205,63 @@ final class backfill_one_submission_test extends \advanced_testcase {
         );
     }
 
+    /**
+     * Core's cron runs many tasks in one process. A block removed by another
+     * process between two executions must be seen by the second one, not
+     * answered from what the first execution memoised.
+     *
+     * @return void
+     */
+    public function test_a_block_removed_between_two_executions_is_seen_by_the_second(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        [$cm, $students] = $this->build_course_with_submissions(2);
+        [$first, $second] = array_values($students);
+
+        $this->execute_for($cm, $first);
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $first->id]),
+            'Control: the first execution ran while the block was on the course.'
+        );
+
+        // Removed straight from the table, as another process would: nothing here resets a memo.
+        $DB->delete_records('block_instances', [
+            'blockname' => 'feedback_tracker',
+            'parentcontextid' => \context_course::instance((int) $cm->course)->id,
+        ]);
+
+        $this->execute_for($cm, $second);
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $second->id]),
+            'The second execution must see that the course is no longer tracked.'
+        );
+    }
+
     // Helpers.
+
+    /**
+     * Run the task for one student's submission, as its own execution.
+     *
+     * @param \stdClass $cm
+     * @param \stdClass $student
+     * @return void
+     */
+    private function execute_for(\stdClass $cm, \stdClass $student): void {
+        $task = new backfill_one_submission();
+        $task->set_custom_data([
+            'rows' => [
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $student->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+            ],
+        ]);
+        $task->execute();
+    }
 
     /**
      * Build a course with the block, an assign instance, and $count students

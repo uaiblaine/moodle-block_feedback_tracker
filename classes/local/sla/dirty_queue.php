@@ -34,12 +34,14 @@ namespace block_feedback_tracker\local\sla;
  * {@see \block_feedback_tracker\task\drain_queue} reads tuples with pop_batch()
  * and queues one recompute per tuple, and
  * {@see \block_feedback_tracker\task\recompute_one} retires the row after a
- * successful recompute. It deletes by tuple and enqueue time rather than
- * through remove(), so a row re-enqueued during the recompute survives.
+ * successful recompute. It deletes by tuple and enqueue time, so a row
+ * re-enqueued during the recompute survives.
  *
  * Uniqueness on (courseid, groupid) collapses bursts of writes for the same
  * tuple into a single queue row; the row's `reason` reflects the most recent
- * cause, and `timeenqueued` is the most recent enqueue time.
+ * cause, and `timeenqueued` is the most recent enqueue time. The reason is
+ * diagnostic only: nothing decides anything on it, and every reason is
+ * recomputed the same way.
  */
 class dirty_queue {
     /** Reason: submission upserted. */
@@ -103,6 +105,14 @@ class dirty_queue {
     /**
      * Refresh an existing queue row's reason and enqueue time.
      *
+     * The refresh is what keeps fresh dirt from being lost:
+     * {@see \block_feedback_tracker\task\recompute_one} retires the row only
+     * when `timeenqueued` is not later than the moment its recompute started,
+     * so a tuple dirtied again during the recompute keeps its row. The cost is
+     * that under a backlog a tuple dirtied again and again moves to the back of
+     * the FIFO each time; keeping the first enqueue time instead would let the
+     * recompute retire dirt it never read.
+     *
      * @param int $id Queue row id.
      * @param string $reason One of self::REASON_*.
      * @param int $now Epoch seconds to stamp.
@@ -135,17 +145,6 @@ class dirty_queue {
             0,
             $batchsize
         );
-    }
-
-    /**
-     * Remove a queue row by id.
-     *
-     * @param int $id
-     * @return void
-     */
-    public static function remove(int $id): void {
-        global $DB;
-        $DB->delete_records('block_feedback_tracker_queue', ['id' => $id]);
     }
 
     /**

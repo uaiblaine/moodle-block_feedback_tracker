@@ -65,7 +65,6 @@ function xmldb_block_feedback_tracker_install() {
         'sla_goal_hours'             => '24',
         'sla_goal_days'              => '2',
         'bucket_thresholds_eff'      => '24,48,120',
-        'bucket_thresholds_raw'      => '24,48,120',
 
         // Score-band thresholds: CSV of three cutoffs (excellent / good /
         // regular). Same default as settings.php, parse_thresholds_band() in

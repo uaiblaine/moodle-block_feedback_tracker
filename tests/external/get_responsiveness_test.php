@@ -120,11 +120,8 @@ final class get_responsiveness_test extends \advanced_testcase {
          */
         $this->assertSame('excellent', $card['score_band']);
 
-        // The payload carries the perceived / paused / peer keys with their
-        // defaults. perceived_median_hours mirrors median_raw_h (waitinghours
-        // 24.0 of the only ledger row).
-        $this->assertArrayHasKey('perceived_median_hours', $card);
-        $this->assertEqualsWithDelta(24.0, $card['perceived_median_hours'], 0.01);
+        // The graded wall-clock median is waitinghours 24.0 of the only ledger row.
+        $this->assertEqualsWithDelta(24.0, $card['median_raw_h'], 0.01);
         // The include-pending "current" medians feed the block's Effective /
         // Perceived tiles. With no pending work they equal the graded medians;
         // see rollup_service_test::test_cur_medians_include_pending.
@@ -132,16 +129,6 @@ final class get_responsiveness_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(16.0, $card['cur_median_eff_h'], 0.01);
         $this->assertArrayHasKey('cur_median_raw_h', $card);
         $this->assertEqualsWithDelta(24.0, $card['cur_median_raw_h'], 0.01);
-        $this->assertArrayHasKey('paused_days_30d', $card);
-        $this->assertIsInt($card['paused_days_30d']);
-        $this->assertGreaterThanOrEqual(0, $card['paused_days_30d']);
-        $this->assertArrayHasKey('paused_breakdown_30d', $card);
-        $this->assertArrayHasKey('weekend', $card['paused_breakdown_30d']);
-        $this->assertArrayHasKey('holiday', $card['paused_breakdown_30d']);
-        $this->assertArrayHasKey('recess', $card['paused_breakdown_30d']);
-        // Sub-day events of 'optional' calendar days; empty by default.
-        $this->assertArrayHasKey('paused_events_30d', $card);
-        $this->assertIsArray($card['paused_events_30d']);
         // Single-group fixture < MIN_SAMPLE for peer_stats, so peer
         // benchmarks come back null and the JS PeerContext hides itself.
         $this->assertArrayHasKey('peer_department_score', $card);
@@ -675,6 +662,93 @@ final class get_responsiveness_test extends \advanced_testcase {
     }
 
     /**
+     * The card carries only what the block reads: the 30-day paused
+     * aggregates, the next/last pause columns and perceived_median_hours are
+     * gone from the built payload as well as from the declared return. The
+     * upcoming-pause notice, which the block does read, is the control.
+     *
+     * @return void
+     */
+    public function test_card_carries_no_unread_pause_aggregates(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->seed_rollup($course, (int) $group->id);
+        $this->setUser($teacher);
+
+        $raw = get_responsiveness::execute((int) $course->id);
+        $clean = external_api::clean_returnvalue(get_responsiveness::execute_returns(), $raw);
+
+        $dropped = [
+            'paused_days_30d', 'paused_breakdown_30d', 'paused_events_30d',
+            'nextpause_ts', 'nextpause_reason', 'nextpause_note', 'lastpause_endts', 'lastpause_reason',
+            'perceived_median_hours',
+        ];
+        foreach (['built' => $raw['groups'][0], 'returned' => $clean['groups'][0]] as $label => $card) {
+            $this->assertArrayHasKey('upcoming_pauses', $card, $label);
+            foreach ($dropped as $key) {
+                $this->assertArrayNotHasKey($key, $card, "$label: $key");
+            }
+        }
+    }
+
+    /**
+     * A rollup row whose group no longer exists is named by the plugin's
+     * lang string, so the name follows the site's language and its string
+     * customisations instead of a fixed English "Group #N".
+     *
+     * @return void
+     */
+    public function test_a_row_without_its_group_gets_the_localised_fallback_name(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->seed_rollup($course, 987654);
+        $this->setUser($teacher);
+
+        $file = $this->customise_string('card_groupfallback', 'Removed group {$a}');
+        try {
+            $result = external_api::clean_returnvalue(
+                get_responsiveness::execute_returns(),
+                get_responsiveness::execute((int) $course->id)
+            );
+        } finally {
+            unlink($file);
+            get_string_manager()->reset_caches();
+        }
+
+        $this->assertCount(1, $result['groups']);
+        $this->assertSame(987654, $result['groups'][0]['groupid']);
+        $this->assertSame('Removed group 987654', $result['groups'][0]['groupname']);
+    }
+
+    /**
+     * Customise one of the plugin's English strings the way tool_customlang
+     * does, with an en_local file in the language root. The caller removes the
+     * file and resets the string caches again when done.
+     *
+     * @param string $key String identifier.
+     * @param string $value Customised text.
+     * @return string Path of the file written.
+     */
+    private function customise_string(string $key, string $value): string {
+        global $CFG;
+        $dir = $CFG->langlocalroot . '/en_local';
+        make_writable_directory($dir);
+        $file = $dir . '/block_feedback_tracker.php';
+        file_put_contents($file, "<?php\n\$string[" . var_export($key, true) . '] = ' . var_export($value, true) . ";\n");
+        get_string_manager()->reset_caches();
+        return $file;
+    }
+
+    /**
      * A student cannot read the responsiveness payload for their course.
      *
      * @return void
@@ -688,5 +762,40 @@ final class get_responsiveness_test extends \advanced_testcase {
 
         $this->expectException(\required_capability_exception::class);
         get_responsiveness::execute((int) $course->id);
+    }
+
+    /**
+     * The ungrouped card is left out of its own peer benchmark. Its group id is
+     * 0, which every course's ungrouped card shares, so the pool excludes the
+     * card by (course, group) rather than by group id alone.
+     *
+     * Own score 100 against peers of 10, 20 and 30: excluding the card gives a
+     * median of 20, keeping it would give 25.
+     *
+     * @return void
+     */
+    public function test_the_ungrouped_card_is_not_its_own_peer(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+        \block_feedback_tracker\local\score\peer_stats::reset_memo();
+
+        $course = $this->getDataGenerator()->create_course(['groupmode' => NOGROUPS]);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->seed_rollup($course, 0, 1, 1, 100.0);
+        foreach ([10.0, 20.0, 30.0] as $score) {
+            $this->seed_rollup($this->getDataGenerator()->create_course(), 0, 1, 1, $score);
+        }
+        $this->setUser($teacher);
+
+        $result = external_api::clean_returnvalue(
+            get_responsiveness::execute_returns(),
+            get_responsiveness::execute((int) $course->id)
+        );
+
+        $this->assertCount(1, $result['groups']);
+        $card = $result['groups'][0];
+        $this->assertSame(0, $card['groupid']);
+        $this->assertEqualsWithDelta(20.0, $card['peer_department_score'], 0.001);
     }
 }

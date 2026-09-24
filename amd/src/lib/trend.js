@@ -16,9 +16,7 @@
 /**
  * "Speed" model for the trend signal — shared by the Preact components
  * (TrendRow, the responsiveness heroes, the simulator) so the sign, arrow,
- * colour and wording never drift apart. The server no-JS card
- * (classes/output/responsiveness_card.php) and format.js formatTrend keep
- * their own arrow rule, without the ±2% dead band.
+ * colour and wording never drift apart.
  *
  * The trend percentage is the change in median effective hours over the
  * window (negative = fewer hours = work returned faster). For display we

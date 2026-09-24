@@ -27,8 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\calendar;
 
 /**
- * Verifies the weekend / holiday / recess bucket counts shown by the paused
- * periods callout (PausedCallout.js).
+ * Verifies the weekend / holiday / recess bucket counts of the paused-periods
+ * summary on the teacher dashboard and the academic-days strip.
  *
  * @covers \block_feedback_tracker\local\calendar\paused_aggregator
  */
@@ -48,14 +48,20 @@ final class paused_aggregator_test extends \advanced_testcase {
         $this->assertSame(4, $result['total_days']);
     }
 
+    /**
+     * A holiday on a weekend day counts once, as a holiday: the holiday takes
+     * precedence over the weekend.
+     *
+     * @return void
+     */
     public function test_holiday_overrides_weekend(): void {
         $this->resetAfterTest();
         $this->seed_calendar();
 
         global $DB;
-        // Insert a holiday on Mon 2026-05-25 inside the window.
+        // Sunday 2026-05-24, a weekend day under the default mask.
         $DB->insert_record('block_feedback_tracker_cday', (object) [
-            'daydate' => 20260525, 'daytype' => 'holiday',
+            'daydate' => 20260524, 'daytype' => 'holiday',
             'note' => null, 'timecreated' => time(), 'timemodified' => time(),
         ]);
 
@@ -63,10 +69,12 @@ final class paused_aggregator_test extends \advanced_testcase {
         $end = (new \DateTimeImmutable('2026-06-01', new \DateTimeZone('UTC')))->getTimestamp();
         $result = paused_aggregator::for_window(0, $start, $end);
 
-        $this->assertSame(4, $result['weekend']);
+        $this->assertSame(3, $result['weekend']);
         $this->assertSame(1, $result['holiday']);
         $this->assertSame(0, $result['recess']);
-        $this->assertSame(5, $result['total_days']);
+        $this->assertSame(4, $result['total_days']);
+        $perday = paused_aggregator::per_day_for_window(0, $start, $end);
+        $this->assertSame(['paused' => true, 'reason' => 'holiday'], $perday[20260524]);
     }
 
     public function test_recess_and_closed_count_as_recess(): void {
@@ -109,6 +117,43 @@ final class paused_aggregator_test extends \advanced_testcase {
 
         $this->assertSame(1, $result['recess']);
         $this->assertSame([], $result['events']);
+    }
+
+    /**
+     * With recesses counted as working time, a recess day is not paused, but a
+     * closed day and a full-day optional day still are: the time engine treats
+     * both as inactive whatever the settings.
+     *
+     * @return void
+     */
+    public function test_closed_and_full_day_optional_pause_when_recesses_count(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        set_config('excluderecesses', '0', 'block_feedback_tracker');
+
+        // Tuesday optional, Wednesday recess, Thursday closed.
+        foreach ([20260519 => 'optional', 20260520 => 'recess', 20260521 => 'closed'] as $daydate => $daytype) {
+            $DB->insert_record('block_feedback_tracker_cday', (object) [
+                'daydate' => $daydate, 'daytype' => $daytype,
+                'starttime' => null, 'endtime' => null,
+                'note' => null, 'timecreated' => time(), 'timemodified' => time(),
+            ]);
+        }
+
+        $start = (new \DateTimeImmutable('2026-05-18', new \DateTimeZone('UTC')))->getTimestamp();
+        $end = (new \DateTimeImmutable('2026-06-01', new \DateTimeZone('UTC')))->getTimestamp();
+        $perday = paused_aggregator::per_day_for_window(0, $start, $end);
+
+        $this->assertSame(['paused' => true, 'reason' => 'recess'], $perday[20260519]);
+        $this->assertSame(['paused' => false, 'reason' => ''], $perday[20260520]);
+        $this->assertSame(['paused' => true, 'reason' => 'recess'], $perday[20260521]);
+        $this->assertSame(2, paused_aggregator::for_window(0, $start, $end)['recess']);
+
+        // The same rows agree with the time engine, which is what the counts describe.
+        $this->assertFalse(calendar::is_active_day(calendar::DAYTYPE_CLOSED, false));
+        $this->assertFalse(calendar::is_active_day(calendar::DAYTYPE_OPTIONAL, false));
+        $this->assertTrue(calendar::is_active_day(calendar::DAYTYPE_RECESS, false));
     }
 
     public function test_sub_day_optional_event_appears_in_events_sidecar(): void {

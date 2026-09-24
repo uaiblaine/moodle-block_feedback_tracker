@@ -140,6 +140,7 @@ echo $OUTPUT->render_from_template('block_feedback_tracker/bulk_remove', [
     'str' => [
         'intro' => get_string('bulk_intro', 'block_feedback_tracker'),
         'empty' => get_string('bulk_empty', 'block_feedback_tracker'),
+        'colselect' => get_string('bulk_col_select', 'block_feedback_tracker'),
         'colcourse' => get_string('bulk_col_course', 'block_feedback_tracker'),
         'colcategory' => get_string('bulk_col_category', 'block_feedback_tracker'),
         'colenddate' => get_string('bulk_col_enddate', 'block_feedback_tracker'),

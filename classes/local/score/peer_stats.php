@@ -31,9 +31,11 @@ namespace block_feedback_tracker\local\score;
  * "top 10%" benchmarks shown in the block's peer-context panel.
  *
  * There is no department concept: the pool is every scored rollup row on the
- * site, in every course, minus the group being compared. A narrower scope
- * (course category, custom field) is a filter in {@see self::source_rows()}
- * and needs no API change.
+ * site, in every course, minus the card being compared. A card is a (course,
+ * group) pair, and group id 0 is the ungrouped card of every course, so the
+ * exclusion needs the course id to tell a course's own ungrouped row from the
+ * others. A narrower scope (course category, custom field) is a filter in
+ * {@see self::source_rows()} and needs no API change.
  *
  * Percentiles are computed in PHP because Moodle's supported databases have no
  * common percentile syntax, and the pool is only one row per (course, group).
@@ -42,16 +44,23 @@ class peer_stats {
     /** Minimum sample size required to publish peer benchmarks. */
     public const MIN_SAMPLE = 3;
 
-    /** @var array<int, array<string, float|null>> Per-request memo, keyed by exclusion (groupid). */
+    /** @var array<string, array<string, float|null>> Per-request memo, keyed by "courseid:groupid" of the excluded card. */
     private static array $cache = [];
 
     /**
-     * Peer benchmarks excluding one group. Returns nulls when fewer than
-     * {@see self::MIN_SAMPLE} other groups have a score; the PeerContext
-     * component hides itself when both benchmarks are null.
+     * Peer benchmarks excluding one card. Returns nulls when fewer than
+     * {@see self::MIN_SAMPLE} other cards have a score, and nulls for the two
+     * hours figures when fewer than {@see self::MIN_SAMPLE} of them have a
+     * median wait: a card with pending work and nothing graded has a score but
+     * no median. The PeerContext component hides itself when both score
+     * benchmarks are null.
      *
-     * @param int $excludegroupid Skip this group when computing the
-     *                            benchmark; 0 = include all rows.
+     * @param int $excludegroupid Group of the card under comparison; 0 for the
+     *                            ungrouped card.
+     * @param int $courseid Course of the card under comparison. With it, the
+     *                      (course, group) row is excluded, including a group
+     *                      id of 0. Without it (0), only a real group is
+     *                      excluded, by group id alone.
      * @return array{
      *     department_score:float|null,
      *     department_hours:float|null,
@@ -59,13 +68,18 @@ class peer_stats {
      *     top10_hours:float|null
      * }
      */
-    public static function for_exclusion(int $excludegroupid): array {
-        if (array_key_exists($excludegroupid, self::$cache)) {
-            return self::$cache[$excludegroupid];
+    public static function for_exclusion(int $excludegroupid, int $courseid = 0): array {
+        $key = $courseid . ':' . $excludegroupid;
+        if (array_key_exists($key, self::$cache)) {
+            return self::$cache[$key];
         }
 
         $rows = self::source_rows();
-        if ($excludegroupid > 0) {
+        if ($courseid > 0) {
+            $rows = array_values(array_filter($rows, static function ($r) use ($courseid, $excludegroupid) {
+                return (int) $r->courseid !== $courseid || (int) $r->groupid !== $excludegroupid;
+            }));
+        } else if ($excludegroupid > 0) {
             $rows = array_values(array_filter($rows, static function ($r) use ($excludegroupid) {
                 return (int) $r->groupid !== $excludegroupid;
             }));
@@ -78,7 +92,7 @@ class peer_stats {
                 'top10_score'      => null,
                 'top10_hours'      => null,
             ];
-            self::$cache[$excludegroupid] = $result;
+            self::$cache[$key] = $result;
             return $result;
         }
 
@@ -88,16 +102,17 @@ class peer_stats {
             $rows
         ));
         $hoursclean = array_values(array_filter($hours, static fn ($h) => $h !== null));
+        $enoughhours = count($hoursclean) >= self::MIN_SAMPLE;
 
         $result = [
             'department_score' => self::percentile($scores, 0.5),
-            'department_hours' => self::percentile($hoursclean, 0.5),
+            'department_hours' => $enoughhours ? self::percentile($hoursclean, 0.5) : null,
             // Top 10% by score = 90th percentile (higher is better).
             'top10_score'      => self::percentile($scores, 0.9),
             // Top 10% by hours = 10th percentile (lower hours is better).
-            'top10_hours'      => self::percentile($hoursclean, 0.1),
+            'top10_hours'      => $enoughhours ? self::percentile($hoursclean, 0.1) : null,
         ];
-        self::$cache[$excludegroupid] = $result;
+        self::$cache[$key] = $result;
         return $result;
     }
 
@@ -125,7 +140,7 @@ class peer_stats {
             'responsiveness_score IS NOT NULL',
             null,
             '',
-            'id, groupid, responsiveness_score, median_eff_h'
+            'id, courseid, groupid, responsiveness_score, median_eff_h'
         );
     }
 

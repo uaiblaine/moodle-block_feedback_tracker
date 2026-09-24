@@ -3,32 +3,8 @@
  * Block Feedback tracker — block content styles.
  */
 
-/* Design tokens. The --bft-band-*-fg colours mirror BAND_COLOURS in
- * classes/output/score_gauge.php and amd/src/lib/bands.js, except nodata
- * (#94a3b8 there); keep them in step when a band changes. */
+/* Type tokens. */
 :root {
-    --bft-surface: #fff;
-    --bft-surface-alt: #f7f8fa;
-    --bft-surface-dim: #f1f3f6;
-    --bft-border: #e5e7eb;
-    --bft-border-soft: #eef0f3;
-    --bft-text: #0f172a;
-    --bft-text-muted: #64748b;
-    --bft-text-faint: #94a3b8;
-
-    --bft-band-excellent-fg: #047857;
-    --bft-band-excellent-bg: #ecfdf5;
-    --bft-band-good-fg: #0e7490;
-    --bft-band-good-bg: #ecfeff;
-    --bft-band-regular-fg: #b45309;
-    --bft-band-regular-bg: #fffbeb;
-    --bft-band-critical-fg: #be4b25;
-    --bft-band-critical-bg: #fdf2ee;
-    --bft-band-pending-fg: #475569;
-    --bft-band-pending-bg: #f1f5f9;
-    --bft-band-nodata-fg: #64748b;
-    --bft-band-nodata-bg: #f1f5f9;
-
     --bft-font-display: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --bft-font-mono: 'JetBrains Mono', ui-monospace, "SFMono-Regular", Menlo, monospace;
 
@@ -49,6 +25,107 @@
     --bft-ls-label: 0.05em;
 }
 
+/* Colour tokens. Declared on body: it is an ancestor of everything the plugin paints, including
+ * anything core appends to document.body, and a custom property is resolved on the element that
+ * declares it, so body sees the --bs-* set whether the theme puts data-bs-theme on html or on body.
+ *
+ * Neutrals and the brand read the theme: Moodle 5.1+ declares the --bs-* set and redefines it in
+ * dark mode, Moodle 4.5 declares only the Bootstrap 4 names, and the literal is the last fallback.
+ * The band, plum and sand families are the plugin's own, and the dark-mode rule below gives each
+ * a counterpart. Each text colour keeps at least 4.5:1 on every surface colour it is painted on,
+ * in both modes. */
+body {
+    --bft-surface: var(--bs-body-bg, var(--white, #fff));
+    --bft-surface-alt: var(--bs-tertiary-bg, var(--light, #f7f8fa));
+    --bft-surface-dim: var(--bs-secondary-bg, #f1f3f6);
+    --bft-border: var(--bs-border-color, #e5e7eb);
+    --bft-border-soft: var(--bs-secondary-bg, #eef0f3);
+    --bft-border-strong: var(--bs-border-color, #cbd5e1);
+    --bft-text: var(--bs-body-color, #0f172a);
+    --bft-text-muted: var(--bs-secondary-color, #5f6b7f);
+    /* Equal to muted: any lighter grey falls under 4.5:1 on the dim surfaces. */
+    --bft-text-faint: var(--bft-text-muted);
+    /* Focus rings. The link colour is the brand in light mode and a tint of it in dark mode, where
+       Boost's --bs-primary is 3.02:1 on the body. */
+    --bft-brand: var(--bs-link-color, var(--primary, #0f6cbf));
+    --bft-shimmer: rgba(255, 255, 255, 0.6);
+
+    /* Band text (-fg), tint (-bg) and tint edge (-edge). The -fg values equal BAND_COLOURS in
+       amd/src/lib/bands.js except nodata; keep them in step when a band changes. */
+    --bft-band-excellent-fg: #047857;
+    --bft-band-excellent-bg: #ecfdf5;
+    --bft-band-excellent-edge: #a7f3d0;
+    --bft-band-good-fg: #0e7490;
+    --bft-band-good-bg: #ecfeff;
+    --bft-band-good-edge: #a5f3fc;
+    --bft-band-regular-fg: #b45309;
+    --bft-band-regular-bg: #fffbeb;
+    --bft-band-regular-edge: #fde68a;
+    --bft-band-critical-fg: #be4b25;
+    --bft-band-critical-bg: #fdf2ee;
+    --bft-band-critical-edge: #f5c4b0;
+    --bft-band-pending-fg: #475569;
+    --bft-band-pending-bg: #f1f5f9;
+    --bft-band-pending-edge: #cbd5e1;
+    /* Darker than BAND_COLOURS.nodata (#94a3b8) on purpose: that grey is a stroke colour, and as
+       text it is 2.6:1 on white. */
+    --bft-band-nodata-fg: #5f6b7f;
+    --bft-band-nodata-bg: #f1f5f9;
+    --bft-band-nodata-edge: #cbd5e1;
+
+    /* Band fills under --bft-on-fill text. They keep these values in dark mode, where the -fg
+       colours turn light. */
+    --bft-band-excellent-fill: #047857;
+    --bft-band-good-fill: #0e7490;
+    --bft-band-regular-fill: #b45309;
+    --bft-band-critical-fill: #be4b25;
+    --bft-band-pending-fill: #475569;
+    --bft-on-fill: #fff;
+
+    /* Dashboard accents: the warm hero gradient, the insight cards and the call-to-action buttons. */
+    --bft-warm-surface: #fdfbf7;
+    --bft-plum-fg: #6d4aac;
+    --bft-plum-bg: #f7f3fc;
+    --bft-plum-fill: #6d4aac;
+    --bft-plum-fill-hover: #5a3d8f;
+    --bft-sand-fg: #8a6420;
+    --bft-sand-bg: #fbf6ec;
+}
+
+/* Dark mode: Bootstrap 5.3's data-bs-theme attribute, which Moodle 5.3 writes on html and some
+ * themes write on body. Anchored at body so a dark scope deeper in the page, such as a navbar,
+ * does not match. Only the plugin's own colours need a counterpart: the --bs-* tokens above
+ * already follow the mode, and the fills keep their light values. */
+body[data-bs-theme="dark"],
+[data-bs-theme="dark"] body {
+    --bft-shimmer: rgba(255, 255, 255, 0.08);
+
+    --bft-band-excellent-fg: #6ee7b7;
+    --bft-band-excellent-bg: #0b3b2e;
+    --bft-band-excellent-edge: #065f46;
+    --bft-band-good-fg: #67e8f9;
+    --bft-band-good-bg: #0b3441;
+    --bft-band-good-edge: #155e75;
+    --bft-band-regular-fg: #fcd34d;
+    --bft-band-regular-bg: #3b2a0a;
+    --bft-band-regular-edge: #92400e;
+    --bft-band-critical-fg: #fdab8a;
+    --bft-band-critical-bg: #3d1d13;
+    --bft-band-critical-edge: #7c2d12;
+    --bft-band-pending-fg: #cbd5e1;
+    --bft-band-pending-bg: #1e293b;
+    --bft-band-pending-edge: #475569;
+    --bft-band-nodata-fg: #94a3b8;
+    --bft-band-nodata-bg: #1e293b;
+    --bft-band-nodata-edge: #475569;
+
+    --bft-warm-surface: #24211d;
+    --bft-plum-fg: #c4b5fd;
+    --bft-plum-bg: #2d2540;
+    --bft-sand-fg: #e8c67a;
+    --bft-sand-bg: #2f2717;
+}
+
 /* Mono utility — for numeric cells, score values, hour units. Pair with
  * font-variant-numeric: tabular-nums where vertical alignment matters. */
 .bft-mono {
@@ -58,16 +135,13 @@
 
 .block_feedback_tracker {
     font-family: var(--bft-font-display);
-    /* Match the dashboard's WCAG-AA faint text inside the block. */
-    --bft-text-faint: #6b7280;
 }
 
 /* Visible keyboard focus for every interactive control in the block. */
 .block_feedback_tracker a:focus-visible,
 .block_feedback_tracker button:focus-visible,
-.block_feedback_tracker select:focus-visible,
-.block_feedback_tracker summary:focus-visible {
-    outline: 2px solid var(--bft-band-good-fg);
+.block_feedback_tracker select:focus-visible {
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
     border-radius: 4px;
 }
@@ -104,7 +178,7 @@
     border-radius: 4px;
     padding: 0.25rem 0.4rem;
     min-height: 1.75rem;
-    background: #fff;
+    background: var(--bft-surface);
     color: var(--bft-text);
     font-size: var(--bft-fs-body);
 }
@@ -161,8 +235,8 @@
 }
 
 .bft-retry-btn {
-    background: #ea580c;
-    border: 1px solid #ea580c;
+    background: #c2410c;
+    border: 1px solid #c2410c;
     border-radius: 4px;
     padding: 0.3rem 0.8rem;
     font-size: var(--bft-fs-body);
@@ -173,8 +247,8 @@
 
 .bft-retry-btn:hover,
 .bft-retry-btn:focus-visible {
-    background: #c2410c;
-    border-color: #c2410c;
+    background: #9a3412;
+    border-color: #9a3412;
     outline: none;
 }
 
@@ -223,7 +297,7 @@
     gap: 0.6rem;
     border: 1px solid var(--bft-border);
     border-radius: 8px;
-    background: #fff;
+    background: var(--bft-surface);
     padding: 0.75rem;
 }
 
@@ -275,7 +349,7 @@
 .block_feedback_tracker .bft-skeleton-hero {
     position: relative;
     overflow: hidden;
-    background: #e9eef5;
+    background: var(--bft-surface-dim);
 }
 
 .block_feedback_tracker .bft-skeleton-line::after,
@@ -289,7 +363,7 @@
         linear-gradient(
             90deg,
             rgba(255, 255, 255, 0) 0,
-            rgba(255, 255, 255, 0.6) 50%,
+            var(--bft-shimmer) 50%,
             rgba(255, 255, 255, 0) 100%
         );
     animation: bft-shimmer 1.4s ease-in-out infinite;
@@ -313,7 +387,8 @@
 .block_feedback_tracker .bft-card {
     border: 1px solid var(--bft-border);
     border-radius: 8px;
-    background: #fff;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     overflow: hidden;
 }
 
@@ -349,7 +424,7 @@
 }
 
 .block_feedback_tracker .bft-card-title {
-    font-size: var(--bft-fs-title);
+    font-size: 0.95rem;
     font-weight: 700;
     color: var(--bft-text);
     /* Clamp long group names to 2 lines; GroupCard's title attribute shows the full name on hover. */
@@ -368,37 +443,13 @@
     text-overflow: ellipsis;
 }
 
-/* Preact group card: stack the sections vertically so they reflow down a
- * narrow block column instead of squeezing onto one row. (The server card's
- * .bft-card-body further below is a separate gauge | data flex-row.) */
+/* Group card: stack the sections vertically so they reflow down a narrow
+ * block column instead of squeezing onto one row. */
 .block_feedback_tracker .bft-card-stack {
     display: flex;
     flex-direction: column;
     gap: 0.625rem;
     padding: 0.75rem;
-}
-
-.block_feedback_tracker .bft-card-body {
-    padding: 0.75rem;
-}
-
-/* The server-rendered card (responsiveness_card.mustache) uses a native
- * <details>/<summary>: hide the default disclosure marker and show a chevron
- * consistent with GroupCard. */
-.block_feedback_tracker summary.bft-card-head {
-    list-style: none;
-}
-.block_feedback_tracker summary.bft-card-head::-webkit-details-marker {
-    display: none;
-}
-.block_feedback_tracker details.bft-card > summary.bft-card-head::before {
-    content: "▸";
-    flex: 0 0 auto;
-    font-size: var(--bft-fs-meta);
-    color: var(--bft-text-muted);
-}
-.block_feedback_tracker details.bft-card[open] > summary.bft-card-head::before {
-    content: "▾";
 }
 
 /* Block footer — refresh control + objective sync/cache note. */
@@ -464,7 +515,7 @@
 
 .block_feedback_tracker .bft-loadmore:hover,
 .block_feedback_tracker .bft-loadmore:focus-visible {
-    background: #f1f3f6;
+    background: var(--bft-surface-dim);
     outline: none;
 }
 
@@ -479,19 +530,19 @@
 
 .bft-refresh {
     background: none;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0 0.4rem;
     font-size: 0.9rem;
     line-height: 1.4;
     cursor: pointer;
-    color: #64748b;
+    color: var(--bft-text-muted);
 }
 
 .bft-refresh:hover,
 .bft-refresh:focus-visible {
-    color: #0f172a;
-    background: #f1f3f6;
+    color: var(--bft-text);
+    background: var(--bft-surface-dim);
     outline: none;
 }
 
@@ -504,15 +555,12 @@
     cursor: progress;
 }
 
-.block_feedback_tracker .bft-card-title {
-    font-size: 0.95rem;
-    color: #0f172a;
-}
-
+/* Gauge beside a data column: the demo card on pages/spike_react.php. */
 .block_feedback_tracker .bft-card-body {
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
+    padding: 0.75rem;
 }
 
 .block_feedback_tracker .bft-card-gauge {
@@ -592,25 +640,25 @@
 /* Trend "improvement zone" — light-green desired band (effective hours
  * 0 -> goal), solid green baseline at 0, dotted green line at the goal.
  * Geometry comes from the SVG attributes; colours live here. Keep in
- * lockstep with amd/src/components/Sparkline.js + templates/sparkline.mustache. */
+ * lockstep with amd/src/components/Sparkline.js. */
 .bft-sparkline-zone {
-    fill: #dcfce7;
+    fill: var(--bft-band-excellent-bg);
     opacity: 0.6;
 }
 
 .bft-sparkline-zone-base {
-    stroke: #059669;
+    stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
 }
 
 .bft-sparkline-zone-top {
-    stroke: #22c55e;
+    stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
     stroke-dasharray: 3 2;
 }
 
 .bft-sparkline-zone-label {
-    fill: #059669;
+    fill: var(--bft-band-excellent-fg);
     font-size: 7px;
     font-weight: 600;
 }
@@ -624,10 +672,9 @@
     font-size: 0.78rem;
 }
 
-.block_feedback_tracker .bft-breakdown > summary,
 .block_feedback_tracker .bft-breakdown-toggle {
     cursor: pointer;
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-weight: 500;
     background: none;
     border: 0;
@@ -637,7 +684,7 @@
 
 .block_feedback_tracker .bft-breakdown-toggle:hover,
 .block_feedback_tracker .bft-breakdown-toggle:focus {
-    color: #0f172a;
+    color: var(--bft-text);
     outline: none;
 }
 
@@ -650,7 +697,7 @@
 .block_feedback_tracker .bft-breakdown-table th,
 .block_feedback_tracker .bft-breakdown-table td {
     padding: 0.2rem 0.4rem;
-    border-bottom: 1px solid #eef0f3;
+    border-bottom: 1px solid var(--bft-border-soft);
     text-align: left;
 }
 
@@ -661,7 +708,7 @@
 }
 
 .block_feedback_tracker .bft-breakdown-table tfoot th {
-    border-top: 2px solid #cbd5e1;
+    border-top: 2px solid var(--bft-border-strong);
     border-bottom: none;
     font-weight: 700;
 }
@@ -679,7 +726,7 @@
 }
 
 .bft-empty {
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-style: italic;
     font-size: 0.9rem;
 }
@@ -707,10 +754,11 @@
     color: var(--bft-band-good-fg);
 }
 
+/* Drafts take the lighter nodata pair rather than an opacity, which would take the label under
+ * 4.5:1. */
 .bft-badge-draft {
-    background: var(--bft-band-pending-bg);
-    color: var(--bft-band-pending-fg);
-    opacity: 0.75;
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
 }
 
 .bft-badge-regular {
@@ -726,6 +774,11 @@
 .bft-badge-pending {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
+}
+
+.bft-badge-nodata {
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
 }
 
 /* Drilldown / table badges reuse the same tokens. */
@@ -750,12 +803,10 @@
     color: var(--bft-band-pending-fg);
 }
 /* Needs its own rule: under Bootstrap 5 a bare .badge sets color: #fff and no
-   background, so the label renders white on white. Reuses the pending tokens,
-   de-emphasised like .bft-badge-draft. */
+   background, so the label renders white on white. Same colours as .bft-badge-draft. */
 .badge.badge-draft {
-    background: var(--bft-band-pending-bg);
-    color: var(--bft-band-pending-fg);
-    opacity: 0.75;
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
 }
 
 /* ------------------------------------------------------------------------
@@ -769,10 +820,8 @@
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    padding: 1.5rem 1.75rem 2rem;
     font-family: var(--bft-font-display);
-
-    /* Faint text lifted to WCAG AA: #94a3b8 is 2.6:1 on white, #6b7280 is 4.8:1. */
-    --bft-text-faint: #6b7280;
 }
 
 /* Visible keyboard-focus indicator for every interactive control on the
@@ -781,181 +830,9 @@
  * `outline: none` rules that only signalled focus with a colour change. */
 .bft-dashboard a:focus-visible,
 .bft-dashboard button:focus-visible {
-    outline: 2px solid var(--bft-plum-fg);
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
     border-radius: 4px;
-}
-
-.bft-dashboard-hero {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1.25rem 1.5rem;
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-}
-
-.bft-dashboard-hero-text {
-    flex: 1 1 240px;
-}
-
-.bft-dashboard-hero-greeting {
-    margin: 0 0 0.25rem;
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: #0f172a;
-}
-
-.bft-dashboard-hero-subtitle {
-    margin: 0;
-    color: #64748b;
-    font-size: 0.95rem;
-}
-
-.bft-dashboard-hero-stats {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1.25rem;
-}
-
-.bft-dashboard-kpi {
-    display: flex;
-    flex-direction: column;
-    min-width: 72px;
-    line-height: 1.1;
-}
-
-.bft-dashboard-kpi-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: #0f172a;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-dashboard-kpi-label {
-    font-size: 0.72rem;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 0.15rem;
-}
-
-.bft-dashboard-score {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    padding-left: 1rem;
-    border-left: 1px solid #cbd5e1;
-}
-
-/* Cap the hero gauge so it can't outgrow the KPI row on narrow viewports.
- * Beyond max-width the SVG scales down; the responsive @media block below
- * drops the left border + padding when wrapped. */
-
-.bft-dashboard-score .bft-gauge {
-    width: 140px;
-    height: 140px;
-    max-width: 100%;
-}
-
-.bft-dashboard-score-inline {
-    font-weight: 700;
-    margin-right: 0.4rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-dashboard-section {
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-}
-
-.bft-dashboard-section-title {
-    margin: 0 0 0.75rem;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #0f172a;
-}
-
-.bft-dashboard-section-subtitle {
-    margin: 0.25rem 0 0.75rem;
-    color: #64748b;
-    font-size: 0.85rem;
-}
-
-/* Grade Now panel. */
-
-.bft-gradenow-head {
-    margin-bottom: 0.5rem;
-}
-
-.bft-gradenow-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.bft-gradenow-item {
-    padding: 0.55rem 0.75rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    background: #fff;
-}
-
-.bft-gradenow-item:hover {
-    background: #f8fafc;
-}
-
-.bft-gradenow-item-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 0.5rem;
-}
-
-.bft-gradenow-item-name {
-    font-weight: 600;
-    color: #0f172a;
-    text-decoration: none;
-}
-
-.bft-gradenow-item-name:hover,
-.bft-gradenow-item-name:focus {
-    text-decoration: underline;
-    color: #4338ca;
-}
-
-.bft-gradenow-item-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.2rem 0.75rem;
-    margin-top: 0.2rem;
-    font-size: 0.82rem;
-    color: #64748b;
-}
-
-.bft-gradenow-item-activity {
-    color: #475569;
-}
-
-.bft-gradenow-item-course {
-    font-style: italic;
-}
-
-.bft-gradenow-item-wait {
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
-    color: #0f172a;
-    font-weight: 500;
 }
 
 /* ------------------------------------------------------------------------
@@ -979,8 +856,10 @@
     flex: 1 1 220px;
     min-width: 160px;
     padding: 0.3rem 0.5rem;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     font-size: 0.9rem;
 }
 
@@ -989,7 +868,7 @@
     align-items: center;
     gap: 0.3rem;
     font-size: 0.78rem;
-    color: #64748b;
+    color: var(--bft-text-muted);
 }
 
 .bft-filter-label > span {
@@ -999,11 +878,11 @@
 }
 
 .bft-filter-label select {
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0.2rem 0.4rem;
-    background: #fff;
-    color: #0f172a;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     font-size: 0.85rem;
 }
 
@@ -1017,14 +896,14 @@
 .bft-report-table td {
     padding: 0.4rem 0.6rem;
     text-align: left;
-    border-bottom: 1px solid #eef0f3;
+    border-bottom: 1px solid var(--bft-border-soft);
 }
 
 .bft-report-table thead th {
-    background: #f8fafc;
+    background: var(--bft-surface-alt);
     font-weight: 600;
-    color: #475569;
-    border-bottom: 2px solid #cbd5e1;
+    color: var(--bft-text-muted);
+    border-bottom: 2px solid var(--bft-border-strong);
 }
 
 .bft-th-sortable-btn {
@@ -1038,7 +917,7 @@
 }
 
 .bft-th-sortable.is-active .bft-th-sortable-btn {
-    color: #0f172a;
+    color: var(--bft-text);
 }
 
 .bft-report-row {
@@ -1048,12 +927,12 @@
 .bft-report-row:hover,
 .bft-report-row:focus,
 .bft-report-row:focus-within {
-    background: #f1f5f9;
+    background: var(--bft-surface-alt);
     outline: none;
 }
 
 .bft-report-row:focus-visible {
-    box-shadow: inset 0 0 0 2px #6366f1;
+    box-shadow: inset 0 0 0 2px var(--bft-brand);
 }
 
 .bft-pagination {
@@ -1066,11 +945,11 @@
 }
 
 .bft-pagination button {
-    background: #fff;
-    border: 1px solid #cbd5e1;
+    background: var(--bft-surface);
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0.2rem 0.6rem;
-    color: #0f172a;
+    color: var(--bft-text);
     cursor: pointer;
 }
 
@@ -1080,13 +959,12 @@
 }
 
 .bft-pagination-state {
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-variant-numeric: tabular-nums;
 }
 
 /* ------------------------------------------------------------------------
- * Narrow viewports: report tables reflow into cards, and the dashboard hero's
- * score block drops its left border once it wraps below the KPI row.
+ * Narrow viewports: report tables reflow into cards.
  * ------------------------------------------------------------------------ */
 
 @media (max-width: 640px) {
@@ -1161,120 +1039,9 @@
         justify-content: flex-end;
     }
 
-    .bft-dashboard-score {
-        border-left: 0;
-        padding-left: 0;
-        align-items: flex-start;
-    }
-
-    .bft-dashboard-hero {
-        padding: 1rem;
-    }
-
-    .bft-dashboard-hero-greeting {
-        font-size: 1.2rem;
-    }
-
-    .bft-dashboard-section {
-        padding: 0.75rem 1rem;
-    }
-
     .bft-report-controls {
         gap: 0.4rem;
     }
-}
-
-/* ------------------------------------------------------------------------
- * Pause timeline modal — components/PauseTimelineModal.js
- *
- * Global (not scoped under .block_feedback_tracker): the body renders inside
- * Moodle's modal (.modal-dialog .modal-body), outside the block.
- * ------------------------------------------------------------------------ */
-
-.bft-modal-loading,
-.bft-timeline {
-    font-size: 0.9rem;
-    color: #0f172a;
-}
-
-.bft-timeline-summary {
-    background: #f8fafc;
-    border-left: 3px solid #94a3b8;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    border-radius: 4px;
-}
-
-.bft-timeline-summary-head {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 0.75rem;
-    align-items: baseline;
-    margin-bottom: 0.4rem;
-}
-
-.bft-timeline-summary-activity {
-    color: #64748b;
-    font-size: 0.85rem;
-}
-
-.bft-timeline-summary-meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.1rem 0.5rem;
-    margin: 0;
-    font-size: 0.85rem;
-}
-
-.bft-timeline-summary-meta dt {
-    color: #64748b;
-    font-weight: 500;
-}
-
-.bft-timeline-summary-meta dd {
-    margin: 0;
-    color: #0f172a;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-timeline-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.bft-timeline-item {
-    padding: 0.5rem 0.75rem;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-}
-
-.bft-timeline-reason {
-    font-weight: 600;
-    color: #0f172a;
-}
-
-.bft-timeline-range {
-    font-size: 0.82rem;
-    color: #475569;
-    font-variant-numeric: tabular-nums;
-    margin-top: 0.1rem;
-}
-
-.bft-timeline-note {
-    font-size: 0.82rem;
-    color: #64748b;
-    margin-top: 0.2rem;
-}
-
-.bft-timeline-empty {
-    padding: 0.5rem 0.75rem;
-    color: #64748b;
-    font-style: italic;
 }
 
 /* Sortable pending-submissions table (AMD module pending_table.js). */
@@ -1304,7 +1071,7 @@ table.bft-sortable th.bft-sort-desc::after {
  * Block-view components (GroupCard and its parts).
  *
  * Global (no .block_feedback_tracker prefix) so the report and dashboard
- * views can reuse them. Tokens come from :root at the top of this file.
+ * views can reuse them. Tokens come from the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* ScoreRing — flex: 0 0 auto so it never shrinks inside a hero row. */
@@ -1384,15 +1151,51 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text-muted);
 }
 
-/* Scheduled-pause notice ("Upcoming pause"): amber attention card shared by
-   the in-course block (compact variant), the dashboard and the report. */
+/* Band tone of a hero or notice section (bft-rh-tone-<band>): the band's text, tint and edge
+ * colours, for the section's own rules to read. The scheduled-pause notice paints with them; the
+ * heroes carry the class too, and show their band through the ring, the score and the badge. */
+.bft-rh-tone-excellent {
+    --bft-tone-fg: var(--bft-band-excellent-fg);
+    --bft-tone-bg: var(--bft-band-excellent-bg);
+    --bft-tone-edge: var(--bft-band-excellent-edge);
+}
+.bft-rh-tone-good {
+    --bft-tone-fg: var(--bft-band-good-fg);
+    --bft-tone-bg: var(--bft-band-good-bg);
+    --bft-tone-edge: var(--bft-band-good-edge);
+}
+.bft-rh-tone-regular {
+    --bft-tone-fg: var(--bft-band-regular-fg);
+    --bft-tone-bg: var(--bft-band-regular-bg);
+    --bft-tone-edge: var(--bft-band-regular-edge);
+}
+.bft-rh-tone-critical {
+    --bft-tone-fg: var(--bft-band-critical-fg);
+    --bft-tone-bg: var(--bft-band-critical-bg);
+    --bft-tone-edge: var(--bft-band-critical-edge);
+}
+.bft-rh-tone-pending {
+    --bft-tone-fg: var(--bft-band-pending-fg);
+    --bft-tone-bg: var(--bft-band-pending-bg);
+    --bft-tone-edge: var(--bft-band-pending-edge);
+}
+.bft-rh-tone-nodata {
+    --bft-tone-fg: var(--bft-band-nodata-fg);
+    --bft-tone-bg: var(--bft-band-nodata-bg);
+    --bft-tone-edge: var(--bft-band-nodata-edge);
+}
+
+/* Scheduled-pause notice ("Upcoming pause"): attention card shared by the in-course block
+   (compact variant), the dashboard and the report. It paints with the tone class beside it;
+   ScheduledPauses passes bft-rh-tone-regular, the amber one. */
 .bft-scheduled {
     display: flex;
     gap: 0.6rem;
     margin-top: 0.75rem;
     padding: 0.75rem 0.9rem;
-    background: var(--bft-band-regular-bg);
-    border: 1px solid #fde68a;
+    background: var(--bft-tone-bg);
+    color: var(--bft-text);
+    border: 1px solid var(--bft-tone-edge);
     border-radius: 12px;
 }
 
@@ -1402,8 +1205,8 @@ table.bft-sortable th.bft-sort-desc::after {
     flex: 0 0 auto;
     margin-top: 0.2rem;
     border-radius: 3px;
-    background: repeating-linear-gradient(45deg, #fcd34d 0 2px, #fef3c7 2px 4px);
-    border: 1px solid #fcd34d;
+    background: repeating-linear-gradient(45deg, var(--bft-tone-edge) 0 2px, var(--bft-tone-bg) 2px 4px);
+    border: 1px solid var(--bft-tone-edge);
 }
 
 .bft-scheduled-body {
@@ -1416,7 +1219,7 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.04em;
     font-size: 0.7rem;
     font-weight: 700;
-    color: var(--bft-band-regular-fg);
+    color: var(--bft-tone-fg);
     margin-bottom: 0.4rem;
 }
 
@@ -1438,17 +1241,17 @@ table.bft-sortable th.bft-sort-desc::after {
 
 .bft-scheduled-item + .bft-scheduled-item {
     padding-top: 0.5rem;
-    border-top: 1px dashed #fde68a;
+    border-top: 1px dashed var(--bft-tone-edge);
 }
 
 .bft-scheduled-label {
     font-weight: 600;
-    color: #78350f;
+    color: var(--bft-text);
 }
 
 .bft-scheduled-when {
     font-size: 0.85rem;
-    color: #92400e;
+    color: var(--bft-tone-fg);
 }
 
 .bft-scheduled-type {
@@ -1622,7 +1425,15 @@ table.bft-sortable th.bft-sort-desc::after {
     text-align: left;
     text-decoration: none;
     font-family: inherit;
-    transition: background 0.12s;
+    transition: box-shadow 0.12s;
+}
+
+/* Hover and focus draw a ring in the tile's own text colour, which keeps at least 4.5:1 on the
+ * tile in both colour modes. */
+.bft-stat-tile:hover,
+.bft-stat-tile:focus-visible {
+    box-shadow: inset 0 0 0 2px currentcolor;
+    outline: none;
 }
 
 .bft-stat-tile-label {
@@ -1630,7 +1441,6 @@ table.bft-sortable th.bft-sort-desc::after {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    opacity: 0.78;
     /* Break an over-long single word onto two lines rather than overflow. */
     overflow-wrap: anywhere;
 }
@@ -1646,32 +1456,14 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text);
 }
 
-.bft-stat-tile-tone-neutral:hover,
-.bft-stat-tile-tone-neutral:focus-visible {
-    background: var(--bft-surface-dim);
-    outline: none;
-}
-
 .bft-stat-tile-tone-warn {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
 }
 
-.bft-stat-tile-tone-warn:hover,
-.bft-stat-tile-tone-warn:focus-visible {
-    background: #fef3c7;
-    outline: none;
-}
-
 .bft-stat-tile-tone-critical {
     background: var(--bft-band-critical-bg);
     color: var(--bft-band-critical-fg);
-}
-
-.bft-stat-tile-tone-critical:hover,
-.bft-stat-tile-tone-critical:focus-visible {
-    background: #fce4d6;
-    outline: none;
 }
 
 /* PeerContext. */
@@ -1732,11 +1524,6 @@ table.bft-sortable th.bft-sort-desc::after {
     line-height: 1;
 }
 
-.bft-peer-hours {
-    font-size: 0.65rem;
-    color: var(--bft-text-muted);
-}
-
 /* TimelineBar (activity open/close). */
 .bft-timeline-bar {
     display: flex;
@@ -1761,7 +1548,7 @@ table.bft-sortable th.bft-sort-desc::after {
 }
 
 .bft-timeline-bar-date-overdue {
-    color: #c2410c;
+    color: var(--bft-band-critical-fg);
     font-weight: 700;
 }
 
@@ -1788,7 +1575,7 @@ table.bft-sortable th.bft-sort-desc::after {
     width: 8px;
     height: 8px;
     border-radius: 2px;
-    box-shadow: 0 0 0 1.5px #fff;
+    box-shadow: 0 0 0 1.5px var(--bft-surface);
 }
 
 /* Before the open date: teal track, thumb pinned at the left. */
@@ -1936,8 +1723,8 @@ a.bft-activity-action:focus {
 }
 
 .bft-activity-action-override {
-    color: #c2410c;
-    background: #fbe9d0;
+    color: var(--bft-band-critical-fg);
+    background: var(--bft-band-critical-bg);
 }
 
 .bft-activity-action-create {
@@ -1958,7 +1745,7 @@ a.bft-activity-action:focus {
  * Pending report page components — pages/pending_report.php
  *
  * Global (no .block_feedback_tracker scope): the page sits outside the block
- * wrapper. Tokens come from :root at the top of this file.
+ * wrapper. Tokens come from the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* Breadcrumb above the title. */
@@ -2021,242 +1808,6 @@ a.bft-activity-action:focus {
     gap: 0.35rem;
 }
 
-.bft-report-subline-classes {
-    color: var(--bft-text-muted);
-}
-
-/* Hero metric row — 4 cards (Score / Effective / SLA / Trend). */
-.bft-hero-row {
-    display: grid;
-    grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-}
-
-.bft-hero-card {
-    padding: 0.875rem 1rem;
-    border-radius: 10px;
-    background: var(--bft-surface);
-    border: 1px solid var(--bft-border);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    min-height: 130px;
-    min-width: 0;
-}
-
-.bft-hero-card-wide {
-    /* Stretches across 1.5fr via grid-template; this class is a stable hook
-       for callers that want to apply additional styling. */
-    background: var(--bft-surface);
-}
-
-.bft-hero-card-eyebrow {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.65rem;
-    font-weight: 700;
-    color: var(--bft-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-.bft-hero-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    flex: 1;
-    min-width: 0;
-}
-
-.bft-info-dot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--bft-surface-dim);
-    color: var(--bft-text-muted);
-    font-size: 0.62rem;
-    font-weight: 700;
-    cursor: help;
-    font-family: var(--bft-font-display);
-    letter-spacing: 0;
-}
-
-/* Hero score card — left "wide" tile. */
-.bft-hero-score {
-    display: flex;
-    align-items: center;
-    gap: 0.875rem;
-    margin-top: 0.125rem;
-}
-
-.bft-hero-score-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-}
-
-.bft-hero-score-row {
-    display: flex;
-    align-items: baseline;
-    gap: 0.25rem;
-}
-
-.bft-hero-score-val {
-    font-size: 2.2rem;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.05em;
-}
-
-.bft-hero-score-of {
-    font-size: 0.75rem;
-    color: var(--bft-text-muted);
-    font-weight: 700;
-}
-
-.bft-hero-score-note {
-    font-size: 0.7rem;
-    color: var(--bft-text-faint);
-    font-weight: 600;
-    letter-spacing: 0.01em;
-}
-
-/* Hero KPI tiles (Effective / SLA / Trend). */
-.bft-hero-kpi {
-    display: flex;
-    align-items: baseline;
-    gap: 0.3rem;
-}
-
-.bft-hero-kpi-val {
-    font-size: 1.625rem;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.04em;
-    display: inline-flex;
-    align-items: center;
-}
-
-.bft-hero-kpi-unit {
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--bft-text-muted);
-}
-
-.bft-hero-kpi-sub {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin-top: 0.2rem;
-}
-
-.bft-hero-kpi-sub-label {
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: var(--bft-text-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.bft-hero-kpi-sub-value {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--bft-text-muted);
-}
-
-.bft-hero-kpi-chips {
-    display: flex;
-    gap: 0.35rem;
-    margin-top: 0.25rem;
-    flex-wrap: wrap;
-}
-
-.bft-hero-chip {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.18rem 0.5rem;
-    border-radius: 999px;
-    letter-spacing: 0.02em;
-}
-
-.bft-hero-chip-regular {
-    color: var(--bft-band-regular-fg);
-    background: var(--bft-band-regular-bg);
-}
-
-.bft-hero-chip-critical {
-    color: var(--bft-band-critical-fg);
-    background: var(--bft-band-critical-bg);
-}
-
-.bft-hero-spark {
-    margin-top: 0.5rem;
-    line-height: 0;
-}
-
-/* Paused callout — transparency strip. */
-.bft-paused-callout {
-    margin-bottom: 0.875rem;
-    padding: 0.75rem 0.875rem;
-    background: var(--bft-surface-alt);
-    border: 1px solid var(--bft-border-soft);
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.bft-paused-callout-swatch {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-    border-radius: 3px;
-    background: repeating-linear-gradient(45deg, #cbd5e1 0 2px, #e2e8f0 2px 4px);
-    border: 1px solid #cbd5e1;
-}
-
-.bft-paused-callout-text {
-    flex: 1;
-    min-width: 0;
-}
-
-.bft-paused-callout-title {
-    font-size: 0.78rem;
-    font-weight: 800;
-    color: var(--bft-text);
-    letter-spacing: 0.01em;
-}
-
-.bft-paused-callout-body {
-    font-size: 0.75rem;
-    color: var(--bft-text-muted);
-    margin-top: 0.15rem;
-    line-height: 1.5;
-}
-
-.bft-paused-callout-view {
-    padding: 0.4rem 0.75rem;
-    border-radius: 6px;
-    background: var(--bft-surface);
-    border: 1px solid var(--bft-border);
-    color: var(--bft-text);
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: inherit;
-    cursor: pointer;
-}
-
-.bft-paused-callout-view:hover,
-.bft-paused-callout-view:focus-visible {
-    background: var(--bft-surface-alt);
-    outline: none;
-}
-
 /* Status distribution bar — click a segment to filter. */
 .bft-dist {
     margin-bottom: 0.875rem;
@@ -2302,7 +1853,7 @@ a.bft-activity-action:focus {
     border-radius: 8px;
     border: none;
     cursor: pointer;
-    color: #fff;
+    color: var(--bft-on-fill);
     font-family: inherit;
     transition: opacity 0.15s;
     overflow: hidden;
@@ -2320,25 +1871,25 @@ a.bft-activity-action:focus {
 }
 
 .bft-dist-seg-excellent {
-    background: var(--bft-band-excellent-fg);
+    background: var(--bft-band-excellent-fill);
 }
 .bft-dist-seg-good {
-    background: var(--bft-band-good-fg);
+    background: var(--bft-band-good-fill);
 }
 .bft-dist-seg-regular {
-    background: var(--bft-band-regular-fg);
+    background: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-critical {
-    background: var(--bft-band-critical-fg);
+    background: var(--bft-band-critical-fill);
 }
 .bft-dist-seg-aguardando {
-    background: var(--bft-band-pending-fg);
+    background: var(--bft-band-pending-fill);
 }
 .bft-dist-seg-atencao {
-    background: var(--bft-band-regular-fg);
+    background: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-prioridade {
-    background: var(--bft-band-critical-fg);
+    background: var(--bft-band-critical-fill);
 }
 
 .bft-dist-seg-n {
@@ -2357,45 +1908,6 @@ a.bft-activity-action:focus {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* Segmented filter (components/SegmentedFilter.js). */
-.bft-segmented {
-    display: inline-flex;
-    background: var(--bft-surface-dim);
-    border-radius: 6px;
-    padding: 2px;
-}
-
-.bft-segmented-btn {
-    padding: 0.3rem 0.625rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.72rem;
-    font-weight: 700;
-    font-family: inherit;
-    letter-spacing: 0.01em;
-    background: transparent;
-    color: var(--bft-text-muted);
-}
-
-.bft-segmented-btn.is-active {
-    background: var(--bft-text);
-    color: #fff;
-}
-
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-excellent {
-    background: var(--bft-band-excellent-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-good {
-    background: var(--bft-band-good-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-regular {
-    background: var(--bft-band-regular-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-critical {
-    background: var(--bft-band-critical-fg);
 }
 
 /* Spacer that pushes the controls after it to the end of the
@@ -2513,7 +2025,7 @@ a.bft-activity-action:focus {
 }
 
 .bft-badge-release:focus-visible {
-    outline: 2px solid var(--bft-focus, #2563eb);
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
 
@@ -2527,7 +2039,7 @@ a.bft-activity-action:focus {
 }
 
 .bft-badge-gradebook:focus-visible {
-    outline: 2px solid var(--bft-focus, #2563eb);
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
 
@@ -2542,7 +2054,7 @@ a.bft-activity-action:focus {
 }
 
 .bft-badge-hiddengrade:focus-visible {
-    outline: 2px solid var(--bft-focus, #2563eb);
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
 
@@ -2555,13 +2067,9 @@ a.bft-activity-action:focus {
     gap: 0.22rem;
     margin-left: 0.35rem;
     font-size: 0.62rem;
-    font-family: var(--bft-mono-family, monospace);
-    color: var(--bft-text-muted, #64748b);
+    font-family: var(--bft-font-mono);
+    color: var(--bft-text-muted);
     white-space: nowrap;
-}
-
-.bft-row-split-queue {
-    opacity: 0.72;
 }
 
 .bft-row-split-arrow {
@@ -2593,49 +2101,10 @@ a.bft-activity-action:focus {
     text-align: left;
 }
 
-/* Mobile responsive — collapse hero grid to 2 columns then 1. */
-@media (max-width: 900px) {
-    .bft-hero-row {
-        grid-template-columns: 1fr 1fr;
-    }
-}
-
-@media (max-width: 540px) {
-    .bft-hero-row {
-        grid-template-columns: 1fr;
-    }
-
-    .bft-paused-callout {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-}
-
 /* ----------------------------------------------------------------------
  * Dashboard components: header, responsiveness hero, insight and priority
  * cards, courses table.
- *
- * Plum and sand extend the palette for the warm hero gradient and the
- * insight-card tones.
  * ---------------------------------------------------------------------- */
-
-:root {
-    --bft-warm-surface: #fdfbf7;
-    --bft-plum-fg: #6d4aac;
-    --bft-plum-bg: #f5f0fb;
-    --bft-sand-fg: #a37a2a;
-    --bft-sand-bg: #fbf6ec;
-}
-
-/* Repeats the .bft-dashboard rule in the teacher-dashboard section above and
-   adds the page padding. */
-.bft-dashboard {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-    font-family: var(--bft-font-display);
-    padding: 1.5rem 1.75rem 2rem;
-}
 
 /* Header row — brandtag eyebrow, greeting, subline + refresh button. */
 .bft-dashboard-header {
@@ -2696,7 +2165,7 @@ a.bft-activity-action:focus {
    celebratory rather than alarmist. */
 .bft-dashboard-event-chip {
     color: var(--bft-text);
-    background: var(--bft-plum-bg, #f5f0fb);
+    background: var(--bft-plum-bg);
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
     font-size: var(--bft-fs-meta);
@@ -2707,7 +2176,7 @@ a.bft-activity-action:focus {
 }
 
 .bft-dashboard-event-chip-label {
-    color: var(--bft-plum-fg, #6d4aac);
+    color: var(--bft-plum-fg);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: var(--bft-ls-label);
@@ -2731,7 +2200,8 @@ a.bft-activity-action:focus {
     grid-template-columns: 200px 1fr;
     gap: 1.75rem;
     padding: 1.5rem 1.75rem;
-    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, #fff 60%, var(--bft-plum-bg) 100%);
+    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, var(--bft-surface) 60%, var(--bft-plum-bg) 100%);
+    color: var(--bft-text);
     border: 1px solid var(--bft-border-soft);
     border-radius: 18px;
     overflow: hidden;
@@ -2926,7 +2396,8 @@ a.bft-activity-action:focus {
     align-items: center;
     gap: 0.6rem 0.875rem;
     padding: 0.75rem 1.125rem;
-    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, #fff 60%, var(--bft-plum-bg) 100%);
+    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, var(--bft-surface) 60%, var(--bft-plum-bg) 100%);
+    color: var(--bft-text);
     border: 1px solid var(--bft-border-soft);
     border-radius: 14px;
     min-height: 78px;
@@ -3009,8 +2480,8 @@ a.bft-activity-action:focus {
 .bft-rh-slim-expand {
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
-    background: var(--bft-plum-fg);
-    color: #fff;
+    background: var(--bft-plum-fill);
+    color: var(--bft-on-fill);
     border: none;
     cursor: pointer;
     font-family: inherit;
@@ -3022,7 +2493,7 @@ a.bft-activity-action:focus {
 
 .bft-rh-slim-expand:hover,
 .bft-rh-slim-expand:focus-visible {
-    background: #5a3d8f;
+    background: var(--bft-plum-fill-hover);
     outline: none;
 }
 
@@ -3228,8 +2699,8 @@ a.bft-activity-action:focus {
     margin-top: 0.875rem;
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
-    background: var(--bft-plum-fg);
-    color: #fff;
+    background: var(--bft-plum-fill);
+    color: var(--bft-on-fill);
     text-decoration: none;
     font-family: inherit;
     font-weight: 700;
@@ -3239,8 +2710,8 @@ a.bft-activity-action:focus {
 
 .bft-priority-cta:hover,
 .bft-priority-cta:focus-visible {
-    background: #5a3d8f;
-    color: #fff;
+    background: var(--bft-plum-fill-hover);
+    color: var(--bft-on-fill);
     outline: none;
     text-decoration: none;
 }
@@ -3656,6 +3127,7 @@ a.bft-activity-action:focus {
     background: var(--bft-surface-alt);
     border-radius: 8px;
     padding: 0.3rem 0.7rem;
+    color: var(--bft-text);
     font-size: 0.8rem;
     cursor: pointer;
 }
@@ -3758,7 +3230,7 @@ a.bft-activity-action:focus {
     border-radius: 999px;
     font-size: var(--bft-fs-meta);
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.65);
+    background: var(--bft-surface);
     color: var(--bft-text);
     border: 1px solid var(--bft-border);
 }
@@ -3816,13 +3288,13 @@ a.bft-activity-action:focus {
     background: var(--bft-text);
     border-style: solid;
     border-color: var(--bft-text);
-    color: #fff;
+    color: var(--bft-surface);
 }
 
 /* Keep the active (graded) toggle legible on hover — the base hover rule
  * darkens the text, which has no contrast on the dark active background. */
 .bft-dist-modebtn-active:hover {
-    color: #fff;
+    color: var(--bft-surface);
     border-color: var(--bft-text);
     opacity: 0.92;
 }
@@ -3943,8 +3415,8 @@ a.bft-activity-action:focus {
     align-items: center;
     padding: 0.3rem 0.7rem;
     border-radius: 6px;
-    background: var(--bft-band-excellent-fg);
-    color: #fff;
+    background: var(--bft-band-excellent-fill);
+    color: var(--bft-on-fill);
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     text-decoration: none;
@@ -3953,7 +3425,7 @@ a.bft-activity-action:focus {
 
 .bft-report-action-grade:hover,
 .bft-report-action-grade:focus {
-    color: #fff;
+    color: var(--bft-on-fill);
     text-decoration: none;
     opacity: 0.9;
 }
@@ -3973,14 +3445,14 @@ a.bft-activity-action:focus {
 }
 
 .bft-bulk-count {
-    font-family: var(--bft-mono-family, monospace);
+    font-family: var(--bft-font-mono);
     font-weight: 700;
 }
 
 .bft-bulk-shortname {
     display: block;
     font-size: 0.75rem;
-    color: var(--bft-text-muted, #64748b);
+    color: var(--bft-text-muted);
 }
 
 .bft-bulk-hidden {

@@ -334,4 +334,112 @@ final class submission_browser_test extends \advanced_testcase {
         $this->assertSame(0, $result['counts']['aguardando'], 'A 40-day wait is not "just arrived".');
         $this->assertSame(1, $result['counts']['prioridade']);
     }
+
+    /**
+     * A pending row still awaiting the backfill gets its Status badge from the
+     * same day estimate the counts and the band filter use, so the badge names
+     * the band that counts the row.
+     *
+     * Thirteen calendar days hold at most ten business days, so the business
+     * count would read "atencao" while the calendar estimate reads
+     * "prioridade".
+     *
+     * @return void
+     */
+    public function test_badge_of_a_row_without_a_day_count_agrees_with_its_band(): void {
+        $this->resetAfterTest();
+
+        [$course, $teacher, $cmid] = $this->course_with_viewer();
+        $this->generator()->set_display_unit('business_days', '2,5,10');
+        $users = $this->students($course, 1);
+        $this->generator()->create_ledger_row([
+            'courseid' => (int) $course->id,
+            'cmid' => $cmid,
+            'userid' => $users[0],
+            'timesubmitted' => time() - (86400 * 13),
+            'timegraded' => null,
+        ]);
+
+        $all = submission_browser::browse((int) $course->id, (int) $teacher->id, ['mode' => 'pending']);
+        $this->assertSame(1, $all['counts']['prioridade'], 'Precondition: the counts file the row as prioridade.');
+        $this->assertSame('prioridade', $all['rows'][0]['pendingband']);
+
+        $filtered = submission_browser::browse(
+            (int) $course->id,
+            (int) $teacher->id,
+            ['mode' => 'pending', 'band' => 'prioridade']
+        );
+        $this->assertSame(1, $filtered['total']);
+        $this->assertSame('prioridade', $filtered['rows'][0]['pendingband']);
+    }
+
+    /**
+     * In business-days mode the pending band's goal is the SLA goal in days,
+     * as for the block's over-goal count, not the first bucket threshold.
+     *
+     * @return void
+     */
+    public function test_day_mode_pending_band_uses_the_day_sla_goal(): void {
+        $this->resetAfterTest();
+
+        [$course, $teacher, $cmid] = $this->course_with_viewer();
+        $this->generator()->set_display_unit('business_days', '2,5,10');
+        set_config('sla_goal_days', '4', 'block_feedback_tracker');
+        $users = $this->students($course, 2);
+        foreach ([[$users[0], 3.0], [$users[1], 6.0]] as [$userid, $days]) {
+            $this->generator()->create_ledger_row([
+                'courseid' => (int) $course->id,
+                'cmid' => $cmid,
+                'userid' => $userid,
+                'timesubmitted' => time() - 86400,
+                'timegraded' => null,
+                'effectivedays' => $days,
+            ]);
+        }
+
+        $result = submission_browser::browse((int) $course->id, (int) $teacher->id, ['mode' => 'pending']);
+
+        $this->assertSame(1, $result['counts']['aguardando'], 'Three days is within a four-day goal.');
+        $this->assertSame(1, $result['counts']['atencao'], 'Control: six days is past it.');
+        $bands = [];
+        foreach ($result['rows'] as $row) {
+            $bands[$row['userid']] = $row['pendingband'];
+        }
+        $this->assertSame('aguardando', $bands[$users[0]]);
+        $this->assertSame('atencao', $bands[$users[1]]);
+    }
+
+    /**
+     * Sorting by Status in business-days mode follows the day count the badge
+     * is banded on, not effective hours.
+     *
+     * @return void
+     */
+    public function test_status_sort_follows_the_day_ruler(): void {
+        $this->resetAfterTest();
+
+        [$course, $teacher, $cmid] = $this->course_with_viewer();
+        $this->generator()->set_display_unit('business_days', '2,5,10');
+        $users = $this->students($course, 2);
+        // Few days but many hours, and the reverse, so the two rulers disagree.
+        $this->generator()->create_ledger_row([
+            'courseid' => (int) $course->id, 'cmid' => $cmid, 'userid' => $users[0],
+            'timesubmitted' => time() - 86400, 'timegraded' => null,
+            'effectivedays' => 1.0, 'effectivehours' => 90.0,
+        ]);
+        $this->generator()->create_ledger_row([
+            'courseid' => (int) $course->id, 'cmid' => $cmid, 'userid' => $users[1],
+            'timesubmitted' => time() - 86400, 'timegraded' => null,
+            'effectivedays' => 8.0, 'effectivehours' => 5.0,
+        ]);
+
+        $result = submission_browser::browse(
+            (int) $course->id,
+            (int) $teacher->id,
+            ['mode' => 'pending', 'sort' => 'status', 'order' => 'desc']
+        );
+
+        $this->assertSame([$users[1], $users[0]], array_column($result['rows'], 'userid'));
+        $this->assertSame('atencao', $result['rows'][0]['pendingband']);
+    }
 }

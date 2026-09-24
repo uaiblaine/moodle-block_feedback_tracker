@@ -624,7 +624,7 @@ Phase 2 (`2026080400`) is behaviour-only — no schema. Phase 3 (`2026080500`) a
 
 ### 4.2 New observer handlers — `classes/local/sla/observer.php`
 
-**The config read is the plugin's own correct default-ON pattern** (`classes/output/responsiveness_card.php:76-82`), not `?? 1`. `get_config()` returns `false` — never `null` — when a setting is unset, so `(int) (get_config(…) ?? 1) !== 1` evaluates to `0 !== 1`, i.e. **true**, and both observers would return early on every fresh install. (The same defect already exists at `submission_ledger.php:339` for `exclude_grader_submissions`; it is out of scope here but tracked.)
+**The config read is the plugin's own correct default-ON pattern** (the `show_peer_context` read in `bootstrap::config_bundle()`), not `?? 1`. `get_config()` returns `false` — never `null` — when a setting is unset, so `(int) (get_config(…) ?? 1) !== 1` evaluates to `0 !== 1`, i.e. **true**, and both observers would return early on every fresh install. (The same defect existed in `submission_ledger` for `exclude_grader_submissions`; it has since been fixed, and `should_skip_submitter()` now treats only a stored `'0'` as off.)
 
 ```php
     /**
@@ -632,7 +632,7 @@ Phase 2 (`2026080400`) is behaviour-only — no schema. Phase 3 (`2026080500`) a
      *
      * get_config() returns false (not null) for an unset setting, so only an
      * explicitly stored '0' means off. See the fleet rule on default-ON
-     * checkboxes and the existing read at responsiveness_card.php:76-82.
+     * checkboxes and the existing read in bootstrap::config_bundle().
      *
      * @param string $name Setting name without the plugin prefix.
      * @return bool
@@ -1600,7 +1600,7 @@ Each phase is independently shippable, leaves CI green, and does not depend on t
 
 **Ships:** the whole §3.2 column block (both halves, so the schema is final and `latest_row_at()` can select its full list); `idx_status_closed`, `idx_cg_closed`, `idx_status_alloc`, `idx_marker`; `awaiting_release`, `median_release_lag_h` on `_group`; the `workflow_state` helper; `observer::workflow_state_updated` + `observer::course_module_updated` + their `db/events.php` entries; `submission_ledger::apply_workflow_state()`, `apply_release_at()`, `resync_instance_flags()`, `seed_missing_row()`, and the extraction of `recompute_measures()`; rules R1–R6; `backfill_workflow` task + registration + string; **the complete §2.6 predicate migration**; `track_marking_workflow`, `workflow_reconcile_window_days`, `release_lag_alert_hours` settings, seeded in `db/install.php`; privacy provider metadata + export for the new columns; `awaiting_release` as a **separate badge**, never a fourth count tile.
 
-**Do not** touch the three-way pending partition. `rollup_service.php:172-182` documents that critical/overgoal/within-goal sum to `pending`, and `responsiveness_card.php:86-89` derives the first tile by subtraction (`$waiting = max(0, $p['pending'] - $overgoal - $critical)`), duplicated in `GroupCard.js:187`. A fourth tile makes both wrong in opposite directions with no test failure.
+**Do not** touch the three-way pending partition. `rollup_service.php:172-182` documents that critical/overgoal/within-goal sum to `pending`, and `GroupCard.js` derives the first tile by subtraction (`pending - overgoal - critical`, floored at 0). A fourth tile makes it wrong with no test failure. (A server-side twin of that subtraction in `responsiveness_card.php` has since been removed with the no-JS card.)
 
 **Post-upgrade CLI, in the release note:** `cli/backfill_trends.php --days=60`, `cli/recompute_all.php`, and one forced `recompute_site_stats` run.
 
@@ -1641,7 +1641,7 @@ Each phase is independently shippable, leaves CI green, and does not depend on t
 
 ### Phase 3 — Rollup, score clock switch, and display (`2026080500`, release `1.0.39`)
 
-**Ships:** the remaining eleven `_group` columns and the two `_trend` columns; `rollup_service::recompute_group_locked()` gains the allocated/unallocated partition and the alloc/queue medians; `trend_service` gains the alloc series; `sla_clock` + the `recompute_endpoint` task (§5.1); `responsiveness_calculator` honours `sla_clock` (no sixth weight — the clock changes which interval feeds the existing five terms, so `effective_weights()` and `tests/lockstep/js_php_lockstep_test.php` are untouched); WS shape extensions to `get_responsiveness`, `get_dashboard` (`CACHE_KEY_VERSION` 7 → 8, `get_dashboard.php:52`), `get_report_scopes`, `get_pending_submissions::row_structure()` (`:207-222`, shared with `get_graded_submissions.php:176`), `get_grader_priority_list`, `responsiveness_payload::group_payload()` + its cache key; UI in `GroupCard.js`, `PendingReportView.js`, `DashboardView.js` (**including `:156`'s `const numeric = [...]` sortable whitelist — a metric omitted there renders but cannot be sorted, silently**), `PriorityCard.js`, `GradeNowPanel.js`, the server no-JS twin `responsiveness_card.php::build_metrics()`, and `templates/responsiveness_card.mustache`.
+**Ships:** the remaining eleven `_group` columns and the two `_trend` columns; `rollup_service::recompute_group_locked()` gains the allocated/unallocated partition and the alloc/queue medians; `trend_service` gains the alloc series; `sla_clock` + the `recompute_endpoint` task (§5.1); `responsiveness_calculator` honours `sla_clock` (no sixth weight — the clock changes which interval feeds the existing five terms, so `effective_weights()` and `tests/lockstep/js_php_lockstep_test.php` are untouched); WS shape extensions to `get_responsiveness`, `get_dashboard` (`CACHE_KEY_VERSION` 7 → 8, `get_dashboard.php:52`), `get_report_scopes`, `get_pending_submissions::row_structure()` (`:207-222`, shared with `get_graded_submissions.php:176`), `get_grader_priority_list`, `responsiveness_payload::group_payload()` + its cache key; UI in `GroupCard.js`, `PendingReportView.js`, `DashboardView.js` (**including `:156`'s `const numeric = [...]` sortable whitelist — a metric omitted there renders but cannot be sorted, silently**) and `PriorityCard.js`. (`GradeNowPanel.js` and the server no-JS card, `responsiveness_card.php` with its template, were on this list; both have since been removed, so no metric needs them.)
 
 `cli/recompute_all.php` must run after upgrade — `{block_feedback_tracker_group}` is materialised and every new column reads NULL until it does. Copy the null-tolerant fallback shape from `responsiveness_payload.php:471-476`.
 
@@ -1680,7 +1680,7 @@ Blocked on `$plugin->supported` max moving to `503`, with `.github/workflows/ci.
 |---|---|---|
 | `db/install.php` | 1, 2, 3 | `$defaults` (`:43-95`) — every new setting seeded here or a fresh install has none of them |
 | `classes/privacy/provider.php` | 1 | `get_metadata()` (`:89-107`) and `export_user_data()` (`:307`) enumerate every `_sub` column; metadata-only fails the core compliance test in CI |
-| `templates/responsiveness_card.mustache` | 1 | the `awaiting_release` badge, the "Context variables required" docblock list, and non-empty data in the mandatory `Example context (json):` block |
+| `templates/responsiveness_card.mustache` | 1 | the `awaiting_release` badge, the "Context variables required" docblock list, and non-empty data in the mandatory `Example context (json):` block. The template has since been removed with the no-JS card |
 | `CLAUDE.md` (this repo) | 1 | `:530-536` documents `idx_status_graded (submissionstatus, timegraded)` as the covering index for every SLA read and enumerates the read sites; both go stale |
 | `tests/generator/lib.php` | 1 | `create_ledger_row()` defaults (~`:139`) and its docblock example (`:32`) — otherwise every new test hand-writes fourteen columns |
 | `README.md` | 1 | `:25` compatibility line (phase 5), plus a new section: the SLA endpoint moved, non-workflow sites see identical numbers, marking-workflow sites see a backlog appear, and the post-upgrade CLI is required |
@@ -1695,7 +1695,7 @@ Blocked on `$plugin->supported` max moving to `503`, with `.github/workflows/ci.
 1. **`timeclosed` written as a coalesce.** `timereleased ?? timegraded` looks harmless and reads naturally, and it silently reinstates the exact bug this work exists to remove — with the phase-1 pending test still passing on non-workflow fixtures. The rule is conditional on `markingworkflow`, always.
 2. **A partial predicate migration.** Moving the `IS NULL` predicates without the graded-window ones puts a row in `pending` and `numgraded30d` simultaneously; the pending trio still sums to `pending`, so no existing test fails. §2.6 is a checklist, not a suggestion.
 3. **R4 forgotten.** `academic_time.php:98-100` returns `0.0` for a non-positive interval and `bucket::for_effective(0.0)` is `excellent` (`bucket.php:51-58`). A reconciled allocation landing after grading then reads as a flawless marker turnaround — the worst possible failure direction for a fairness metric. The same rule now guards the student clock after a revert-and-resubmit.
-4. **`awaiting_release` added as a fourth count tile.** The trio is derived by subtraction in two independent copies (`responsiveness_card.php:86-89` and `GroupCard.js:187`); over-counting clamps to 0 in one surface and reports a wrong positive in the other, with no test failure.
+4. **`awaiting_release` added as a fourth count tile.** The trio's first tile is derived by subtraction in `GroupCard.js`; over-counting clamps it to 0 and hides the error, with no test failure. (When this was written a second copy in `responsiveness_card.php` would have reported a wrong positive instead; the no-JS card has since been removed.)
 5. **A payload key added without the matching `execute_returns()` entry.** `clean_returnvalue()` strips it silently; the field appears as `null` in exactly one of the three surfaces `group_payload()` feeds.
 
-Honourable mention, because it has shipped inverted before: **the trend sign** is duplicated in `responsiveness_card.php:168-172`, `amd/src/lib/format.js:152-164` and `amd/src/lib/trend.js`. Route anything new exclusively through `trend.js`.
+Honourable mention, because it has shipped inverted before: **the trend sign**. When this was written it was duplicated in `responsiveness_card.php`, `amd/src/lib/format.js` (`formatTrend`) and `amd/src/lib/trend.js`; the first two have since been removed, so `trend.js` is the only classifier. Route anything new through it.

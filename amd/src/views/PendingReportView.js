@@ -50,6 +50,7 @@ import Skeleton from 'block_feedback_tracker/components/Skeleton';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
 import {bandForScore, colourFor} from 'block_feedback_tracker/lib/bands';
+import {aggregate, perceivedLabel} from 'block_feedback_tracker/lib/aggregate';
 import {getPendingSubmissions, getGradedSubmissions, getAcademicDays, getReportScopes}
     from 'block_feedback_tracker/lib/api';
 import {formatHours, formatDays, formatDate, usesDays, formatCount} from 'block_feedback_tracker/lib/format';
@@ -61,22 +62,6 @@ const PREF_REPORT_COLLAPSED = 'block_feedback_tracker_report_collapsed';
 
 /** Hours by which the wall-clock wait must exceed effective hours to tag a row as paused. */
 const PAUSED_TAG_EPSILON = 0.5;
-
-/**
- * Perceived calendar-days label from raw (wall-clock) median hours. The raw
- * median already includes weekends and holidays so it converts straight to
- * calendar days.
- *
- * @param {number|null|undefined} rawhours
- * @returns {string}
- */
-const perceivedLabel = (rawhours) => {
-    const n = Number(rawhours);
-    if (!Number.isFinite(n) || n <= 0) {
-        return '—';
-    }
-    return Math.max(1, Math.round(n / 24)) + 'd';
-};
 
 /**
  * Map a pending row's band to its Status badge {colour band slug, label}. Uses
@@ -115,9 +100,11 @@ const gradedBadge = (slabucket, i18n) => {
 };
 
 /**
- * Compute the hero scope for the active class filter. Single group → that
- * group's metrics; "all" → pending-weighted score, mean of the include-pending
- * medians, summed counts. Same aggregation as DashboardView's aggregate().
+ * Compute the hero scope for the active class filter, in the shape
+ * lib/aggregate.js aggregate() returns plus the band. Single group → that
+ * group's own figures and band; "all" (gid 0) → aggregate() over every scope,
+ * the same aggregation as the dashboard hero, with the band left to the
+ * caller.
  *
  * @param {Array<object>} scopes  Trimmed per-group metrics from the payload.
  * @param {number} gid            Active group id, 0 = whole course.
@@ -136,92 +123,18 @@ const computeScope = (scopes, gid) => {
             score: g.responsiveness_score,
             band: g.score_band || null,
             effective: g.cur_median_eff_h,
-            perceivedraw: g.cur_median_raw_h,
+            perceived: g.cur_median_raw_h,
             effectivedays: g.cur_median_eff_days,
             perceiveddays: g.cur_median_perc_days,
             compliance: g.compliance_pct,
             compliancedays: g.compliance_pct_days,
             trendpct: g.trend_pct_30d,
-            'total_pending': Number(g.pending) || 0,
-            'total_critical': Number(g.critical) || 0,
-            'total_overgoal': Number(g.overgoal) || 0,
+            pending: Number(g.pending) || 0,
+            critical: Number(g.critical) || 0,
+            overgoal: Number(g.overgoal) || 0,
         };
     }
-    let pending = 0;
-    let critical = 0;
-    let overgoal = 0;
-    let scoreSum = 0;
-    let scoreWeight = 0;
-    let effSum = 0;
-    let effCount = 0;
-    let rawSum = 0;
-    let rawCount = 0;
-    let effDaysSum = 0;
-    let effDaysCount = 0;
-    let percDaysSum = 0;
-    let percDaysCount = 0;
-    let compSum = 0;
-    let compCount = 0;
-    let compDaysSum = 0;
-    let compDaysCount = 0;
-    let trendSum = 0;
-    let trendCount = 0;
-    // Branch count over the lint cap is acknowledged debt (refactor pass pending).
-    // eslint-disable-next-line complexity
-    scopes.forEach((g) => {
-        pending += Number(g.pending) || 0;
-        critical += Number(g.critical) || 0;
-        overgoal += Number(g.overgoal) || 0;
-        if (g.responsiveness_score !== null && g.responsiveness_score !== undefined) {
-            const weight = Math.max(1, Number(g.pending) || 0);
-            scoreSum += Number(g.responsiveness_score) * weight;
-            scoreWeight += weight;
-        }
-        if (g.cur_median_eff_h !== null && g.cur_median_eff_h !== undefined) {
-            effSum += Number(g.cur_median_eff_h);
-            effCount += 1;
-        }
-        if (g.cur_median_raw_h !== null && g.cur_median_raw_h !== undefined) {
-            rawSum += Number(g.cur_median_raw_h);
-            rawCount += 1;
-        }
-        // Date-based day medians — the headline pair for the business-days unit.
-        if (g.cur_median_eff_days !== null && g.cur_median_eff_days !== undefined) {
-            effDaysSum += Number(g.cur_median_eff_days);
-            effDaysCount += 1;
-        }
-        if (g.cur_median_perc_days !== null && g.cur_median_perc_days !== undefined) {
-            percDaysSum += Number(g.cur_median_perc_days);
-            percDaysCount += 1;
-        }
-        if (g.compliance_pct !== null && g.compliance_pct !== undefined) {
-            compSum += Number(g.compliance_pct);
-            compCount += 1;
-        }
-        // Day-ruler compliance twin — chosen at display when the unit is days.
-        if (g.compliance_pct_days !== null && g.compliance_pct_days !== undefined) {
-            compDaysSum += Number(g.compliance_pct_days);
-            compDaysCount += 1;
-        }
-        if (g.trend_pct_30d !== null && g.trend_pct_30d !== undefined) {
-            trendSum += Number(g.trend_pct_30d);
-            trendCount += 1;
-        }
-    });
-    return {
-        score: scoreWeight > 0 ? scoreSum / scoreWeight : null,
-        band: null,
-        effective: effCount > 0 ? effSum / effCount : null,
-        perceivedraw: rawCount > 0 ? rawSum / rawCount : null,
-        effectivedays: effDaysCount > 0 ? effDaysSum / effDaysCount : null,
-        perceiveddays: percDaysCount > 0 ? percDaysSum / percDaysCount : null,
-        compliance: compCount > 0 ? compSum / compCount : null,
-        compliancedays: compDaysCount > 0 ? compDaysSum / compDaysCount : null,
-        trendpct: trendCount > 0 ? trendSum / trendCount : null,
-        'total_pending': pending,
-        'total_critical': critical,
-        'total_overgoal': overgoal,
-    };
+    return {...aggregate(scopes, 'responsiveness_score'), band: null};
 };
 
 /**
@@ -656,11 +569,11 @@ export default function PendingReportView({initial}) {
                 tone: scopeBand,
             });
         }
-        if (scope.total_overgoal > 0) {
-            chips.push({label: formatCount(scope.total_overgoal) + ' ' + (i18n.hero_sla_atrisk || 'at risk'), tone: 'regular'});
+        if (scope.overgoal > 0) {
+            chips.push({label: formatCount(scope.overgoal) + ' ' + (i18n.hero_sla_atrisk || 'at risk'), tone: 'regular'});
         }
-        if (scope.total_critical > 0) {
-            chips.push({label: formatCount(scope.total_critical) + ' ' + (i18n.hero_sla_critical || 'critical'), tone: 'critical'});
+        if (scope.critical > 0) {
+            chips.push({label: formatCount(scope.critical) + ' ' + (i18n.hero_sla_critical || 'critical'), tone: 'critical'});
         }
     }
 
@@ -668,7 +581,7 @@ export default function PendingReportView({initial}) {
     if (usesDays(config)) {
         perceivedlabel = formatDays(scope ? scope.perceiveddays : null);
     } else {
-        perceivedlabel = scope ? perceivedLabel(scope.perceivedraw) : '—';
+        perceivedlabel = scope ? perceivedLabel(scope.perceived) : '—';
     }
 
     const heroprops = {
@@ -697,7 +610,9 @@ export default function PendingReportView({initial}) {
         : (i18n.pendingreport_subline_pending || '{$a} awaiting feedback')).replace('{$a}', formatCount(total));
 
     // Empty-state precedence: skeleton while the first page loads, retry on
-    // error, "nothing matches" otherwise; null means the table renders.
+    // error, "nothing matches" otherwise; null means the table renders. The
+    // skeleton is aria-hidden, so while a page loads the table region is
+    // aria-busy and the visually-hidden status line announces the load.
     let emptystate = null;
     if (loading && submissions.length === 0) {
         emptystate = html`<${Skeleton} count=${5} />`;
@@ -810,8 +725,14 @@ export default function PendingReportView({initial}) {
                     i18n=${i18n}
                     variant="banner" />`}
 
-            ${emptystate}
-            ${!emptystate && html`
+            <span class="bft-sr-only" role="status">
+                ${loading ? i18n.pendingreport_loading : ''}
+            </span>
+            <div class="bft-report-body"
+                 aria-busy=${loading ? 'true' : 'false'}
+                 aria-label=${loading ? i18n.pendingreport_loading : null}>
+                ${emptystate}
+                ${!emptystate && html`
                     <table class="bft-report-table">
                         <thead>
                             <tr>
@@ -958,6 +879,7 @@ export default function PendingReportView({initial}) {
                         </tbody>
                     </table>
                 `}
+            </div>
 
             ${total > perpage && html`
                 <div class="bft-pagination">

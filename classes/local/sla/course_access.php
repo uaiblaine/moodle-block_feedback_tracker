@@ -44,8 +44,10 @@ namespace block_feedback_tracker\local\sla;
  *
  * The results are memoised in static properties because the observer hot
  * path and the backfill loop ask about the same courses many times. The
- * memo lives as long as the PHP process: one web request, or a whole cron
- * run. Call {@see self::reset_memo()} after changing a course's block.
+ * memo lives as long as the PHP process: one web request, or a cron process
+ * that runs many tasks, which is why every task starts with
+ * {@see process_memos::reset()}. Call {@see self::reset_memo()} after changing
+ * a course's block in the same process.
  */
 class course_access {
     /** @var array<int, bool> Per-process memo keyed by courseid. */

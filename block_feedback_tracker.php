@@ -211,9 +211,11 @@ class block_feedback_tracker extends block_base {
         $task->set_next_run_time(
             time() + \block_feedback_tracker\local\sla\removal_grace::seconds()
         );
-        // The dedupe compares component + class + custom data, so a course
-        // whose block is removed twice inside one window keeps one task.
-        \core\task\manager::queue_adhoc_task($task, true);
+        /* A course whose block is removed, put back and removed again inside
+         * one window keeps one task, moved to the latest removal's deadline:
+         * queue_adhoc_task() with its duplicate check would keep the first
+         * removal's run time, which core reserves that check for ASAP tasks. */
+        \core\task\manager::reschedule_or_queue_adhoc_task($task);
         return true;
     }
 

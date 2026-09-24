@@ -938,7 +938,10 @@ final class grading_cycle_test extends \advanced_testcase {
 
     /**
      * Seed the calendar settings the academic-time engine needs, plus Monday
-     * to Friday 08:00-18:00 business hours.
+     * to Friday 08:00-18:00 business hours in place of the installed ones.
+     *
+     * The installed rows are deleted first: the engine unions every row of a
+     * day, so rows added beside them could only widen the day, never set it.
      *
      * @return void
      */
@@ -951,6 +954,7 @@ final class grading_cycle_test extends \advanced_testcase {
         set_config('bucket_thresholds_eff', '24,48,120', 'block_feedback_tracker');
 
         global $DB;
+        $DB->delete_records('block_feedback_tracker_chours');
         $now = time();
         for ($dow = 0; $dow <= 4; $dow++) {
             $DB->insert_record('block_feedback_tracker_chours', (object) [

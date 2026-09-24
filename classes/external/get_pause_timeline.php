@@ -36,8 +36,8 @@ use core_external\external_value;
 
 /**
  * Returns the ordered list of pause windows that contributed to one
- * submission's effectivehours, for the per-submission pause timeline
- * (amd/src/components/PauseTimelineModal.js).
+ * submission's effectivehours. No page of this plugin calls it; it is
+ * registered in db/services.php for web service clients.
  *
  * Nothing is persisted: the windows are recomputed on every call by
  * {@see academic_time::elapsed_with_audit()} against the current calendar,

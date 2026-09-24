@@ -213,8 +213,9 @@ class backfill_cursor {
     }
 
     /**
-     * Drop the cursor row entirely. Course deletion does not come through
-     * here: {@see submission_ledger::delete_for_course()} deletes the row itself.
+     * Drop the cursor row entirely, as
+     * {@see submission_ledger::delete_for_course()} does when a course's data
+     * goes. The next backfill of a course still tracked starts it from 0.
      *
      * @param int $courseid
      * @return void

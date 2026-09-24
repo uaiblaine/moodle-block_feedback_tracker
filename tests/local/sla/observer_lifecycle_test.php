@@ -232,7 +232,7 @@ final class observer_lifecycle_test extends \advanced_testcase {
         $this->assertCount(
             1,
             $descriptors,
-            'Three member rows in one group must collapse to a single group descriptor.'
+            'Four member rows in one group must collapse to a single group descriptor.'
         );
         $this->assertSame(0, (int) $descriptors[0]['userid']);
         $this->assertSame(0, (int) $descriptors[0]['groupid']);
@@ -419,6 +419,75 @@ final class observer_lifecycle_test extends \advanced_testcase {
             'groupid' => 0,
             'latest' => $latest ? 1 : 0,
         ]);
+    }
+
+    /**
+     * Deleting a group with few users re-attributes their rows at once.
+     *
+     * @return void
+     */
+    public function test_deleting_a_small_group_reattributes_its_users_inline(): void {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/group/lib.php');
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$course] = $this->build_environment();
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->seed_group_rows((int) $course->id, (int) $group->id, 2);
+
+        groups_delete_group($group);
+
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]));
+        $this->assertSame(2, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
+        $this->assertCount(0, \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\reattribute_users::class));
+    }
+
+    /**
+     * Deleting a group with more users than one chunk leaves the request
+     * alone and hands the re-attribution to adhoc tasks, one per chunk.
+     *
+     * @return void
+     */
+    public function test_deleting_a_large_group_hands_the_reattribution_to_adhoc_tasks(): void {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/group/lib.php');
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        [$course] = $this->build_environment();
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->seed_group_rows((int) $course->id, (int) $group->id, 51);
+
+        groups_delete_group($group);
+
+        $this->assertSame(
+            51,
+            $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]),
+            'Nothing is re-attributed inside the request.'
+        );
+        $this->assertCount(2, \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\reattribute_users::class));
+
+        $this->runAdhocTasks('\block_feedback_tracker\task\reattribute_users');
+
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]));
+        $this->assertSame(51, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
+    }
+
+    /**
+     * Give a group ledger rows for a number of users, one row each.
+     *
+     * The users need no account: re-attribution reads only their group
+     * memberships, and these users have none left once the group is gone.
+     *
+     * @param int $courseid
+     * @param int $groupid
+     * @param int $count
+     * @return void
+     */
+    private function seed_group_rows(int $courseid, int $groupid, int $count): void {
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        for ($i = 1; $i <= $count; $i++) {
+            $generator->create_ledger_row(['courseid' => $courseid, 'groupid' => $groupid, 'userid' => 900000 + $i]);
+        }
     }
 
     /**

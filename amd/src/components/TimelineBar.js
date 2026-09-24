@@ -18,6 +18,10 @@
  * activity's open and close timestamps as a coloured progress bar with
  * dates flanking the track.
  *
+ * The dates are day and month in the page's locale and the user's Moodle
+ * time zone (lib/format.js formatDayMonth), so a close date near midnight
+ * falls on the same day the assignment page shows for it.
+ *
  * Three phases set the track colour (styles.css) and the thumb position:
  *   - before  (now <= open):   thumb pinned at the left.
  *   - running (open < now < close): thumb at the elapsed %.
@@ -33,19 +37,7 @@
  */
 
 import {html} from 'block_feedback_tracker/lib/preact';
-
-/**
- * Format a unix-seconds timestamp as DD/MM in the browser's timezone.
- *
- * @param {number} ts
- * @returns {string}
- */
-const fmtDay = (ts) => {
-    const d = new Date(Number(ts) * 1000);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    return dd + '/' + mm;
-};
+import {formatDayMonth} from 'block_feedback_tracker/lib/format';
 
 /**
  * Pick the calendar phase: before the open date, running, or closed once the
@@ -91,7 +83,7 @@ export default function TimelineBar({opens, closes, norulelabel}) {
 
     return html`
         <div class=${'bft-timeline-bar bft-timeline-bar-' + phase}>
-            <span class="bft-timeline-bar-date bft-mono">${fmtDay(safeopens)}</span>
+            <span class="bft-timeline-bar-date bft-mono">${formatDayMonth(safeopens)}</span>
             <div class="bft-timeline-bar-track">
                 <div class="bft-timeline-bar-fill"
                      style=${'width: ' + Math.min(100, pct).toFixed(1) + '%;'}></div>
@@ -100,7 +92,7 @@ export default function TimelineBar({opens, closes, norulelabel}) {
             </div>
             <span class=${'bft-timeline-bar-date bft-mono'
                 + (phase === 'closed' ? ' bft-timeline-bar-date-overdue' : '')}>
-                ${fmtDay(safecloses)}
+                ${formatDayMonth(safecloses)}
             </span>
         </div>
     `;

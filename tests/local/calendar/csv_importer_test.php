@@ -91,4 +91,64 @@ final class csv_importer_test extends \advanced_testcase {
         $result = csv_importer::import('2026-04-03, HOLIDAY', 0);
         $this->assertSame(1, $result['saved']);
     }
+
+    /**
+     * Re-importing a date whose optional row has a sub-day window stores a
+     * full-day rule: the CSV format cannot express a window, so the old one
+     * must not survive on the updated row.
+     *
+     * @return void
+     */
+    public function test_reimport_clears_an_earlier_sub_day_window(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $id = (int) $DB->insert_record('block_feedback_tracker_cday', (object) [
+            'daydate' => 20260403,
+            'daytype' => 'optional',
+            'starttime' => 960,
+            'endtime' => 1080,
+            'note' => 'Workshop',
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+        $before = $DB->get_record('block_feedback_tracker_cday', ['id' => $id], '*', MUST_EXIST);
+        $this->assertSame(960, (int) $before->starttime, 'Precondition: the row starts with a window.');
+
+        $result = csv_importer::import('2026-04-03, optional, Workshop', 0);
+
+        $this->assertSame(1, $result['saved']);
+        $rows = $DB->get_records('block_feedback_tracker_cday', ['daydate' => 20260403]);
+        $this->assertCount(1, $rows);
+        $row = reset($rows);
+        $this->assertSame($id, (int) $row->id, 'The import updates the existing row.');
+        $this->assertSame('optional', $row->daytype);
+        $this->assertNull($row->starttime);
+        $this->assertNull($row->endtime);
+    }
+
+    /**
+     * The message for a malformed row is the plugin's lang string, so it
+     * follows the site's language and its string customisations.
+     *
+     * @return void
+     */
+    public function test_malformed_row_message_is_localised(): void {
+        global $CFG;
+        $this->resetAfterTest();
+        // The en_local file is how a customised string (tool_customlang) reaches get_string().
+        $dir = $CFG->langlocalroot . '/en_local';
+        make_writable_directory($dir);
+        $file = $dir . '/block_feedback_tracker.php';
+        file_put_contents($file, "<?php\n\$string['caleditor_bulk_error_format'] = 'Custom format hint';\n");
+        get_string_manager()->reset_caches();
+        try {
+            $result = csv_importer::import('not a row', 0);
+        } finally {
+            unlink($file);
+            get_string_manager()->reset_caches();
+        }
+
+        $this->assertCount(1, $result['errors']);
+        $this->assertSame('Custom format hint', $result['errors'][0]['message']);
+    }
 }

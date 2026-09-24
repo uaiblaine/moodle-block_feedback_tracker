@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\rollup_service;
 
 /**
@@ -53,6 +54,7 @@ class recompute_one extends \core\task\adhoc_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
         $data = (array) $this->get_custom_data();
         $courseid = (int) ($data['courseid'] ?? 0);
         $groupid = (int) ($data['groupid'] ?? 0);

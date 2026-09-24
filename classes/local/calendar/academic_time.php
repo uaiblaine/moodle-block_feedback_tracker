@@ -247,7 +247,7 @@ class academic_time {
 
             foreach ($overlap as $iv) {
                 $pauses[] = [
-                    'reason' => self::pause_reason_for_scope((string) $row->scopelevel),
+                    'reason' => pause_lookup::reason_for_scope((string) $row->scopelevel),
                     'timestart' => $iv[0],
                     'timeend' => $iv[1],
                     'scopelevel' => (string) $row->scopelevel,
@@ -531,6 +531,11 @@ class academic_time {
      * Convert business-hours (minutes-since-midnight) intervals to absolute
      * unix-timestamp intervals for a specific day in the platform timezone.
      *
+     * The minutes are wall-clock time: on a day with a DST transition, 480 is
+     * 08:00 local, not eight elapsed hours after midnight, which is what
+     * modify() returns from a local midnight. Pinned by
+     * academic_time_test::test_business_hours_are_wall_clock_on_dst_days().
+     *
      * @param \DateTimeImmutable $daymidnight Midnight in platform tz.
      * @param array $intervals List of [startmin, endmin].
      * @return array Canonical list of unix intervals.
@@ -568,24 +573,6 @@ class academic_time {
                 return 'optional';
             default:
                 return $rule['is_weekend'] ? 'weekend' : 'outofhours';
-        }
-    }
-
-    /**
-     * Translate a manual-pause scopelevel to its pause-reason slug.
-     *
-     * @param string $scopelevel
-     * @return string
-     */
-    private static function pause_reason_for_scope(string $scopelevel): string {
-        switch ($scopelevel) {
-            case 'course':
-                return 'coursepaused';
-            case 'group':
-                return 'grouppaused';
-            case 'site':
-            default:
-                return 'sitepaused';
         }
     }
 }

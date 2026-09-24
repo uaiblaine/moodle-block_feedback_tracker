@@ -32,6 +32,8 @@ namespace block_feedback_tracker\event;
  *
  * `other` carries 'scopelevel' and 'scopeid', which the observer uses to
  * re-enqueue only that scope, plus 'rowid' and, on delete, 'deleted' => true.
+ * An update that moves a row to another scope fires it once per scope, the
+ * new one first.
  * {@see \block_feedback_tracker\local\calendar\observer::pause_updated()}
  */
 class cal_pause_updated extends \core\event\base {

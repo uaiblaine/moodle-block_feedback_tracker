@@ -187,8 +187,12 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * An unenrolled student's work is nobody's outstanding task; core's own
+     * A departed student's work is nobody's outstanding task; core's own
      * needs-grading count joins active enrolments, so the ledger must agree.
+     *
+     * The enrolment is suspended with a direct write, which fires no event:
+     * unenrol_user() would let the enrolment observer delete the row before
+     * the reconciler runs, and the test would pass without the sweep.
      *
      * @return void
      */
@@ -196,22 +200,20 @@ final class reconcile_ledger_test extends \advanced_testcase {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
-        [$cm, $student, $assign, $course] = $this->build_environment();
+        [$cm, $student, $assign] = $this->build_environment();
 
         $now = time();
         $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
 
-        // Unenrol only: the source row stays, so the orphan sweep has nothing to
-        // delete and the participant sweep has to do the work.
-        $instances = enrol_get_instances($course->id, true);
-        $plugin = enrol_get_plugin('manual');
-        foreach ($instances as $instance) {
-            if ($instance->enrol === 'manual') {
-                $plugin->unenrol_user($instance, $student->id);
-            }
-        }
+        // The source row stays, so the orphan sweep has nothing to delete and
+        // the participant sweep has to do the work.
+        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['userid' => $student->id]);
+        $this->assertSame(
+            1,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'Precondition: the row is still there when the reconciler starts.'
+        );
 
         $this->run_reconciler();
 
@@ -232,34 +234,54 @@ final class reconcile_ledger_test extends \advanced_testcase {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
-        [$cm, $student, $assign, $course] = $this->build_environment();
+        [$cm, $student, $assign] = $this->build_environment();
 
         $now = time();
         $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
 
-        /* Unenrol only. The {assign_submission} row deliberately stays: it is
-         * what the missing-row sweep reads, and leaving it is the whole point
-         * of the test. */
-        foreach (enrol_get_instances($course->id, true) as $instance) {
-            if ($instance->enrol === 'manual') {
-                enrol_get_plugin('manual')->unenrol_user($instance, $student->id);
-            }
-        }
-
-        $this->run_reconciler();
+        /* Suspended with a direct write, which fires no event, so the row is
+         * still there for the participant sweep. The {assign_submission} row
+         * deliberately stays: it is what the missing-row sweep reads, and
+         * leaving it is the whole point of the test. */
+        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['userid' => $student->id]);
         $this->assertSame(
-            0,
+            1,
             $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
-            'The participant sweep must delete the unenrolled student\'s row.'
+            'Precondition: the row is still there when the first tick starts.'
         );
 
         $this->run_reconciler();
         $this->assertSame(
             0,
             $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
-            'The missing-row sweep must not resurrect an unenrolled student\'s row.'
+            'The participant sweep must delete the departed student\'s row.'
+        );
+
+        /* Asserted on the queue, before the repairs are drained: the worker
+         * re-checks participation and would drop a wrongly dispatched repair,
+         * so the ledger alone cannot show whether the sweep selected the row. */
+        (new reconcile_ledger())->execute();
+        $dispatched = [];
+        foreach (\core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission') as $queued) {
+            foreach ((array) ($queued->get_custom_data()->rows ?? []) as $descriptor) {
+                $descriptor = (array) $descriptor;
+                if ((int) $descriptor['cmid'] === (int) $cm->id) {
+                    $dispatched[] = (int) $descriptor['userid'];
+                }
+            }
+        }
+        $this->assertNotContains(
+            (int) $student->id,
+            $dispatched,
+            'The missing-row sweep must not dispatch a rebuild of a departed student\'s row.'
+        );
+
+        $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
+        $this->assertSame(
+            0,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'The missing-row sweep must not resurrect a departed student\'s row.'
         );
     }
 
@@ -1133,6 +1155,46 @@ final class reconcile_ledger_test extends \advanced_testcase {
                 'One tick must reach every tracked course, not just the first.'
             );
         }
+    }
+
+    /**
+     * Core's cron runs many tasks in one process, so the set of tracked
+     * courses must be read afresh on every tick: a course given the block by
+     * another process between two ticks is swept by the second.
+     *
+     * @return void
+     */
+    public function test_a_course_given_the_block_between_two_ticks_is_swept_by_the_second(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        // A tracked course, so the first tick reads the tracked set instead of returning early.
+        $this->build_environment();
+
+        $course = $this->getDataGenerator()->create_course();
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
+        $cm = get_coursemodule_from_instance('assign', $assign->id);
+        $this->insert_submission((int) $assign->id, (int) $student->id, time() - 4 * 86400, 0);
+
+        (new reconcile_ledger())->execute();
+        $this->assertSame(
+            0,
+            $DB->count_records('task_adhoc', ['component' => 'block_feedback_tracker']),
+            'Control: without the block the course is not swept, and no task of the plugin runs between the ticks.'
+        );
+
+        // Added as another process would: nothing in this process resets a memo.
+        $this->getDataGenerator()->create_block('feedback_tracker', [
+            'parentcontextid' => \context_course::instance($course->id)->id,
+        ]);
+
+        $this->run_reconciler();
+        $this->assertSame(
+            1,
+            $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
+            'The second tick must sweep the course that gained the block.'
+        );
     }
 
     /**

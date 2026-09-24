@@ -27,7 +27,6 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\payload;
 
 use block_feedback_tracker\local\calendar\calendar;
-use block_feedback_tracker\local\calendar\paused_aggregator;
 use block_feedback_tracker\local\calendar\upcoming_pauses;
 use block_feedback_tracker\local\score\peer_stats;
 use block_feedback_tracker\local\sla\activity_schedule;
@@ -192,16 +191,10 @@ class responsiveness_payload {
         // block's narrow sparkline; the recent-stats window stays 30 days.
         $trendwindow = self::trend_window(14);
 
-        // Course-level paused aggregate for the last 30 days, computed once
-        // and attached to every group payload.
-        $now = time();
-        $pausedwindowstart = $now - 30 * 86400;
-        $pausedaggregate = paused_aggregator::for_window($courseid, $pausedwindowstart, $now);
-
         // Upcoming-pause notice: calendar days plus site and course pauses
         // (group pauses are not included), so it is attached identically to
         // every group payload and the block renders it once above the cards.
-        $upcoming = upcoming_pauses::for_display($courseid, 0, $now);
+        $upcoming = upcoming_pauses::for_display($courseid, 0, time());
 
         // Course-level assign catalog (global dates, group mode, manage
         // capability, group overrides), built once and resolved per group
@@ -218,12 +211,12 @@ class responsiveness_payload {
                 $subtitle = null;
             } else {
                 $resolved = $grouptitles[$gid]
-                    ?? ['title' => $groupnames[$gid] ?? sprintf('Group #%d', $gid), 'subtitle' => null];
+                    ?? ['title' => $groupnames[$gid] ?? self::fallback_group_name($gid), 'subtitle' => null];
                 $name = $resolved['title'];
                 $subtitle = $resolved['subtitle'];
             }
             $series = self::trend_series_for_group($courseid, $gid, $trendwindow);
-            $peer = peer_stats::for_exclusion($gid);
+            $peer = peer_stats::for_exclusion($gid, $courseid);
             $activities = $gid > 0 ? activity_schedule::for_group($activitycatalog, $gid) : [];
             $payloadgroups[] = self::group_payload(
                 $gid,
@@ -231,7 +224,6 @@ class responsiveness_payload {
                 $course,
                 $r,
                 $series,
-                $pausedaggregate,
                 $peer,
                 $subtitle,
                 $activities,
@@ -361,6 +353,18 @@ class responsiveness_payload {
     }
 
     /**
+     * Display name for a rollup row whose group no longer exists in {groups}.
+     *
+     * Public so get_report_scopes names such a row the same way as the block.
+     *
+     * @param int $groupid The rollup row's group id.
+     * @return string Localised plain text, e.g. "Group #42".
+     */
+    public static function fallback_group_name(int $groupid): string {
+        return get_string('card_groupfallback', 'block_feedback_tracker', $groupid);
+    }
+
+    /**
      * Split a comma-separated shortname list into trimmed, non-empty parts.
      *
      * @param string $csv
@@ -473,7 +477,6 @@ class responsiveness_payload {
      * @param \stdClass $course Course object; its full name is sent as plain text.
      * @param \stdClass $row Rollup row.
      * @param array $trendseries Daily median effective hours over the last 14 days, as {day, value} pairs.
-     * @param array|null $pausedaggregate Output of paused_aggregator::for_window().
      * @param array|null $peer Output of peer_stats::for_exclusion().
      * @param string|null $groupsubtitle Optional smaller line shown under the title.
      * @param array $activities Per-group assign schedule rows from activity_schedule::for_group().
@@ -486,13 +489,11 @@ class responsiveness_payload {
         \stdClass $course,
         \stdClass $row,
         array $trendseries = [],
-        ?array $pausedaggregate = null,
         ?array $peer = null,
         ?string $groupsubtitle = null,
         array $activities = [],
         array $upcoming = []
     ): array {
-        $pausedaggregate = $pausedaggregate ?? ['total_days' => 0, 'weekend' => 0, 'holiday' => 0, 'recess' => 0, 'events' => []];
         $peer = $peer ?? ['department_score' => null, 'department_hours' => null,
                           'top10_score' => null, 'top10_hours' => null];
         // Pending-band counts follow the banding ruler: business-days mode
@@ -527,8 +528,6 @@ class responsiveness_payload {
             'median_raw_h'         => $row->median_raw_h !== null ? (float) $row->median_raw_h : null,
             'p90_raw_h'            => $row->p90_raw_h !== null ? (float) $row->p90_raw_h : null,
             'max_raw_h'            => $row->max_raw_h !== null ? (float) $row->max_raw_h : null,
-            // The graded-only median_raw_h again, under the "Perceived" KPI name.
-            'perceived_median_hours' => $row->median_raw_h !== null ? (float) $row->median_raw_h : null,
             // Headline "current" medians — graded ∪ currently-pending — so the
             // block's Effective / Perceived KPI tiles reflect the live backlog
             // instead of reading ~0 when little has been graded, matching the
@@ -566,11 +565,6 @@ class responsiveness_payload {
                 ? (float) $row->comp_trend : null,
             'trend_pct_30d'        => $row->trend_pct_30d !== null ? (float) $row->trend_pct_30d : null,
             'trend_series'         => $trendseries,
-            'nextpause_ts'         => $row->nextpause_ts !== null ? (int) $row->nextpause_ts : null,
-            'nextpause_reason'     => $row->nextpause_reason !== null ? (string) $row->nextpause_reason : null,
-            'nextpause_note'       => $row->nextpause_note !== null ? (string) $row->nextpause_note : null,
-            'lastpause_endts'      => $row->lastpause_endts !== null ? (int) $row->lastpause_endts : null,
-            'lastpause_reason'     => $row->lastpause_reason !== null ? (string) $row->lastpause_reason : null,
             /* Upcoming-pause notice: up to 3 pauses visible now, with the
              * localised when / typelabel strings; label is plain text, not
              * HTML-escaped (see upcoming_pauses::clean_note()). */
@@ -581,24 +575,6 @@ class responsiveness_payload {
                 'when' => (string) $u['when'],
                 'typelabel' => (string) $u['typelabel'],
             ], $upcoming),
-            // Paused days in the last 30, by reason (course scope).
-            'paused_days_30d'      => (int) $pausedaggregate['total_days'],
-            'paused_breakdown_30d' => [
-                'weekend' => (int) $pausedaggregate['weekend'],
-                'holiday' => (int) $pausedaggregate['holiday'],
-                'recess'  => (int) $pausedaggregate['recess'],
-            ],
-            /* Sub-day optional events sidecar. Each entry is
-             * {date: YYYYMMDD, starttime: min, endtime: min, label: str};
-             * label is plain text, not HTML-escaped. */
-            'paused_events_30d' => is_array($pausedaggregate['events'] ?? null)
-                ? array_map(static fn ($e) => [
-                    'date'      => (int) $e['date'],
-                    'starttime' => (int) $e['starttime'],
-                    'endtime'   => (int) $e['endtime'],
-                    'label'     => (string) $e['label'],
-                ], $pausedaggregate['events'])
-                : [],
             // Peer comparison (excluding this group).
             'peer_department_score' => $peer['department_score'] !== null ? (float) $peer['department_score'] : null,
             'peer_department_hours' => $peer['department_hours'] !== null ? (float) $peer['department_hours'] : null,

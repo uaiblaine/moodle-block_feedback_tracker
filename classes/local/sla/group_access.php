@@ -35,6 +35,13 @@ namespace block_feedback_tracker\local\sla;
  * the reports and their web services), so no surface can show a group
  * another one hides.
  *
+ * The course's group mode decides, never an activity's. A group row
+ * aggregates every activity of the course, and activities can set different
+ * modes, so there is no single activity mode to apply to it; the course mode
+ * is the one setting that covers the whole row. Consequently, without
+ * `groupmodeforce`, an activity in separate groups in a course that uses no
+ * groups shows every group's row.
+ *
  * Returned shapes:
  *   - `null`    → unrestricted. NOGROUPS course, or the user holds
  *                 `moodle/site:accessallgroups`. Callers must NOT add any

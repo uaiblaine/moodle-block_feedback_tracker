@@ -39,10 +39,10 @@ namespace block_feedback_tracker\local\sla;
  * tracked earlier is still removed after the block is gone.
  */
 class observer {
-    /** Ceiling on rows re-derived from any one bulk-triggering event. */
+    /** Ceiling on rows re-derived, or users re-attributed, from any one bulk-triggering event. */
     private const BULK_MAX_ROWS = 20000;
 
-    /** Rows per adhoc backfill task dispatched by a bulk re-derivation. */
+    /** Rows per adhoc backfill task, or users per re-attribution task, dispatched by a bulk handler. */
     private const BULK_CHUNK = 50;
 
     /**
@@ -818,6 +818,12 @@ class observer {
      * Group deleted. Reattribute affected users' ledger rows to their new
      * latest-joined groups (which excludes the now-deleted group).
      *
+     * Up to {@see self::BULK_CHUNK} users are re-attributed inside the request;
+     * a larger group is handed to {@see \block_feedback_tracker\task\reattribute_users}
+     * in chunks of that size, as the other bulk handlers hand theirs to the
+     * backfill task. At most {@see self::BULK_MAX_ROWS} users are taken, with a
+     * debugging notice when the ceiling is reached.
+     *
      * @param \core\event\base $event
      * @return void
      */
@@ -831,21 +837,46 @@ class observer {
             return;
         }
         global $DB;
-        $affected = $DB->get_records(
-            'block_feedback_tracker_sub',
+        // One entry per user, not per ledger row: reattribute_user() moves all of a user's rows.
+        $userids = array_map('intval', array_keys($DB->get_records_sql(
+            'SELECT DISTINCT userid
+               FROM {block_feedback_tracker_sub}
+              WHERE courseid = :courseid AND groupid = :groupid
+           ORDER BY userid ASC',
             ['courseid' => $courseid, 'groupid' => $groupid],
-            '',
-            'id, userid',
             0,
-            10000
-        );
-        if (empty($affected)) {
+            self::BULK_MAX_ROWS
+        )));
+        if (empty($userids)) {
             return;
         }
-        $userids = array_unique(array_map(static fn($r) => (int) $r->userid, $affected));
-        group_resolver::reset_memo();
-        foreach ($userids as $userid) {
-            submission_ledger::reattribute_user($courseid, $userid);
+        if (count($userids) >= self::BULK_MAX_ROWS) {
+            debugging(sprintf(
+                'block_feedback_tracker: deleting group %d hit the %d-user ceiling; '
+                . 'the remaining users\' rows need a manual backfill of course %d.',
+                $groupid,
+                self::BULK_MAX_ROWS,
+                $courseid
+            ));
+        }
+        if (count($userids) <= self::BULK_CHUNK) {
+            foreach ($userids as $userid) {
+                submission_ledger::reattribute_user($courseid, $userid);
+            }
+            return;
+        }
+        foreach (array_chunk($userids, self::BULK_CHUNK) as $chunk) {
+            try {
+                $task = new \block_feedback_tracker\task\reattribute_users();
+                $task->set_custom_data(['courseid' => $courseid, 'userids' => $chunk]);
+                \core\task\manager::queue_adhoc_task($task);
+            } catch (\Throwable $e) {
+                debugging(sprintf(
+                    'block_feedback_tracker: could not queue the re-attribution of %d user(s): %s',
+                    count($chunk),
+                    $e->getMessage()
+                ));
+            }
         }
     }
 }

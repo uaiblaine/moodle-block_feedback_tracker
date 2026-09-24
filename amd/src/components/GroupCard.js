@@ -36,7 +36,7 @@ import StatTile from 'block_feedback_tracker/components/StatTile';
 import PeerContext from 'block_feedback_tracker/components/PeerContext';
 import TimelineBar from 'block_feedback_tracker/components/TimelineBar';
 import {colourFor} from 'block_feedback_tracker/lib/bands';
-import {usesDays} from 'block_feedback_tracker/lib/format';
+import {usesDays, formatDecimal} from 'block_feedback_tracker/lib/format';
 
 /**
  * Drilldown URL builder. Optional `band` pre-applies the pending-band filter
@@ -100,7 +100,8 @@ const actionLabel = (action, i18n) => {
 };
 
 /**
- * Format a day-median for a KPI tile: whole numbers plain, halves one decimal.
+ * Format a day-median for a KPI tile: whole numbers plain, halves with one
+ * decimal in the page language's separator.
  *
  * @param {number|null|undefined} n
  * @returns {string|number}
@@ -110,7 +111,7 @@ const fmtDayMedian = (n) => {
         return '—';
     }
     const v = Number(n);
-    return Number.isInteger(v) ? v : v.toFixed(1);
+    return Number.isInteger(v) ? v : formatDecimal(v, 1);
 };
 
 /**
@@ -130,14 +131,6 @@ const effectiveKpi = (group, config) => {
     const h = group.cur_median_eff_h;
     return {value: h === null || h === undefined ? '—' : Math.round(Number(h)), unit: 'h'};
 };
-
-/**
- * Whole days (minimum 1) from an hours value, or "—"; the caller adds the unit.
- *
- * @param {number|null|undefined} h
- * @returns {string|number}
- */
-const fmtDaysFromHours = (h) => (h === null || h === undefined ? '—' : Math.max(1, Math.round(Number(h) / 24)));
 
 /**
  * Round a compliance percentage, or "—"; the caller adds the % unit.
@@ -174,12 +167,6 @@ export default function GroupCard({group, courseid, i18n, config}) {
     const groupid = Number(group.groupid) || 0;
     const goal = config && config.sla_goal_hours ? Number(config.sla_goal_hours) : null;
 
-    // Headline Effective / Perceived use the include-pending "current" medians
-    // (cur_median_*) so the block reflects the live backlog, matching the
-    // dashboard. The score keeps using graded-only median_eff_h.
-    const perceived = group.cur_median_raw_h !== undefined && group.cur_median_raw_h !== null
-        ? Number(group.cur_median_raw_h) : null;
-
     // Mutually-exclusive pending bands (sum = total pending): critical
     // | over-goal | within-goal (the remainder within SLA).
     const critical = Number(group.critical) || 0;
@@ -192,12 +179,13 @@ export default function GroupCard({group, courseid, i18n, config}) {
     const criticalhref = buildDrilldownUrl(courseid, groupid, 'prioridade');
 
     const hasActivities = Array.isArray(group.activities) && group.activities.length > 0;
+    // Headline Effective / Perceived use the include-pending "current" medians
+    // (cur_median_*) so the block reflects the live backlog, matching the
+    // dashboard. The score keeps using graded-only median_eff_h.
     const eff = effectiveKpi(group, config);
-    // Perceived in days mode is the date-based calendar-day median; hours mode
-    // keeps the wall-clock-hours /24 approximation.
-    const perceivedvalue = usesDays(config)
-        ? fmtDayMedian(group.cur_median_perc_days)
-        : fmtDaysFromHours(perceived);
+    // The Perceived tile is in days in both display units, so it always shows
+    // the date-based calendar-day median; days are never derived from hours.
+    const perceivedvalue = fmtDayMedian(group.cur_median_perc_days);
     // SLA compliance honours the display unit: business-days mode shows the
     // day-ruler twin (compliance_pct_days), hours mode the effective-hours
     // compliance. Both are display-only; the score is unaffected.

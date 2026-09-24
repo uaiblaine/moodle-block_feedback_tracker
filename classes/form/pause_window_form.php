@@ -81,7 +81,8 @@ class pause_window_form extends \moodleform {
         );
         $mform->setType('note', PARAM_TEXT);
 
-        $this->add_action_buttons(false, get_string('save', 'core'));
+        $mform->addElement('submit', 'savepausebutton', get_string('save', 'core'));
+        $mform->closeHeaderBefore('savepausebutton');
     }
 
     /**

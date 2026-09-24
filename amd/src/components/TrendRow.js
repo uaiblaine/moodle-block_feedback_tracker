@@ -33,7 +33,8 @@ import {classifySpeed, speedLabel} from 'block_feedback_tracker/lib/trend';
  * @param {object} props
  * @param {number|null|undefined} props.pct  Trend percentage; negative = faster.
  * @param {Array<number|null>} props.series  14-day sparkline values.
- * @param {object} props.i18n  Bundle with trend_faster / trend_slower / trend_stable / trend_window_label.
+ * @param {object} props.i18n  Bundle with trend_faster / trend_slower / trend_stable / trend_window_label /
+ *                             sparkline_aria.
  * @param {number|null} [props.goal]  Optional SLA goal line on the sparkline.
  * @returns {object|null} vnode
  */
@@ -55,7 +56,8 @@ export default function TrendRow({pct, series, i18n, goal}) {
             </div>
             ${hasSeries && html`
                 <div class="bft-trend-row-spark">
-                    <${Sparkline} values=${series} goal=${goal} width=${96} height=${28} />
+                    <${Sparkline} values=${series} goal=${goal} width=${96} height=${28}
+                        arialabel=${i18n.sparkline_aria} />
                 </div>
             `}
         </div>

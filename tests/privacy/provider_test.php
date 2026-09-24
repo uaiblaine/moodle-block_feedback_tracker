@@ -31,8 +31,9 @@ use core_privacy\local\request\approved_userlist;
 use core_privacy\local\request\writer;
 
 /**
- * Spot-checks the course-context ledger rows and the user preferences.
- * System-context data is covered by provider_system_context_test.
+ * Spot-checks the course-context ledger rows, the allocated-marker link and
+ * the user preferences. System-context data is covered by
+ * provider_system_context_test.
  *
  * @covers \block_feedback_tracker\privacy\provider
  */
@@ -152,6 +153,143 @@ final class provider_test extends \core_privacy\tests\provider_testcase {
     }
 
     /**
+     * The report_collapsed preference is exported too, with the "expanded"
+     * description when it is stored as '0'.
+     */
+    public function test_export_user_preferences_writes_report_collapsed(): void {
+        $this->resetAfterTest();
+        $user = $this->getDataGenerator()->create_user();
+        set_user_preference('block_feedback_tracker_report_collapsed', '0', $user);
+
+        provider::export_user_preferences((int) $user->id);
+
+        $prefs = writer::with_context(\context_system::instance())->get_user_preferences('block_feedback_tracker');
+        $this->assertObjectHasProperty('block_feedback_tracker_report_collapsed', $prefs);
+        $this->assertSame('0', $prefs->block_feedback_tracker_report_collapsed->value);
+        $this->assertSame(
+            get_string('privacy:preference:report_collapsed_expanded', 'block_feedback_tracker'),
+            $prefs->block_feedback_tracker_report_collapsed->description
+        );
+        $this->assertObjectNotHasProperty(
+            'block_feedback_tracker_dashboard_collapsed',
+            $prefs,
+            'Only the preference that was set is exported.'
+        );
+    }
+
+    /**
+     * A teacher who is only the allocated marker of a submission has no ledger
+     * row of their own, and the course is still found for them.
+     */
+    public function test_marker_only_teacher_gets_the_course_context(): void {
+        $this->resetAfterTest();
+        [$courseid, $student, $marker] = $this->seed_allocated_submission();
+
+        $contextids = array_map('intval', provider::get_contexts_for_userid((int) $marker->id)->get_contextids());
+        $this->assertContains((int) \context_course::instance($courseid)->id, $contextids);
+
+        $bystranger = provider::get_contexts_for_userid((int) $this->getDataGenerator()->create_user()->id);
+        $this->assertCount(0, $bystranger, 'Control: a user with no link to the ledger gets no context.');
+        $this->assertNotSame((int) $student->id, (int) $marker->id);
+    }
+
+    /**
+     * The marker is listed among the course context's users.
+     */
+    public function test_marker_is_listed_in_the_course_context(): void {
+        $this->resetAfterTest();
+        [$courseid, $student, $marker] = $this->seed_allocated_submission();
+
+        $userlist = new \core_privacy\local\request\userlist(
+            \context_course::instance($courseid),
+            'block_feedback_tracker'
+        );
+        provider::get_users_in_context($userlist);
+
+        $userids = array_map('intval', $userlist->get_userids());
+        sort($userids);
+        $expected = [(int) $student->id, (int) $marker->id];
+        sort($expected);
+        $this->assertSame($expected, $userids);
+    }
+
+    /**
+     * A marker's export lists their allocations and leaves the student out.
+     */
+    public function test_marker_export_lists_the_allocations(): void {
+        $this->resetAfterTest();
+        [$courseid, $student, $marker, $cmid] = $this->seed_allocated_submission();
+        $context = \context_course::instance($courseid);
+
+        provider::export_user_data(new approved_contextlist($marker, 'block_feedback_tracker', [$context->id]));
+
+        $writer = writer::with_context($context);
+        $data = $writer->get_data([
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:allocations', 'block_feedback_tracker'),
+        ]);
+        $this->assertNotEmpty($data, 'The marker\'s allocations must be exported.');
+        $this->assertCount(1, $data->allocations);
+        $this->assertSame($cmid, $data->allocations[0]['cmid']);
+        $this->assertEqualsWithDelta(3.5, $data->allocations[0]['allochours'], 0.001);
+        $this->assertArrayNotHasKey('userid', $data->allocations[0], 'The student\'s identity is not the marker\'s data.');
+
+        $submissions = $writer->get_data([
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:submissions', 'block_feedback_tracker'),
+        ]);
+        $this->assertEmpty($submissions, 'The marker submitted nothing, so no submissions are exported for them.');
+        $this->assertNotSame((int) $student->id, (int) $marker->id);
+    }
+
+    /**
+     * Erasing a marker clears their id from the student's row and keeps the
+     * row; a row allocated to another marker keeps its id.
+     */
+    public function test_deleting_a_marker_clears_the_link_and_keeps_the_row(): void {
+        global $DB;
+        $this->resetAfterTest();
+        [$courseid, $student, $marker] = $this->seed_allocated_submission();
+        $other = $this->getDataGenerator()->create_user();
+        $control = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->create_ledger_row([
+            'courseid' => $courseid,
+            'userid' => (int) $this->getDataGenerator()->create_user()->id,
+            'allocmarkerid' => (int) $other->id,
+        ]);
+
+        provider::delete_data_for_user(new approved_contextlist(
+            $marker,
+            'block_feedback_tracker',
+            [\context_course::instance($courseid)->id]
+        ));
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['courseid' => $courseid, 'userid' => $student->id]);
+        $this->assertNotEmpty($row, 'The student\'s row is the student\'s data and must stay.');
+        $this->assertSame(0, (int) $row->allocmarkerid);
+        $this->assertSame(
+            (int) $other->id,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'allocmarkerid', ['id' => $control]),
+            'Control: another marker\'s allocation is untouched.'
+        );
+    }
+
+    /**
+     * The userlist deletion clears the marker link as well.
+     */
+    public function test_deleting_a_marker_by_userlist_clears_the_link(): void {
+        global $DB;
+        $this->resetAfterTest();
+        [$courseid, $student, $marker] = $this->seed_allocated_submission();
+        $context = \context_course::instance($courseid);
+
+        provider::delete_data_for_users(new approved_userlist($context, 'block_feedback_tracker', [(int) $marker->id]));
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['courseid' => $courseid, 'userid' => $student->id]);
+        $this->assertNotEmpty($row);
+        $this->assertSame(0, (int) $row->allocmarkerid);
+    }
+
+    /**
      * No preference set → export is a no-op (nothing written to the
      * writer for that user).
      */
@@ -163,6 +301,30 @@ final class provider_test extends \core_privacy\tests\provider_testcase {
 
         $writer = writer::with_context(\context_system::instance());
         $this->assertFalse($writer->has_any_data());
+    }
+
+    /**
+     * Seed a student's ledger row allocated to a marker who has no row of
+     * their own.
+     *
+     * @return array The course id, the student, the marker and the row's cmid.
+     */
+    private function seed_allocated_submission(): array {
+        $courseid = (int) $this->getDataGenerator()->create_course()->id;
+        $student = $this->getDataGenerator()->create_user();
+        $marker = $this->getDataGenerator()->create_user();
+        $now = time();
+        $id = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->create_ledger_row([
+            'courseid' => $courseid,
+            'userid' => (int) $student->id,
+            'allocmarkerid' => (int) $marker->id,
+            'timeallocated' => $now - 7200,
+            'timeallocmarker' => $now - 7200,
+            'allochours' => 3.5,
+        ]);
+        global $DB;
+        $cmid = (int) $DB->get_field('block_feedback_tracker_sub', 'cmid', ['id' => $id]);
+        return [$courseid, $student, $marker, $cmid];
     }
 
     /**

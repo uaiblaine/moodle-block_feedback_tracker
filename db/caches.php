@@ -26,8 +26,10 @@ defined('MOODLE_INTERNAL') || die();
 
 $definitions = [
     // Per-day resolved calendar rule (type, weekend flag, business hours, is_active).
-    // Keys are "{calver}_{ymd}" so a calver bump naturally invalidates old entries
-    // without an explicit purge.
+    // Keys are "{calver}_{ymd}", so a calver bump stops old entries being read.
+    // There is no ttl: the calendar observer and lib.php's invalidate and reset
+    // functions purge this definition and pause_windows_by_course after their
+    // bump, so the unreachable entries do not stay in the store.
     'calendar_effective_day' => [
         'mode' => cache_store::MODE_APPLICATION,
         'simplekeys' => false,

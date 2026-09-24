@@ -76,7 +76,7 @@ final class submission_ledger_test extends \advanced_testcase {
     /**
      * After grading, timegraded, effectivehours and slabucket are populated.
      */
-    public function test_upsert_after_grading_populates_effective_and_pauses(): void {
+    public function test_upsert_after_grading_populates_effective_hours_and_bucket(): void {
         $this->resetAfterTest();
         $this->seed_calendar();
         [$cm, $student, $assign] = $this->build_environment();
@@ -135,11 +135,68 @@ final class submission_ledger_test extends \advanced_testcase {
         global $DB;
         $this->assertGreaterThan(0, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id]));
 
+        backfill_cursor::get_or_create((int) $course->id);
+
         submission_ledger::delete_for_course((int) $course->id);
 
         $this->assertSame(0, (int) $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id]));
         $this->assertSame(0, (int) $DB->count_records('block_feedback_tracker_group', ['courseid' => $course->id]));
         $this->assertSame(0, (int) $DB->count_records('block_feedback_tracker_queue', ['courseid' => $course->id]));
+        $this->assertSame(0, (int) $DB->count_records('block_feedback_tracker_bfcursor', ['courseid' => $course->id]));
+    }
+
+    /**
+     * The team members found in bulk are the ones the per-user lookup finds,
+     * group by group, across every shape of membership: in one group, in two,
+     * in none, and in a group that takes no part in activities.
+     */
+    public function test_team_members_agree_with_the_per_user_lookup(): void {
+        $this->resetAfterTest();
+        [$assign, $course, $groups, $users] = $this->build_team_environment(0);
+        $teammembers = new \ReflectionMethod(submission_ledger::class, 'team_member_ids');
+        $teamgroup = new \ReflectionMethod(submission_ledger::class, 'team_group_for_user');
+
+        foreach ([0, $groups['a'], $groups['b'], $groups['c']] as $groupid) {
+            $expected = [];
+            foreach ($users as $userid) {
+                if ($teamgroup->invoke(null, $assign, (int) $course->id, $userid) === $groupid) {
+                    $expected[] = $userid;
+                }
+            }
+            $actual = $teammembers->invoke(null, $assign, (int) $course->id, $groupid);
+            sort($expected);
+            sort($actual);
+            $this->assertSame($expected, $actual, "Members of group {$groupid}.");
+        }
+        // Control: the fixture really spreads the users over more than one team.
+        $this->assertSame([$users['onlya']], $teammembers->invoke(null, $assign, (int) $course->id, $groups['a']));
+    }
+
+    /**
+     * Finding a team's members costs the same number of queries however many
+     * participants the course has, instead of one group lookup per participant.
+     */
+    public function test_team_members_are_found_in_a_fixed_number_of_queries(): void {
+        global $DB;
+        $this->resetAfterTest();
+        // An administrator's capability checks read nothing, so only the lookup itself is counted.
+        $this->setAdminUser();
+        [$assign, $course] = $this->build_team_environment(0);
+        $teammembers = new \ReflectionMethod(submission_ledger::class, 'team_member_ids');
+
+        $teammembers->invoke(null, $assign, (int) $course->id, 0);
+        $before = $DB->perf_get_reads();
+        $teammembers->invoke(null, $assign, (int) $course->id, 0);
+        $few = $DB->perf_get_reads() - $before;
+
+        for ($i = 0; $i < 20; $i++) {
+            $this->getDataGenerator()->create_and_enrol($course, 'student');
+        }
+        $before = $DB->perf_get_reads();
+        $teammembers->invoke(null, $assign, (int) $course->id, 0);
+        $many = $DB->perf_get_reads() - $before;
+
+        $this->assertSame($few, $many, 'Twenty more participants must not cost twenty more queries.');
     }
 
     /**
@@ -387,6 +444,49 @@ final class submission_ledger_test extends \advanced_testcase {
         $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
         $cm = get_coursemodule_from_instance('assign', $assign->id);
         return [$cm, $student, $assign, $course];
+    }
+
+    /**
+     * A course with a team assign and participants in every membership shape.
+     *
+     * Groups a and b take part in activities, c does not. Users: in a only, in
+     * b only, in both a and b, in none, and in c only.
+     *
+     * @param int $prevent The activity's preventsubmissionnotingroup setting.
+     * @return array The {assign} row, the course, the group ids keyed a/b/c and the user ids keyed by shape.
+     */
+    private function build_team_environment(int $prevent): array {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        $instance = $this->getDataGenerator()->create_module('assign', [
+            'course' => $course->id,
+            'teamsubmission' => 1,
+            'preventsubmissionnotingroup' => $prevent,
+        ]);
+        $assign = $DB->get_record('assign', ['id' => $instance->id], '*', MUST_EXIST);
+        $groups = [];
+        foreach (['a' => 1, 'b' => 1, 'c' => 0] as $key => $participation) {
+            $groups[$key] = (int) $this->getDataGenerator()->create_group([
+                'courseid' => $course->id,
+                'participation' => $participation,
+            ])->id;
+        }
+        $memberships = [
+            'onlya' => ['a'],
+            'onlyb' => ['b'],
+            'both' => ['a', 'b'],
+            'none' => [],
+            'onlyc' => ['c'],
+        ];
+        $users = [];
+        foreach ($memberships as $shape => $keys) {
+            $userid = (int) $this->getDataGenerator()->create_and_enrol($course, 'student')->id;
+            foreach ($keys as $key) {
+                $this->getDataGenerator()->create_group_member(['groupid' => $groups[$key], 'userid' => $userid]);
+            }
+            $users[$shape] = $userid;
+        }
+        return [$assign, $course, $groups, $users];
     }
 
     /**
