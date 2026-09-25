@@ -252,9 +252,13 @@ body[data-bs-theme="dark"],
     outline: none;
 }
 
+/* The busy state keeps a readable pair of its own instead of fading the
+ * button: its label ("Loading…") is text. */
 .bft-retry-btn:disabled,
 .bft-retry-busy {
-    opacity: 0.6;
+    background: #fff;
+    border-color: #c2410c;
+    color: #9a3412;
     cursor: progress;
 }
 
@@ -520,7 +524,8 @@ body[data-bs-theme="dark"],
 }
 
 .block_feedback_tracker .bft-loadmore:disabled {
-    opacity: 0.6;
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
     cursor: progress;
 }
 
@@ -546,12 +551,10 @@ body[data-bs-theme="dark"],
     outline: none;
 }
 
-.bft-refresh:disabled {
-    cursor: not-allowed;
-}
-
+.bft-refresh:disabled,
 .bft-refresh-busy {
-    opacity: 0.6;
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
     cursor: progress;
 }
 
@@ -954,7 +957,9 @@ body[data-bs-theme="dark"],
 }
 
 .bft-pagination button:disabled {
-    opacity: 0.5;
+    background: var(--bft-surface-dim);
+    border-color: var(--bft-border);
+    color: var(--bft-text-muted);
     cursor: not-allowed;
 }
 
@@ -1051,20 +1056,28 @@ table.bft-sortable th[data-sort] {
     white-space: nowrap;
 }
 
+/* The arrow is the only sign that a header sorts, so it needs 3:1 as a
+ * non-text indicator. The header's colours belong to the theme (core's
+ * generaltable), so the arrow brings its own pair: muted on the plugin surface
+ * while idle, full text colour once the column sorts. */
 table.bft-sortable th[data-sort]::after {
-    content: ' ↕';
-    opacity: 0.3;
+    content: '↕';
+    margin-left: 0.3em;
+    padding: 0 0.2em;
+    border-radius: 3px;
+    background: var(--bft-surface);
+    color: var(--bft-text-muted);
     font-size: 0.8em;
 }
 
 table.bft-sortable th.bft-sort-asc::after {
-    content: ' ▲';
-    opacity: 1;
+    content: '▲';
+    color: var(--bft-text);
 }
 
 table.bft-sortable th.bft-sort-desc::after {
-    content: ' ▼';
-    opacity: 1;
+    content: '▼';
+    color: var(--bft-text);
 }
 
 /* ------------------------------------------------------------------------
@@ -1853,9 +1866,11 @@ a.bft-activity-action:focus {
     border-radius: 8px;
     border: none;
     cursor: pointer;
+    /* Each tone class below sets the token. */
+    background: var(--bft-dist-tone);
     color: var(--bft-on-fill);
     font-family: inherit;
-    transition: opacity 0.15s;
+    transition: background-color 0.15s, color 0.15s;
     overflow: hidden;
     /* Floor wide enough that a zero-count segment still shows its full label
      * instead of clipping (the flex-basis is 0, so without this the label is
@@ -1866,30 +1881,34 @@ a.bft-activity-action:focus {
     min-height: 48px;
 }
 
-.bft-dist-seg-dim {
-    opacity: 0.28;
-}
-
 .bft-dist-seg-excellent {
-    background: var(--bft-band-excellent-fill);
+    --bft-dist-tone: var(--bft-band-excellent-fill);
 }
 .bft-dist-seg-good {
-    background: var(--bft-band-good-fill);
+    --bft-dist-tone: var(--bft-band-good-fill);
 }
 .bft-dist-seg-regular {
-    background: var(--bft-band-regular-fill);
+    --bft-dist-tone: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-critical {
-    background: var(--bft-band-critical-fill);
+    --bft-dist-tone: var(--bft-band-critical-fill);
 }
 .bft-dist-seg-aguardando {
-    background: var(--bft-band-pending-fill);
+    --bft-dist-tone: var(--bft-band-pending-fill);
 }
 .bft-dist-seg-atencao {
-    background: var(--bft-band-regular-fill);
+    --bft-dist-tone: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-prioridade {
-    background: var(--bft-band-critical-fill);
+    --bft-dist-tone: var(--bft-band-critical-fill);
+}
+
+/* The segments not selected while one filters the table. They stay buttons,
+ * so their labels keep a readable pair; the band shows as a stripe. */
+.bft-dist-seg.bft-dist-seg-dim {
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
+    box-shadow: inset 0 -4px 0 var(--bft-dist-tone);
 }
 
 .bft-dist-seg-n {
@@ -1901,7 +1920,6 @@ a.bft-activity-action:focus {
 .bft-dist-seg-l {
     font-size: 0.65rem;
     font-weight: 700;
-    opacity: 0.95;
     letter-spacing: 0.02em;
     text-transform: uppercase;
     max-width: 100%;
@@ -2070,10 +2088,6 @@ a.bft-activity-action:focus {
     font-family: var(--bft-font-mono);
     color: var(--bft-text-muted);
     white-space: nowrap;
-}
-
-.bft-row-split-arrow {
-    opacity: 0.55;
 }
 
 .bft-row-split-alloc {
@@ -2840,6 +2854,157 @@ a.bft-activity-action:focus {
     outline: none;
 }
 
+/* -------------------- Site benchmarks (SchoolComparison.js) -------------------- */
+.bft-comparison-heading {
+    margin: 0;
+    font-size: var(--bft-fs-eyebrow);
+    line-height: 1.4;
+}
+
+.bft-comparison-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--bft-text-muted);
+    font-family: inherit;
+    font-size: var(--bft-fs-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--bft-ls-eyebrow);
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.bft-comparison-toggle:hover {
+    color: var(--bft-text);
+}
+
+.bft-comparison-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.625rem;
+}
+
+/* The flex display above would otherwise override the hidden attribute. */
+.bft-comparison-body[hidden] {
+    display: none;
+}
+
+.bft-comparison-subtitle,
+.bft-comparison-note {
+    margin: 0;
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-body);
+    line-height: 1.5;
+}
+
+.bft-comparison-windows {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.bft-comparison-window {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--bft-border);
+    border-radius: 999px;
+    background: var(--bft-surface-alt);
+    color: var(--bft-text);
+    font-family: inherit;
+    font-size: var(--bft-fs-body);
+    cursor: pointer;
+}
+
+.bft-comparison-window:hover {
+    background: var(--bft-surface-dim);
+}
+
+.bft-comparison-window.is-active {
+    background: var(--bft-band-good-bg);
+    border-color: var(--bft-band-good-fg);
+    color: var(--bft-band-good-fg);
+    font-weight: 700;
+}
+
+.bft-comparison-chart {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+}
+
+.bft-comparison-chart .bft-sparkline {
+    flex: 1 1 240px;
+    height: 48px;
+    max-width: 360px;
+}
+
+.bft-comparison-chart-caption {
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-meta);
+}
+
+/* Scrolls sideways on a narrow screen; focusable so a keyboard can scroll it. */
+.bft-comparison-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--bft-border);
+    border-radius: 12px;
+    background: var(--bft-surface);
+}
+
+.bft-comparison-table-wrap:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+.bft-comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--bft-text);
+    font-size: var(--bft-fs-body);
+}
+
+.bft-comparison-caption {
+    caption-side: top;
+    padding: 0.75rem 1rem 0.5rem;
+    color: var(--bft-text);
+    font-weight: 700;
+    text-align: left;
+}
+
+.bft-comparison-table thead th {
+    padding: 0.6rem 1rem;
+    background: var(--bft-surface-alt);
+    border-bottom: 1px solid var(--bft-border-soft);
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--bft-ls-label);
+    text-transform: uppercase;
+    text-align: left;
+    vertical-align: bottom;
+}
+
+.bft-comparison-table tbody th,
+.bft-comparison-table tbody td {
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--bft-border-soft);
+}
+
+.bft-comparison-table tbody th {
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.bft-comparison-table .bft-comparison-num {
+    text-align: right;
+    white-space: nowrap;
+}
+
 /* -------------------- Responsive breakpoints -------------------- */
 /* Slim (collapsed) hero: its single strip — score, badge, four stats with
  * vertical dividers, and the expand button — reaches ~1154px wide. The base
@@ -3098,7 +3263,7 @@ a.bft-activity-action:focus {
     text-transform: lowercase;
 }
 .bft-sim-slider-off {
-    opacity: 0.5;
+    color: var(--bft-text-muted);
 }
 .bft-sim-check {
     display: flex;
@@ -3194,7 +3359,8 @@ a.bft-activity-action:focus {
     font-weight: 800;
 }
 .bft-sim-term-off {
-    opacity: 0.5;
+    color: var(--bft-text-muted);
+    font-style: italic;
 }
 .bft-sim-nodata,
 .bft-sim-foot-note {
@@ -3292,11 +3458,12 @@ a.bft-activity-action:focus {
 }
 
 /* Keep the active (graded) toggle legible on hover — the base hover rule
- * darkens the text, which has no contrast on the dark active background. */
+ * darkens the text, which has no contrast on the dark active background. The
+ * underline marks the hover without fading the pair. */
 .bft-dist-modebtn-active:hover {
     color: var(--bft-surface);
     border-color: var(--bft-text);
-    opacity: 0.92;
+    text-decoration: underline;
 }
 
 /* Last 30 academic days heatmap. */
@@ -3426,8 +3593,7 @@ a.bft-activity-action:focus {
 .bft-report-action-grade:hover,
 .bft-report-action-grade:focus {
     color: var(--bft-on-fill);
-    text-decoration: none;
-    opacity: 0.9;
+    text-decoration: underline;
 }
 
 /* Bulk block-removal tool. Collapsed rows are in the DOM from the first render,

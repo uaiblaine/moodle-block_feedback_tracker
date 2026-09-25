@@ -926,11 +926,8 @@ class submission_ledger {
      * would discard a response that already reached the student. Instead this
      * returns null and {@see self::build_and_store()} re-derives against the
      * winner's row. On that single retry ($retrying) a blind update is the
-     * last resort: adopting the row beats throwing.
-     *
-     * Not covered by a test: one process cannot reach the catch, since a read
-     * that misses guarantees an insert that cannot collide. It needs a second
-     * connection interleaved between the read and the insert.
+     * last resort: adopting the row beats throwing. Both recoveries are pinned
+     * by concurrent_insert_test, which makes the read miss a row already there.
      *
      * @param \stdClass $record Fully built ledger record.
      * @param int $cmid
@@ -1271,6 +1268,81 @@ class submission_ledger {
         foreach ($tuples as [$courseid, $groupid]) {
             dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_PAUSE);
         }
+    }
+
+    /**
+     * Re-date one user's current rows in a course after their groups changed,
+     * writing only the rows whose dates move.
+     *
+     * A student's groups reach the dates only through the governing group
+     * override ({@see rule_resolver}). So a row is read only when its activity
+     * still carries a group override, or when it stores dates other than the
+     * activity's own: a row storing the activity's dates on an activity with
+     * no group override resolves to them again. On a course without group
+     * overrides that is one query over the user's rows, returning nothing. The
+     * second arm covers a deleted group, whose overrides core removes in an
+     * observer of its own ({@see assign_process_group_deleted_in_course()}),
+     * possibly before this runs.
+     *
+     * The rows are selected with {@see rule_resolver::drift_sql()}, as the
+     * reconciler's rule-drift sweep selects them, so a row written here is one
+     * that sweep would repair, and afterwards it has nothing to repair. Only
+     * the current cycle is written, as the writer and that sweep do.
+     *
+     * @param int $courseid
+     * @param int $userid
+     * @param int $limit Most rows to write, 0 for no limit. When more rows
+     *                   moved, nothing is written and null is returned, so the
+     *                   caller can hand the work to a background task.
+     * @return int|null Rows written, or null when there were more than $limit.
+     */
+    public static function re_resolve_rules_for_group_change(int $courseid, int $userid, int $limit = 0): ?int {
+        global $DB;
+
+        $rows = $DB->get_records_sql(
+            "SELECT l.id, l.courseid, l.groupid, " . rule_resolver::select_sql('a', 'rule') . "
+               FROM {block_feedback_tracker_sub} l
+               JOIN {assign} a ON a.id = l.iteminstance
+               " . rule_resolver::joins_sql('a.id', 'l.userid') . "
+              WHERE l.userid = :userid
+                AND l.courseid = :courseid
+                AND l.iscurrent = 1
+                AND (EXISTS (SELECT 1
+                               FROM {assign_overrides} gco
+                              WHERE gco.assignid = a.id AND gco.groupid IS NOT NULL)
+                     OR COALESCE(l.timeopens, 0) <> a.allowsubmissionsfromdate
+                     OR COALESCE(l.timecloses, 0) <> a.duedate
+                     OR COALESCE(l.timecutoff, 0) <> a.cutoffdate)
+                AND " . rule_resolver::drift_sql('l', 'a') . "
+           ORDER BY l.id ASC",
+            ['userid' => $userid, 'courseid' => $courseid],
+            0,
+            $limit > 0 ? $limit + 1 : 0
+        );
+        if ($limit > 0 && count($rows) > $limit) {
+            return null;
+        }
+
+        $now = time();
+        $tuples = [];
+        foreach ($rows as $row) {
+            $rule = rule_resolver::rule_from_row($row, 'rule');
+            $DB->update_record('block_feedback_tracker_sub', (object) [
+                'id'           => $row->id,
+                'timeopens'    => $rule['timeopens'],
+                'timecloses'   => $rule['timecloses'],
+                'timecutoff'   => $rule['timecutoff'],
+                'hasrule'      => $rule['hasrule'],
+                'timemodified' => $now,
+            ]);
+            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
+                (int) $row->courseid, (int) $row->groupid,
+            ];
+        }
+        foreach ($tuples as [$tuplecourseid, $groupid]) {
+            dirty_queue::enqueue($tuplecourseid, $groupid, dirty_queue::REASON_PAUSE);
+        }
+        return count($rows);
     }
 
     /**

@@ -176,4 +176,80 @@ final class js_php_lockstep_test extends \advanced_testcase {
 
         $this->assertSame([], array_values(array_diff($calculated, $jsslugs)));
     }
+
+    /**
+     * Every amd/src module, concatenated.
+     *
+     * @return string
+     */
+    private function all_amd_sources(): string {
+        $root = __DIR__ . '/../../amd/src/';
+        $files = array_merge(glob($root . '*.js'), glob($root . '*/*.js'));
+        $this->assertNotEmpty($files, 'Precondition: amd/src holds the modules.');
+        return implode("\n", array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
+    }
+
+    /**
+     * Every string the four i18n bundles ship is read somewhere in amd/src,
+     * so the bundles carry nothing the page pays for and no view shows. A key
+     * counts as read when it appears as a whole word, or when a prefix of it
+     * is concatenated with a variable (`i18n['sim_term_' + k]`). The bundles
+     * are built for an administrator, who is offered every optional section.
+     *
+     * @return void
+     */
+    public function test_every_bundled_string_is_read_by_the_js(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $js = $this->all_amd_sources();
+
+        $bundles = [
+            'i18n_bundle' => bootstrap::i18n_bundle(),
+            'dashboard_i18n' => bootstrap::dashboard_i18n(),
+            'pending_report_i18n' => bootstrap::pending_report_i18n(),
+            'simulator_i18n' => bootstrap::simulator_i18n(),
+        ];
+        $this->assertArrayHasKey(
+            'dashboard_comparison_title',
+            $bundles['dashboard_i18n'],
+            'Precondition: the optional site-benchmarks strings are in the bundle.'
+        );
+
+        $unread = [];
+        foreach ($bundles as $name => $bundle) {
+            foreach (array_keys($bundle) as $key) {
+                if (preg_match('/\b' . preg_quote($key, '/') . '\b/', $js)) {
+                    continue;
+                }
+                $parts = explode('_', $key);
+                $dynamic = false;
+                for ($i = 1; $i < count($parts) && !$dynamic; $i++) {
+                    $prefix = implode('_', array_slice($parts, 0, $i)) . '_';
+                    $dynamic = (bool) preg_match("/'" . preg_quote($prefix, '/') . "'\s*\+/", $js);
+                }
+                if (!$dynamic) {
+                    $unread[] = "{$name}: {$key}";
+                }
+            }
+        }
+        $this->assertSame([], $unread);
+    }
+
+    /**
+     * Every string the site-benchmarks section reads is shipped to the
+     * dashboard, so no label silently falls back to its English default.
+     *
+     * @return void
+     */
+    public function test_site_benchmarks_strings_reach_the_dashboard(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $js = $this->amd_source('components/SchoolComparison.js');
+        preg_match_all('/\bi18n\.([a-z0-9_]+)/', $js, $reads);
+        $keys = array_values(array_unique($reads[1]));
+        $this->assertContains('dashboard_comparison_title', $keys, 'Precondition: the section\'s reads were found.');
+
+        $shipped = array_merge(bootstrap::i18n_bundle(), bootstrap::dashboard_i18n());
+        $this->assertSame([], array_values(array_diff($keys, array_keys($shipped))));
+    }
 }

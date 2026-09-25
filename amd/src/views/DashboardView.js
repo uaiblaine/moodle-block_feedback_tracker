@@ -25,6 +25,8 @@
  *   6. Insights row (Bright spot / Most improved / Gentle watch)
  *   7. "Grade now · picked for you" — 3 priority cards
  *   8. "Your courses" table with inline ScoreRing + sparkline + Open link
+ *   9. Site benchmarks (SchoolComparison), for viewers the config bundle
+ *      flags with `school_comparison`
  *
  * The mount-point JSON carries strings, config, the collapse preference and
  * the pause / event sidecars only; course rows, the grade-now list and the
@@ -43,6 +45,7 @@ import CoursesTable from 'block_feedback_tracker/components/CoursesTable';
 import WaveMark from 'block_feedback_tracker/components/WaveMark';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
+import SchoolComparison from 'block_feedback_tracker/components/SchoolComparison';
 import {getDashboard, getGraderPriorityList, getInsights}
     from 'block_feedback_tracker/lib/api';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
@@ -147,7 +150,7 @@ const groupLabel = (insight, i18n) => {
  * @param {object} props
  * @param {object} props.initial   Mount-point payload: {greeting_firstname,
  *                                 dashboard, gradenow, insights, events, upcoming,
- *                                 cancompare, dashboard_collapsed, i18n, config}.
+ *                                 dashboard_collapsed, i18n, config}.
  * @returns {object} vnode
  */
 // Branch count over the lint cap is acknowledged debt (refactor pass pending).
@@ -501,6 +504,10 @@ export default function DashboardView({initial}) {
                 </div>
                 ${coursesbody}
             </section>
+
+            ${config.school_comparison === true && html`
+                <${SchoolComparison} i18n=${i18n} config=${config} />
+            `}
         </div>
     `;
 }

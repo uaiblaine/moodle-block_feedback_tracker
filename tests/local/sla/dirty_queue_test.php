@@ -85,9 +85,9 @@ final class dirty_queue_test extends \advanced_testcase {
      * inserts between `enqueue()`'s read and its insert makes the insert throw,
      * which is what the recovery in `enqueue()` handles.
      *
-     * Reproducing that race needs two interleaved connections; this pins the
-     * precondition instead. Without the unique index the recovery code guards
-     * nothing, and this test fails.
+     * This pins the precondition; concurrent_insert_test drives the recovery
+     * itself. Without the unique index the recovery code guards nothing, and
+     * this test fails.
      *
      * @return void
      */

@@ -303,6 +303,9 @@ final class backfill_one_submission_test extends \advanced_testcase {
 
     /**
      * Seeds calendar configuration, business hours, and SLA settings for testing.
+     *
+     * The working day is the fixture's own: the hours db/install.php seeded are
+     * deleted first, since business_hours_lookup unions every row of a weekday.
      */
     private function seed_calendar(): void {
         set_config('calver', '1', 'block_feedback_tracker');
@@ -316,6 +319,7 @@ final class backfill_one_submission_test extends \advanced_testcase {
         set_config('bucket_thresholds_eff', '24,48,120', 'block_feedback_tracker');
 
         global $DB;
+        $DB->delete_records('block_feedback_tracker_chours');
         $now = time();
         for ($dow = 0; $dow <= 4; $dow++) {
             $DB->insert_record('block_feedback_tracker_chours', (object) [
@@ -323,6 +327,11 @@ final class backfill_one_submission_test extends \advanced_testcase {
                 'enabled' => 1, 'timecreated' => $now, 'timemodified' => $now,
             ]);
         }
+        $this->assertSame(
+            5,
+            $DB->count_records('block_feedback_tracker_chours'),
+            'Precondition: the working day is this fixture\'s.'
+        );
         academic_time::reset_memos();
     }
 }

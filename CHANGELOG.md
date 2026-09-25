@@ -28,6 +28,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   000 of them (it used to stop silently at 10 000 rows), and raises a
   debugging notice when it reaches that ceiling.
 
+- **Site benchmarks on the teacher dashboard.** A collapsible section at the
+  end of the dashboard shows the site-wide daily series for the last 7, 30 or
+  90 days, as an accessible table under a median sparkline: the median, 10th
+  and 90th percentile of business hours to feedback, the share graded within
+  the SLA goal and the number graded. Only users holding
+  `block/feedback_tracker:viewschoolcomparison` at system context (managers by
+  default) receive the section and its strings; the `get_school_comparison`
+  web service still checks the capability on every call. The data loads when
+  the section is opened. The site history is recorded in business hours only,
+  so in business-days mode the section says so rather than converting.
+
+- **A group membership change re-dates the student's submissions at once.**
+  Joining or leaving a group, or losing a deleted group, can change which
+  group override sets a student's open, due and cut-off dates. The group event
+  now rewrites the dates of that student's current rows in the same request
+  instead of waiting for the reconciler's rule-drift sweep, which on a large
+  site could take days to reach a row. Only activities with a group override,
+  or rows storing dates other than the activity's own, are read, so on a
+  course without group overrides the check is one query; beyond 50 rows the
+  work goes to the `reattribute_users` task, which now re-dates the rows it
+  moves. One case stays with the sweep: a former member of a deleted group
+  whose submissions report under another of their groups, because nothing left
+  in the database records the membership.
+
 ### Fixed
 - **The reconciler no longer walks the whole ledger to find out it has nothing
   to do.** Every sweep ran one statement whose `LIMIT` sat over its own repair
@@ -251,6 +275,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scripts report a rollup they could not recompute because another process
   held its lock, and exit with status 1.
 
+- **Cutoff settings saved out of order are repaired on upgrade.** A
+  `score_thresholds_band`, `bucket_thresholds_eff` or `bucket_thresholds_days`
+  value stored before the settings page validated it (for example score bands
+  saved as `70,90,40`) kept every score or submission in the wrong band. The
+  2026092500 upgrade step resets such a value to its shipped default, starts a
+  new calendar version and queues every rollup for a recompute.
+
+- **The group drill-down's status badge shows the band's name** in the user's
+  language instead of its internal slug.
+
+- **Courses tied on pending count on the teacher dashboard are ordered by the
+  name the user reads,** after multilang filtering, rather than by the stored
+  name.
+
+- **The score simulator's sliders use the language's decimal separator**
+  ("0,40" in Portuguese), matching the total beside them.
+
+- **`js/vendor/README.md` no longer claims the bundle hash is in
+  `thirdpartylibs.xml` when it was not;** both now carry it.
+
 ### Changed
 - **The academic-time engine no longer runs inside the reconciler's tick.** The
   allocation sweep called `stamp_allocation_for_user()` inline, which invokes
@@ -444,6 +488,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manual dispatch,** and a newer push supersedes a running pull-request run,
   never one on `main`.
 
+- **Preact 10.29.8.** The vendored bundle moves from Preact 10.29.2 to 10.29.8
+  (htm stays 3.1.1) and is now `js/vendor/bft-vendor-10.29.8-3.1.1.min.js`.
+  The releases in between are bug and performance fixes; the only ones this
+  plugin reaches are the faster child diff and hooks (preactjs/preact #5115,
+  #5116, #5182). The two Preact files come from the npm release tarballs,
+  checked against the registry's integrity values and their jsDelivr copies,
+  and `js/vendor/README.md` and `thirdpartylibs.xml` record every SHA-384.
+
+- **One class names the vendored bundle.** `local\output\vendor_bundle` holds
+  the file name and loads the bundle for the block and every page, so the next
+  update is a one-line change. A unit test fails when another PHP file spells
+  the name, the named file is missing, a second bundle is left in `js/vendor`,
+  or `thirdpartylibs.xml` or the README disagree; a Behat smoke test opens
+  every page that loads the bundle and fails when one renders no interface.
+
+- **Dimmed and disabled controls keep readable text.** The busy retry and
+  refresh buttons, disabled load-more and pagination buttons, switched-off
+  simulator sliders and terms, and the distribution bar's unselected segments
+  now use a colour pair of their own instead of fading with opacity, which had
+  taken labels below 4.5:1. The drill-down's sort arrow has its own 3:1 pair
+  and background. A stylesheet test now refuses opacity on text and dimmed
+  states without their own colours.
+
+- The `reattribute_users` task is now named "re-attribute and re-date ledger
+  rows after a group change".
+
 ### Added
 - **Three lifecycle events are now observed**, closing gaps where a ledger row
   stops describing reality without any of its own values changing — the shape
@@ -545,6 +615,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values.
 
 - `dirty_queue::remove()`, which only a test called.
+
+- **Unused strings.** 28 page-bundle entries no JavaScript read, and 27
+  language strings nothing else used (old card, KPI, hero tooltip and report
+  filter labels), are gone from both language packs. The site-benchmarks
+  strings were reworded and are sent only to users who can see the section.
 
 ### Added
 - **A tool to remove the block from many courses at once**, for the

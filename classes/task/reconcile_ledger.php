@@ -939,15 +939,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * Covers a changed open date, due date or cut-off, an override or an
      * extension whose event was lost, a group override edit that moved it to
      * another group, a reordering of group overrides (core fires no event for
-     * it) and a change of group membership, which reattributes the row but
-     * does not re-resolve its dates.
+     * it), and the group changes the observer does not re-date: a membership
+     * event that was lost, and a deleted group's former member whose rows
+     * report under another group ({@see \block_feedback_tracker\local\sla\observer::group_deleted()}).
      *
      * The expected dates come from the same SQL the writer stores them with
-     * ({@see rule_resolver::joins_sql()}, {@see rule_resolver::date_sql()}), so
-     * a row is selected exactly when a repair would change it; the repair
-     * writes only the current cycle, hence `iscurrent = 1`. The expressions
-     * give 0 for "no date" and the ledger stores NULL, so the stored side is
-     * read through COALESCE.
+     * ({@see rule_resolver::drift_sql()}), so a row is selected exactly when a
+     * repair would change it; the repair writes only the current cycle, hence
+     * `iscurrent = 1`.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -957,10 +956,6 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function sweep_rule_drift(array $processable, int $batch, string $key): int {
         global $DB;
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $drift = [];
-        foreach (['timeopens', 'timecloses', 'timecutoff'] as $column) {
-            $drift[] = "COALESCE(l.$column, 0) <> " . rule_resolver::date_sql($column, 'a');
-        }
         $acted = $this->walk(
             $key,
             $batch,
@@ -974,7 +969,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                    JOIN {assign} a ON a.id = cm.instance
                    " . rule_resolver::joins_sql('a.id', 'l.userid') . "
                   WHERE l.id " . self::WINDOW_TOKEN . "
-                    AND (" . implode("\n                         OR ", $drift) . ")
+                    AND " . rule_resolver::drift_sql('l', 'a') . "
                ORDER BY l.id ASC",
                 ['modname' => 'assign']
             )

@@ -104,17 +104,21 @@ export const setDateContext = (locale, timezone) => {
  * The Intl formatter for one set of options in the page's locale and time
  * zone, built once. Intl throws a RangeError for a malformed locale tag or a
  * time zone it does not know; each failure retries with a looser pair, ending
- * at the browser's own locale and zone.
+ * at the browser's own locale and zone. A fixed zone is kept through every
+ * retry, since dropping it would move the date.
  *
  * @param {string} key      Cache key naming the options.
  * @param {object} options  Intl.DateTimeFormat options, without timeZone.
+ * @param {string|null} [fixedzone]  A zone to use instead of the user's, e.g. 'UTC'.
  * @returns {Intl.DateTimeFormat}
  */
-const dateFormatter = (key, options) => {
+const dateFormatter = (key, options, fixedzone = null) => {
     if (dateFormatters[key]) {
         return dateFormatters[key];
     }
-    const attempts = [[dateLocale, dateTimeZone], [dateLocale, null], [null, null]];
+    const attempts = fixedzone
+        ? [[dateLocale, fixedzone], [null, fixedzone]]
+        : [[dateLocale, dateTimeZone], [dateLocale, null], [null, null]];
     let formatter = null;
     for (const [locale, timeZone] of attempts) {
         try {
@@ -237,6 +241,37 @@ export const formatDateTime = (timestamp) =>
         hour: '2-digit',
         minute: '2-digit',
     });
+
+/**
+ * A calendar day given as a YYYYMMDD integer, with its weekday, in the page's
+ * locale, e.g. "Thu, 24/09/2026". Returns the em-dash for anything that is not
+ * a real date.
+ *
+ * The value names a day that the server already resolved in the plugin's
+ * calendar time zone (the day keys of {block_feedback_tracker_site}), not an
+ * instant. It is therefore formatted in UTC from its own year, month and day:
+ * passing it through the user's time zone would show the previous or the next
+ * day to anyone far enough from UTC.
+ *
+ * @param {number|string|null|undefined} ymd  e.g. 20260924.
+ * @returns {string}
+ */
+export const formatYmd = (ymd) => {
+    const n = Math.trunc(Number(ymd));
+    if (!Number.isFinite(n) || n < 10000101 || n > 99991231) {
+        return EMPTY;
+    }
+    const year = Math.floor(n / 10000);
+    const month = Math.floor(n / 100) % 100;
+    const day = n % 100;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    // Date.UTC rolls an impossible day over (20260231 becomes 3 March); refuse it instead.
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+        return EMPTY;
+    }
+    return dateFormatter('ymd', {weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric'}, 'UTC')
+        .format(date);
+};
 
 /**
  * Day and month of a Unix timestamp in the page's locale and the user's time

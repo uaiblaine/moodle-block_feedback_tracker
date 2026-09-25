@@ -41,7 +41,9 @@ require_once($CFG->libdir . '/adminlib.php');
  * saved out of order would put every score or submission on the site in the
  * wrong band. The order is strict: two equal cutoffs would leave a band no
  * value can reach. The parsers stay tolerant of whatever was stored before this
- * check existed.
+ * check existed; the 2026092500 upgrade step reset each stored value breaking
+ * these rules to the shipped default, with the rules written out as they stood
+ * at that version, so a change here does not reach it.
  */
 class thresholds_setting extends \admin_setting_configtext {
     /** Each cutoff must be larger than the one before it. */
@@ -49,6 +51,18 @@ class thresholds_setting extends \admin_setting_configtext {
 
     /** Each cutoff must be smaller than the one before it. */
     public const DESCENDING = 'descending';
+
+    /**
+     * The settings this class validates, by name without the plugin: shipped
+     * default, order, lowest cutoff and highest cutoff (null for no upper
+     * bound), in the order of the constructor's last four parameters.
+     * settings.php builds each of the three from its entry.
+     */
+    public const SETTINGS = [
+        'bucket_thresholds_days' => ['2,5,10', self::ASCENDING, 0.0, null],
+        'bucket_thresholds_eff' => ['24,48,120', self::ASCENDING, 0.0, null],
+        'score_thresholds_band' => ['90,70,40', self::DESCENDING, 0.0, 100.0],
+    ];
 
     /** @var string Required order, self::ASCENDING or self::DESCENDING. */
     protected string $order;
@@ -98,42 +112,58 @@ class thresholds_setting extends \admin_setting_configtext {
             return $parent;
         }
 
-        // The shipped default is the example. It is read from the property, not
-        // get_defaultsetting(), which builds the whole admin tree.
-        $formaterror = get_string('settings_thresholds_error_format', 'block_feedback_tracker', (string) $this->defaultsetting);
-        $parts = array_map('trim', explode(',', (string) $data));
+        return match (self::violation((string) $data, $this->order, $this->min, $this->max)) {
+            null => true,
+            // The shipped default is the example. It is read from the property, not
+            // get_defaultsetting(), which builds the whole admin tree.
+            'format' => get_string('settings_thresholds_error_format', 'block_feedback_tracker', (string) $this->defaultsetting),
+            'range' => get_string('settings_thresholds_error_range', 'block_feedback_tracker', (object) [
+                'min' => $this->number($this->min),
+                'max' => $this->number((float) $this->max),
+            ]),
+            'min' => get_string('settings_thresholds_error_min', 'block_feedback_tracker', $this->number($this->min)),
+            self::ASCENDING => get_string('settings_thresholds_error_ascending', 'block_feedback_tracker'),
+            self::DESCENDING => get_string('settings_thresholds_error_descending', 'block_feedback_tracker'),
+        };
+    }
+
+    /**
+     * Which rule a value breaks, checked in the order validate() reports them:
+     * three numbers, then the range, then the order.
+     *
+     * @param string $data Value to check.
+     * @param string $order self::ASCENDING or self::DESCENDING.
+     * @param float $min Lowest accepted cutoff.
+     * @param float|null $max Highest accepted cutoff, or null for no upper bound.
+     * @return string|null 'format', 'range' (a bound on both sides), 'min' (a lower
+     *     bound only), the order that is broken, or null when the value is valid.
+     */
+    private static function violation(string $data, string $order, float $min, ?float $max): ?string {
+        $parts = array_map('trim', explode(',', $data));
         if (count($parts) !== 3) {
-            return $formaterror;
+            return 'format';
         }
         $values = [];
         foreach ($parts as $part) {
             if (!is_numeric($part)) {
-                return $formaterror;
+                return 'format';
             }
             $values[] = (float) $part;
         }
 
         foreach ($values as $value) {
-            if ($this->max !== null && ($value < $this->min || $value > $this->max)) {
-                return get_string('settings_thresholds_error_range', 'block_feedback_tracker', (object) [
-                    'min' => $this->number($this->min),
-                    'max' => $this->number($this->max),
-                ]);
-            }
-            if ($this->max === null && $value < $this->min) {
-                return get_string('settings_thresholds_error_min', 'block_feedback_tracker', $this->number($this->min));
+            if ($value < $min || ($max !== null && $value > $max)) {
+                return $max === null ? 'min' : 'range';
             }
         }
 
         foreach ([1, 2] as $i) {
-            if ($this->order === self::ASCENDING && !($values[$i] > $values[$i - 1])) {
-                return get_string('settings_thresholds_error_ascending', 'block_feedback_tracker');
-            }
-            if ($this->order === self::DESCENDING && !($values[$i] < $values[$i - 1])) {
-                return get_string('settings_thresholds_error_descending', 'block_feedback_tracker');
+            $inorder = $order === self::DESCENDING ? $values[$i] < $values[$i - 1] : $values[$i] > $values[$i - 1];
+            if (!$inorder) {
+                return $order;
             }
         }
-        return true;
+        return null;
     }
 
     /**

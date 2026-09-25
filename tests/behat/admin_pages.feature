@@ -18,14 +18,6 @@ Feature: The plugin's admin and drill-down pages render for authorised users
     And the following "role assigns" exist:
       | user     | role    | contextlevel | reference |
       | manager1 | manager | System       |           |
-    # These rows repeat the editingteacher archetype defaults in db/access.php, so
-    # on a standard install they change nothing (role_change_permission() skips a
-    # permission the role already has); they keep the scenarios independent of
-    # those defaults.
-    And the following "permission overrides" exist:
-      | capability                                | permission | role           | contextlevel | reference |
-      | block/feedback_tracker:viewdashboard      | Allow      | editingteacher | System       |           |
-      | block/feedback_tracker:viewresponsiveness | Allow      | editingteacher | System       |           |
 
   # The plugin's admin settings page carries the only index of the tool pages,
   # so it has to keep listing all four of them. It is site-config gated, which

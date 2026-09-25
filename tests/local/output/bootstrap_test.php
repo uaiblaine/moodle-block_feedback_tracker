@@ -316,4 +316,89 @@ final class bootstrap_test extends \advanced_testcase {
             str_replace('{$a}', '42', $template)
         );
     }
+
+    /**
+     * The dashboard i18n keys of the site-benchmarks section.
+     *
+     * @param array $bundle A dashboard_i18n() result.
+     * @return string[]
+     */
+    private function comparison_keys(array $bundle): array {
+        return array_values(array_filter(
+            array_keys($bundle),
+            static fn (string $key): bool => str_starts_with($key, 'dashboard_comparison_')
+        ));
+    }
+
+    /**
+     * A manager holds block/feedback_tracker:viewschoolcomparison at system
+     * context by default: the bundle offers the site benchmarks and ships
+     * their strings. Prohibiting the capability on the same role withdraws
+     * both, so the flag follows the capability rather than the role.
+     *
+     * @return void
+     */
+    public function test_school_comparison_follows_the_capability_for_a_manager(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $sysctx = \context_system::instance();
+        $managerroleid = (int) $DB->get_field('role', 'id', ['shortname' => 'manager'], MUST_EXIST);
+        $manager = $this->getDataGenerator()->create_user();
+        role_assign($managerroleid, (int) $manager->id, $sysctx->id);
+        $this->setUser($manager);
+        $this->assertTrue(
+            has_capability('block/feedback_tracker:viewschoolcomparison', $sysctx),
+            'Precondition: the manager archetype holds the capability.'
+        );
+
+        $this->assertTrue(bootstrap::config_bundle()['school_comparison']);
+        $strings = bootstrap::dashboard_i18n();
+        $this->assertSame(
+            get_string('dashboard_comparison_title', 'block_feedback_tracker'),
+            $strings['dashboard_comparison_title'] ?? null
+        );
+        $this->assertStringContainsString('{$a}', $strings['dashboard_comparison_caption'] ?? '');
+        $this->assertCount(16, $this->comparison_keys($strings));
+
+        assign_capability('block/feedback_tracker:viewschoolcomparison', CAP_PROHIBIT, $managerroleid, $sysctx->id, true);
+
+        $this->assertFalse(bootstrap::config_bundle()['school_comparison']);
+        $strings = bootstrap::dashboard_i18n();
+        $this->assertSame([], $this->comparison_keys($strings));
+        // Control: the rest of the overlay is still built for this user.
+        $this->assertArrayHasKey('dashboard_courses_title', $strings);
+    }
+
+    /**
+     * An editing teacher holds the dashboard through a course role, which does
+     * not reach the system context the web service checks: no section and no
+     * strings. A system role granting the capability then turns both on.
+     *
+     * @return void
+     */
+    public function test_school_comparison_is_withheld_from_an_editing_teacher(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $sysctx = \context_system::instance();
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+        $this->assertTrue(
+            has_capability('block/feedback_tracker:viewdashboard', \context_course::instance($course->id)),
+            'Precondition: the teacher is a dashboard viewer.'
+        );
+        $this->assertFalse(has_capability('block/feedback_tracker:viewschoolcomparison', $sysctx));
+
+        $this->assertFalse(bootstrap::config_bundle()['school_comparison']);
+        $strings = bootstrap::dashboard_i18n();
+        $this->assertSame([], $this->comparison_keys($strings));
+        // Control: the rest of the overlay is still built for this user.
+        $this->assertArrayHasKey('dashboard_courses_title', $strings);
+
+        $managerroleid = (int) $DB->get_field('role', 'id', ['shortname' => 'manager'], MUST_EXIST);
+        role_assign($managerroleid, (int) $teacher->id, $sysctx->id);
+
+        $this->assertTrue(bootstrap::config_bundle()['school_comparison']);
+        $this->assertCount(16, $this->comparison_keys(bootstrap::dashboard_i18n()));
+    }
 }

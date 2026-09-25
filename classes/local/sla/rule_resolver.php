@@ -27,8 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Computes the allowsubmissionsfromdate / duedate / cutoffdate a submission
- * is judged against, as mod_assign applies them.
+ * Computes the allowsubmissionsfromdate / duedate / cutoffdate of an assign
+ * for one student, as mod_assign shows them to that student.
  *
  * Each date is resolved field by field from the first of: the student's own
  * override, the governing group override, the activity. The governing group
@@ -37,11 +37,30 @@ namespace block_feedback_tracker\local\sla;
  * `mod_assign_cm_info_dynamic()` choose it; a tie, which core never writes,
  * goes to the lowest id. Hidden groups count: core filters them by the viewing
  * user's capabilities, which would make a stored date depend on who triggered
- * the write. The fall-through is per field, as
- * in `mod_assign_cm_info_dynamic()`, which dates the activity for the student:
- * a user override that leaves the due date alone still lets a group override
- * supply it. override_exists() merges whole rows instead, so there the user
- * override's NULLs hide the group override's dates.
+ * the write.
+ *
+ * The fall-through is per field because that is what the student is shown.
+ * The course page dates the activity through `mod_assign_cm_info_dynamic()`,
+ * which takes each date the user override leaves NULL from the group override.
+ * The calendar shows, per activity, the event of lowest priority that
+ * {@see \core_calendar\local\event\strategies\raw_event_retrieval_strategy}
+ * finds among those `assign_update_events()` writes: a user override gets a
+ * due-date event only when it sets that date, with priority
+ * CALENDAR_EVENT_USER_OVERRIDE_PRIORITY (0), ahead of a group override's
+ * sortorder, ahead of the activity's own event.
+ *
+ * It is not what mod_assign enforces. {@see \assign::override_exists()}
+ * array_merge()s whole rows, the user override last, so every NULL field of a
+ * user override hides the group override's date for that field, and
+ * {@see \assign::update_effective_access()} then keeps the activity's date.
+ * The two readings differ only for a student with a user override and a
+ * governing group override that sets a date the user override leaves NULL.
+ * Code that must agree with what mod_assign decides has to replicate
+ * override_exists() rather than read these dates: whether a submission is
+ * accepted ({@see \assign::submissions_open()}), the late flag of
+ * {@see \assign_grading_table}, the grade penalty of
+ * {@see \mod_assign\penalty\helper}, which Moodle 4.5 does not have, and the
+ * due-date reminders of {@see \mod_assign\notification_helper}.
  *
  * NULL and 0 mean different things. In {assign_overrides} NULL is "not
  * overridden, inherit", while 0 is a date the override removed:
@@ -59,9 +78,9 @@ namespace block_feedback_tracker\local\sla;
  * extension over an override.
  *
  * The per-student resolution runs in SQL ({@see self::joins_sql()},
- * {@see self::date_sql()}) so the ledger writer and the reconciler's
- * rule-drift probe evaluate the very same expressions and cannot disagree
- * about a row.
+ * {@see self::date_sql()}) so the ledger writer, the re-dating after a group
+ * change and the reconciler's rule-drift probe evaluate the very same
+ * expressions and cannot disagree about a row.
  */
 class rule_resolver {
     /**
@@ -93,29 +112,76 @@ class rule_resolver {
     public static function resolve_rule(int $assignid, int $userid): array {
         global $DB;
 
-        $select = [];
-        foreach (array_keys(self::FIELDS) as $key) {
-            $select[] = self::date_sql($key, 'a') . ' AS ' . $key;
-        }
         /* The student is joined as a row, not bound twice: the override
          * subqueries name the student id several times, and a named
          * placeholder may appear only once per statement. Moodle never removes
          * a {user} row (deleting an account only flags it), so the join finds
          * the same student the reconciler's probe reads from the ledger. */
         $row = $DB->get_record_sql(
-            'SELECT ' . implode(', ', $select) . '
+            'SELECT ' . self::select_sql('a', 'rule') . '
                FROM {assign} a
           LEFT JOIN {user} u ON u.id = :userid
                ' . self::joins_sql('a.id', 'u.id') . '
               WHERE a.id = :assignid',
             ['userid' => $userid, 'assignid' => $assignid]
         );
+        return self::rule_from_row($row ?: null, 'rule');
+    }
 
+    /**
+     * Select list of the three effective dates over the aliases
+     * {@see self::joins_sql()} adds, each named after its ledger column with
+     * a prefix, e.g. `ruletimecloses`. Read the row back with
+     * {@see self::rule_from_row()}.
+     *
+     * @param string $assign Alias of the {assign} row in the caller's query.
+     * @param string $prefix Prefix of the column aliases, so they cannot clash
+     *                       with a ledger column of the same query.
+     * @return string SQL.
+     */
+    public static function select_sql(string $assign, string $prefix): string {
+        $select = [];
+        foreach (array_keys(self::FIELDS) as $key) {
+            $select[] = self::date_sql($key, $assign) . ' AS ' . $prefix . $key;
+        }
+        return implode(', ', $select);
+    }
+
+    /**
+     * The resolved rule from a row read through {@see self::select_sql()}.
+     *
+     * @param \stdClass|null $row The row, or null when the query found none,
+     *                            which resolves to no date at all.
+     * @param string $prefix The prefix given to select_sql().
+     * @return array{timeopens:?int, timecloses:?int, timecutoff:?int, hasrule:int}
+     */
+    public static function rule_from_row(?\stdClass $row, string $prefix): array {
         $rule = [];
         foreach (array_keys(self::FIELDS) as $key) {
-            $rule[$key] = $row ? self::date_or_null($row->{$key}) : null;
+            $rule[$key] = $row ? self::date_or_null($row->{$prefix . $key}) : null;
         }
         return self::with_hasrule($rule);
+    }
+
+    /**
+     * SQL that is true when a ledger row stores other dates than the ones
+     * {@see self::date_sql()} resolves for it now, over the aliases
+     * {@see self::joins_sql()} adds.
+     *
+     * A row it selects is one a re-resolve would change, and after the re-resolve
+     * it no longer selects it. The ledger stores NULL for "no date" where the
+     * expressions give 0, hence the COALESCE on the stored side.
+     *
+     * @param string $ledger Alias of the {block_feedback_tracker_sub} row.
+     * @param string $assign Alias of the {assign} row.
+     * @return string SQL predicate, parenthesised.
+     */
+    public static function drift_sql(string $ledger, string $assign): string {
+        $drift = [];
+        foreach (array_keys(self::FIELDS) as $key) {
+            $drift[] = "COALESCE($ledger.$key, 0) <> " . self::date_sql($key, $assign);
+        }
+        return '(' . implode(' OR ', $drift) . ')';
     }
 
     /**

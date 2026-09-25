@@ -401,7 +401,62 @@ final class get_dashboard_test extends \advanced_testcase {
         $this->assertSame('C & D', $response['data']['courses'][0]['coursename']);
     }
 
+    /**
+     * Courses tied on pending count are ordered by the name the caller reads,
+     * in the caller's language. One multilang name sorts before the other
+     * course in Spanish and after it in English, which no ordering on the
+     * stored name can give for both.
+     *
+     * @return void
+     */
+    public function test_tied_courses_are_ordered_by_the_name_the_caller_reads(): void {
+        global $SESSION;
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = $this->getDataGenerator()->create_course([
+            'fullname' => '<span lang="en" class="multilang">Zulu</span><span lang="es" class="multilang">Alpha</span>',
+        ]);
+        $plain = $this->getDataGenerator()->create_course(['fullname' => 'Mike']);
+        $busiest = $this->getDataGenerator()->create_course(['fullname' => 'Yankee']);
+        $this->seed_rollup($multilang, 3, 0, 0, 70);
+        $this->seed_rollup($plain, 3, 0, 0, 70);
+        $this->seed_rollup($busiest, 9, 0, 0, 70);
+        $teacher = $this->getDataGenerator()->create_user();
+        foreach ([$multilang, $plain, $busiest] as $course) {
+            $this->getDataGenerator()->enrol_user($teacher->id, $course->id, 'editingteacher');
+        }
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+
+        $this->assertSame(['Yankee', 'Mike', 'Zulu'], $this->course_names(), 'English: pending first, then Mike before Zulu.');
+
+        /* Set directly rather than through force_current_language(), which
+         * refuses a language whose pack is not installed on the test site. */
+        $SESSION->forcelang = 'es';
+        try {
+            $names = $this->course_names();
+        } finally {
+            unset($SESSION->forcelang);
+        }
+        $this->assertSame(['Yankee', 'Alpha', 'Mike'], $names, 'Spanish: Alpha before Mike.');
+    }
+
     // Helpers.
+
+    /**
+     * The course names the dashboard returns to the current user, in order.
+     *
+     * @return string[]
+     */
+    private function course_names(): array {
+        $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        return array_column($response['data']['courses'], 'coursename');
+    }
 
     /**
      * Build three throwaway courses.

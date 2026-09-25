@@ -37,12 +37,7 @@ $PAGE->set_title(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
 
-// Load the vendored Preact + htm bundle into <head> before any AMD module
-// resolves, so window.bftPreact is set before lib/preact.js evaluates.
-$PAGE->requires->js(
-    new \moodle_url('/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js'),
-    true
-);
+\block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/spike_react', 'init');
 
 echo $OUTPUT->header();

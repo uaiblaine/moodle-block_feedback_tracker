@@ -32,9 +32,6 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class block_feedback_tracker extends block_base {
-    /** Vendored Preact + htm bundle (URL path relative to wwwroot). */
-    private const VENDOR_BUNDLE = '/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js';
-
     /**
      * Block initialisation
      */
@@ -108,9 +105,7 @@ class block_feedback_tracker extends block_base {
             . '<noscript>' . $ssrhtml . '</noscript>'
             . '</div>';
 
-        // Load the Preact bundle into <head> (inhead=true) so its globals
-        // are set before any AMD module factory resolves.
-        $this->page->requires->js(new \moodle_url(self::VENDOR_BUNDLE), true);
+        \block_feedback_tracker\local\output\vendor_bundle::load($this->page);
         $this->page->requires->js_call_amd('block_feedback_tracker/block_app', 'init');
 
         return $this->content;

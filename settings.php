@@ -75,13 +75,13 @@ if ($ADMIN->fulltree) {
     $settings->add($s);
 
     // Hour-ruler band cutoffs, in increasing order: bucket::for_effective()
-    // tests them from the lowest up.
+    // tests them from the lowest up. The default, order and range of the three
+    // cutoff settings are thresholds_setting::SETTINGS.
     $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/bucket_thresholds_eff',
         get_string('settings_bucket_thresholds_eff', $plugin),
         get_string('settings_bucket_thresholds_eff_desc', $plugin),
-        '24,48,120',
-        \block_feedback_tracker\local\admin\thresholds_setting::ASCENDING
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_eff']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
@@ -94,8 +94,7 @@ if ($ADMIN->fulltree) {
         $plugin . '/bucket_thresholds_days',
         get_string('settings_bucket_thresholds_days', $plugin),
         get_string('settings_bucket_thresholds_days_desc', $plugin),
-        '2,5,10',
-        \block_feedback_tracker\local\admin\thresholds_setting::ASCENDING
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_days']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
@@ -133,10 +132,7 @@ if ($ADMIN->fulltree) {
         $plugin . '/score_thresholds_band',
         get_string('settings_score_thresholds_band', $plugin),
         get_string('settings_score_thresholds_band_desc', $plugin),
-        '90,70,40',
-        \block_feedback_tracker\local\admin\thresholds_setting::DESCENDING,
-        0.0,
-        100.0
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['score_thresholds_band']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);

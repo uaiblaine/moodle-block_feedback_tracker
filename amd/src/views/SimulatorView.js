@@ -59,14 +59,28 @@ const INPUT_FIELDS = [
 ];
 
 /**
- * A labelled range slider with a live read-out.
+ * Decimal places a slider step implies: 0 for 1, 2 for 0.01.
+ *
+ * @param {number} step
+ * @returns {number}
+ */
+const stepDigits = (step) => {
+    const text = String(step);
+    const dot = text.indexOf('.');
+    return dot === -1 ? 0 : text.length - dot - 1;
+};
+
+/**
+ * A labelled range slider with a live read-out. The read-out goes through
+ * formatDecimal with as many places as the step has, so a weight reads "0,40"
+ * in a language whose decimal separator is a comma.
  *
  * @param {object} props
  * @param {string} props.label     Field label.
  * @param {number} props.value     Current value.
  * @param {number} props.min       Range minimum.
  * @param {number} props.max       Range maximum.
- * @param {number} props.step      Step increment.
+ * @param {number} props.step      Step increment; also sets the read-out's decimal places.
  * @param {string} props.unit      Unit suffix shown next to the value ('' for none).
  * @param {boolean} props.disabled Greys out and shows '—' when true.
  * @param {Function} props.onInput Receives the new numeric value.
@@ -74,16 +88,18 @@ const INPUT_FIELDS = [
  *     directional trend cue), rendered in place of the plain numeric value.
  * @returns {object} vnode
  */
-const Slider = ({label, value, min, max, step, unit, disabled, onInput, valuenode}) => html`
-    <label class=${'bft-sim-slider' + (disabled ? ' bft-sim-slider-off' : '')}>
-        <span class="bft-sim-slider-label">${label}</span>
-        <input type="range" min=${min} max=${max} step=${step}
-               value=${value} disabled=${disabled}
-               onInput=${(e) => onInput(Number(e.target.value))} />
-        ${valuenode
-            || html`<span class="bft-sim-slider-val bft-mono">${disabled ? '—' : value + (unit ? ' ' + unit : '')}</span>`}
-    </label>
-`;
+const Slider = ({label, value, min, max, step, unit, disabled, onInput, valuenode}) => {
+    const readout = disabled ? '—' : formatDecimal(value, stepDigits(step)) + (unit ? ' ' + unit : '');
+    return html`
+        <label class=${'bft-sim-slider' + (disabled ? ' bft-sim-slider-off' : '')}>
+            <span class="bft-sim-slider-label">${label}</span>
+            <input type="range" min=${min} max=${max} step=${step}
+                   value=${value} disabled=${disabled}
+                   onInput=${(e) => onInput(Number(e.target.value))} />
+            ${valuenode || html`<span class="bft-sim-slider-val bft-mono">${readout}</span>`}
+        </label>
+    `;
+};
 
 /**
  * Top-level simulator view.
