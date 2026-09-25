@@ -35,7 +35,8 @@ use core_external\external_value;
 
 /**
  * Returns the last N days of site-wide stats (median, p10, p90, compliance)
- * to overlay on group cards. Pulls from the daily-aggregated
+ * for the teacher dashboard's site-benchmarks section
+ * (amd/src/components/SchoolComparison.js). Pulls from the daily-aggregated
  * {block_feedback_tracker_site} table, not the live ledger.
  */
 class get_school_comparison extends external_api {

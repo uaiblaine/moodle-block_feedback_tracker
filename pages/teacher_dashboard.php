@@ -81,11 +81,6 @@ try {
     debugging('block_feedback_tracker: dashboard upcoming-pauses fetch failed: ' . $e->getMessage());
 }
 
-// Whether to expose the comparison overlay — gated by its own capability so
-// teachers with viewdashboard but not viewschoolcomparison only see the
-// per-course aggregate, not the site-wide benchmarks.
-$cancompare = has_capability('block/feedback_tracker:viewschoolcomparison', $sysctx);
-
 // Collapse state of the hero + insights block, a user preference declared in
 // block_feedback_tracker_user_preferences(); defaults to expanded.
 $dashboardcollapsed = (bool) get_user_preferences(
@@ -103,7 +98,6 @@ $initial = [
     'insights' => $insights,
     'events' => $events,
     'upcoming' => $upcoming,
-    'cancompare' => $cancompare,
     'dashboard_collapsed' => $dashboardcollapsed,
     'i18n' => array_merge(
         \block_feedback_tracker\local\output\bootstrap::i18n_bundle(),
@@ -120,10 +114,7 @@ if ($initialjson === false) {
     $initialjson = '{}';
 }
 
-$PAGE->requires->js(
-    new \moodle_url('/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js'),
-    true
-);
+\block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/dashboard_app', 'init');
 
 // Log this page view to the standard site log, once per navigation. The web

@@ -31,13 +31,15 @@ use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
- * Moves a batch of users' ledger rows in one course to the group each user
- * belongs to now.
+ * Finishes a group change for a batch of users in one course: moves their
+ * ledger rows to the group each user reports under now, then re-dates the
+ * rows whose governing group override changed.
  *
  * Queued by {@see \block_feedback_tracker\local\sla\observer::group_deleted()}
- * when the deleted group held more users than it re-attributes inside the
- * request. Re-gated on the course at execute time, like the other ledger
- * writers, in case the block went away in between.
+ * when the deleted group held more users than it handles inside the request,
+ * and by the observer's group handlers for one user whose re-dating moves more
+ * rows than it writes inside the request. Re-gated on the course at execute
+ * time, like the other ledger writers, in case the block went away in between.
  */
 class reattribute_users extends \core\task\adhoc_task {
     /**
@@ -50,7 +52,7 @@ class reattribute_users extends \core\task\adhoc_task {
     }
 
     /**
-     * Re-attribute every user in the custom data.
+     * Re-attribute and re-date every user in the custom data.
      *
      * Custom data shape: ['courseid' => int, 'userids' => int[]].
      *
@@ -67,6 +69,7 @@ class reattribute_users extends \core\task\adhoc_task {
             $userid = (int) $userid;
             if ($userid > 0) {
                 submission_ledger::reattribute_user($courseid, $userid);
+                submission_ledger::re_resolve_rules_for_group_change($courseid, $userid);
             }
         }
     }

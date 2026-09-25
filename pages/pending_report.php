@@ -143,10 +143,7 @@ if ($initialjson === false) {
     $initialjson = '{}';
 }
 
-$PAGE->requires->js(
-    new \moodle_url('/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js'),
-    true
-);
+\block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/pending_report_app', 'init');
 
 // Log this page view to the standard site log, once per navigation. The web

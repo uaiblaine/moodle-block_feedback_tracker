@@ -678,5 +678,68 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026092402, 'feedback_tracker');
     }
 
+    /* Reset a stored cutoff triple that breaks the settings page's rules to its
+     * shipped default. The parsers read a stored triple by position, so one saved
+     * out of order before the settings page validated it keeps every score or
+     * submission of the site in the wrong band, and nothing prompts an admin to
+     * save it again. The rules are the numeric ones of
+     * thresholds_setting::validate() at this version, frozen here: three numbers,
+     * none below 0 and, for the score bands, none above 100, each strictly after
+     * the previous one in the order. A value only validate()'s PARAM_TEXT check
+     * refuses is kept, since the parsers read it as the numbers it holds. */
+    if ($oldversion < 2026092500) {
+        // Name => [shipped default, true for ascending, highest cutoff or null].
+        $rules = [
+            'bucket_thresholds_days' => ['2,5,10', true, null],
+            'bucket_thresholds_eff' => ['24,48,120', true, null],
+            'score_thresholds_band' => ['90,70,40', false, 100.0],
+        ];
+        $reset = false;
+        foreach ($rules as $name => [$default, $ascending, $max]) {
+            $stored = get_config('block_feedback_tracker', $name);
+            if ($stored === false) {
+                // Never saved: the parsers already read the default.
+                continue;
+            }
+            $values = array_map('trim', explode(',', (string) $stored));
+            $valid = count($values) === 3;
+            foreach ($values as $i => $value) {
+                $valid = $valid && is_numeric($value) && (float) $value >= 0.0
+                    && ($max === null || (float) $value <= $max);
+                if ($valid && $i > 0) {
+                    $valid = $ascending
+                        ? (float) $value > (float) $values[$i - 1]
+                        : (float) $value < (float) $values[$i - 1];
+                }
+            }
+            if (!$valid) {
+                set_config($name, $default, 'block_feedback_tracker');
+                $reset = true;
+            }
+        }
+
+        /* What block_feedback_tracker_invalidate_rollups() does when an admin
+         * saves one of these settings; set_config() does not call it, and it
+         * returns early during an upgrade. A new calendar version, so the
+         * pending rows re-derive their band and the calver-keyed caches roll
+         * over, and a recompute of every rollup. */
+        if ($reset) {
+            $calver = get_config('block_feedback_tracker', 'calver');
+            set_config('calver', (string) (($calver === false ? 1 : (int) $calver) + 1), 'block_feedback_tracker');
+
+            $tuples = $DB->get_recordset('block_feedback_tracker_group', null, '', 'id, courseid, groupid');
+            foreach ($tuples as $t) {
+                \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                    (int) $t->courseid,
+                    (int) $t->groupid,
+                    \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+                );
+            }
+            $tuples->close();
+        }
+
+        upgrade_block_savepoint(true, 2026092500, 'feedback_tracker');
+    }
+
     return true;
 }

@@ -44,9 +44,36 @@ Read sections 2 through 7 as the record of what was found and why it mattered; r
 section 8 for what shipped, what did not, and the corrections to this document's own
 claims.
 
+**Status — 2026-09-25.** Of the items 8.1 carried forward, all are now resolved or
+moot except 4.7, which is still open in part. 4.10, which 8.1 set aside, stays
+untouched while the plugin supports Moodle 4.5. Section 1 landed as Preact
+**10.29.8**. Section 8.5 reconciles each item against the code.
+
 ---
 
 ## 1. The Preact update
+
+> **Status — 2026-09-25: done, as 10.29.8.** The bundle is now
+> `js/vendor/bft-vendor-10.29.8-3.1.1.min.js` (Preact 10.29.8, htm 3.1.1), and
+> 10.29.2's file is gone. 10.29.8 (2026-08-01) came out after this section was
+> written and is the newest 10.x release, one patch past the 10.29.7 recommended
+> below. Its release notes list two performance changes and nothing else: batched
+> updates in `flushSync` (#5173), which lives in `preact/compat` and so does not
+> reach this plugin, and not traversing retained subtrees while diffing (#5182). It
+> is later than both reverts, so the "settled state" argument below holds for it
+> too. The 11.0 line was at release candidate (11.0.0-rc.2, 2026-09-08) and was not
+> considered: a major version is a separate decision. The `useId` caveat still
+> stands: the shim exports it and no component calls it.
+>
+> The steps below ran in the recommended order. Item 4.4 landed first, as a class of
+> its own (`classes/local/output/vendor_bundle.php`, whose `FILENAME` is the only PHP
+> spelling of the file name and whose `load()` the block and the four pages call)
+> rather than the `bootstrap.php` helper 4.4 suggested. The files came from the npm
+> release tarballs and were compared with jsDelivr; `js/vendor/README.md` records the
+> hashes and the rebuild script, which first reproduced the 10.29.2 bundle byte for
+> byte. `tests/local/output/vendor_bundle_test.php` pins the file name, the README
+> hash and `thirdpartylibs.xml`, and `tests/behat/vendor_bundle_smoke.feature` opens
+> all five mounting surfaces, `spike_react.php` included (step 6).
 
 Current: Preact **10.29.2** + htm **3.1.1**, concatenated into
 `js/vendor/bft-vendor-10.29.2-3.1.1.min.js`.
@@ -1194,3 +1221,49 @@ code. The audit was a good map; it was not the territory. Three habits did the w
 3. **Prefer a build-time gate to a periodic audit.** The two structural gates turn
    "someone should check coverage again" into a failing build, which is the only
    version of that intention that survives a deadline.
+
+### 8.5 Status addendum — 2026-09-25
+
+Each row of 8.1's *Still open — carried forward* table, re-checked against the
+working tree of branch `audit-followups` (off `main` at `95854ac`, version
+2026092500). "This round" means the change set that tree carries on top of `95854ac`.
+
+| Item | Status | Where |
+|---|---|---|
+| §1 Preact update | **Resolved**, as 10.29.8 rather than 10.29.7 | This round: `vendor_bundle::FILENAME`, `js/vendor/`, `thirdpartylibs.xml`. See the status note at the top of section 1. |
+| 2.5 raw exception through a triple-stash sink | **Resolved** | `ab1ec9d`: `templates/calendar_editor.mustache` renders the notice text with a double stash, and `pages/calendar_editor.php` treats the notice and its error lines as plain text. Pinned this round by `tests/local/output/calendar_editor_template_test.php`. |
+| 3.1 drill-down badge shows the raw band slug | **Resolved** | The unit half in `875b395` (`drilldown_value_days` / `drilldown_value_hours` strings). The label half this round: `classes/local/output/drilldown_cells.php` maps the slug to its `band_*` string and an unknown slug to pending. Pinned by `drilldown_cells_test` and `tests/behat/group_drilldown_labels.feature`. |
+| 3.4 `api.js getCalendar` sends the wrong parameters | **Moot** | `875b395` deleted the wrapper: no view called it, and `api.js` now carries one export per web service a view calls. |
+| 3.7 check-then-insert races on unique indexes | **Resolved** for the two named sites; residue below | `dirty_queue::enqueue()` inserts and adopts the row on a duplicate key (`2299041`); the ledger writer re-derives against the winner's row after a collision (`15b34f4`), on what is now `uq_cm_user_att_cycle`. The test 8.3 called unwritten exists this round: `tests/local/sla/concurrent_insert_test.php` makes one connection's read miss a row that is already there and reaches both recoveries, the dirty-queue adopt branch included. |
+| 4.4 vendor bundle path in five files | **Resolved** | This round: `classes/local/output/vendor_bundle.php`; `vendor_bundle_test` fails if any other PHP file outside `tests/` spells a bundle name. |
+| 4.5 dead `responsiveness.js` | **Moot** | `875b395` deleted the module and its build, and with them `classes/output/responsiveness_card.php`, which held the orphaned `refreshtext` key. |
+| 4.7 CHANGELOG backlog | **Still open, in part** | `CHANGELOG.md` has entries up to 1.1.0 but still none for 1.0.32 to 1.0.35, and every heading from 1.0.27 up still reads "Unreleased". No `v*` tag exists in the repository, so git records no release date to stamp them with; the dates have to come from the owner. |
+| 4.8 `install.xml` VERSION | **Resolved** | `875b395` set `VERSION="20260924"` with the 2026092402 column drops. The 2026092500 step changes no schema, so it stays. |
+| 4.11 `js/vendor/README.md` names the wrong place for the hash | **Resolved** | This round: the README holds the four SHA-384 values and says `thirdpartylibs.xml` repeats them as XML comments (it has no hash element); `vendor_bundle_test` checks the bundle's hash against both. |
+
+4.10 is unchanged and still deliberately so: while `$plugin->supported` includes 405,
+test metadata stays in docblocks.
+
+**Residue of 3.7.** Four more writers read and then insert against a unique index
+without recovering from a collision: `rollup_service` (`uq_course_group`),
+`trend_service` (`uq_course_group_day`), `site_stats_service` (`uq_day`) and
+`backfill_cursor` (`uq_courseid`). None is reachable by two writers at once in normal
+operation. `rollup_service::recompute_group()` holds a per-tuple lock around the
+upsert and runs unlocked only when the lock factory is unavailable. The other three
+are written by one scheduled task each, and core never runs two instances of a
+scheduled task at once. The exceptions are two CLI scripts an administrator runs by
+hand: `cli/backfill_trends.php` can overlap the `recompute_trend` task, and
+`cli/backfill_course.php` (its reset, disable and enable actions go through
+`backfill_cursor::get_or_create()`) can overlap `backfill_history` on a course that
+has no cursor row yet. `concurrent_insert_test`'s technique covers any of them if
+that ever matters.
+
+**Found while closing these, and not in this audit.** A group membership change did
+not re-date a student's rows when it changed their governing group override; only
+the reconciler's rule-drift sweep did, when its rotation reached the row. The
+observer now re-dates them in the request, bounded to 50 rows per event
+(`submission_ledger::re_resolve_rules_for_group_change()`, pinned by
+`tests/local/sla/group_change_dates_test.php`). Separately, a threshold setting stored
+before the settings page validated its order kept the site in the wrong bands, and
+nothing prompted an admin to save it again; the 2026092500 upgrade step resets such a
+value to its default.

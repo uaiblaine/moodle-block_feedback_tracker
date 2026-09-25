@@ -195,6 +195,21 @@ export const getGraderPriorityList = ({limit = 10, bucket = ''} = {}) =>
     call('block_feedback_tracker_get_grader_priority_list', {limit, bucket});
 
 /**
+ * Site-wide daily benchmarks for the dashboard's school comparison: one row
+ * per day (a YYYYMMDD `day` in the plugin's calendar time zone) with the
+ * median, 10th and 90th percentile of effective hours, the share graded
+ * within the SLA goal and the number graded, oldest day first. The service
+ * requires block/feedback_tracker:viewschoolcomparison at system context and
+ * caps the window at get_school_comparison::MAX_DAYS.
+ *
+ * @param {object} [options]
+ * @param {number} [options.days]  Window length in days (default 30).
+ * @returns {Promise<object>}  {success, lastsynced, days: Array<object>}.
+ */
+export const getSchoolComparison = ({days = 30} = {}) =>
+    call('block_feedback_tracker_get_school_comparison', {days});
+
+/**
  * Dashboard insights — bright spot, most improved, gentle watch. Each
  * key is omitted from the response when no row qualifies, so callers
  * should check for presence (not nullness) before rendering.

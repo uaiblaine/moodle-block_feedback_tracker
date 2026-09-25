@@ -112,7 +112,10 @@ classes/
     admin/                   Custom admin setting (ordered threshold triples)
     audit/                   Recompute audit log
     calendar/                Academic-time engine (business/effective hours)
-    output/                  JS bootstrap helper
+    output/                  JS bootstrap payloads (bootstrap), the vendor
+                             bundle's name and loader (vendor_bundle), the
+                             drill-down's cell text (drilldown_cells), count
+                             formatting (numfmt), bulk-removal rows
     payload/                 responsiveness_payload (block + WS share this)
     score/                   responsiveness_calculator (5-term formula) + peer_stats
     sla/                     Ledger, rollup, observer, course_access gate
@@ -132,7 +135,9 @@ amd/src/                     Preact UI — see "React conventions"
                              format, score, trend)
 db/                          install.xml, upgrade.php, events, tasks, caches, access
 tests/                       PHPUnit (local/ external/ task/ privacy/ db/ event/
-                             form/ lockstep/) + behat/ + generator/
+                             form/ lockstep/, plus lib_test and ci_matrix_test
+                             at the root) + behat/ + generator/ (lib.php for
+                             PHPUnit, behat_*_generator.php for Behat)
 ```
 
 The runtime **data model**: the ledger (`_sub`, one row per submission
@@ -435,6 +440,32 @@ upgrade_block_savepoint(true, <version>, 'feedback_tracker');
 ```
 Match `<version>` to the version.php bump.
 
+- **Write the step and the `version.php` bump in the same edit, before running
+  anything.** This tree is mounted live on every stack, so a savepoint above
+  `version.php` is recorded by the next `mdl upgrade` any session runs, and
+  that stack then reads `version.php` as a downgrade and stops.
+  `upgrade_test::test_no_savepoint_is_ahead_of_version_php` fails on that
+  state. A code-only bump needs no step.
+- **`dirty_queue::enqueue()` is called by name from several steps**
+  (2026060112 onwards: every step that re-queues rollups), so its signature,
+  the `REASON_SUBMISSION` / `REASON_BULK` constants those steps pass, and its
+  semantics (an already queued tuple is refreshed, and outside a transaction a
+  duplicate-key collision adopts the other writer's row instead of throwing)
+  are frozen. Change them only with a new function beside it. The same holds, for the same reason, for
+  `calendar::bump_version()` (four steps) and
+  `gradebook_response::SOURCE_ASSIGN` (2026080400).
+- Anything else a new step needs is written out inside it, as the rules stand
+  at that version, rather than read from a class that may change later: the
+  2026092500 step repeats the numeric rules of `thresholds_setting::validate()`
+  and the calver bump instead of calling into `thresholds_setting` or
+  `calendar::bump_version()`, and `upgrade_test` pins its verdicts as literals.
+- A step that writes a setting with `set_config()` fires no
+  `set_updatedcallback`, and `block_feedback_tracker_invalidate_rollups()`
+  returns early while `$CFG->upgraderunning` anyway (see *Install / upgrade
+  guards*). A step that changes a setting the rollups depend on does the
+  callback's work itself, as the 2026092500 step does: a new calver, and every
+  rollup re-queued with `REASON_BULK`.
+
 ### Cross-DB SQL
 
 CI runs against both PostgreSQL 15 and MariaDB 10. Patterns that break:
@@ -642,6 +673,45 @@ the fixture, and read `reconcile_cursor_<key>` between calls. A fixture
 smaller than the batch pages nothing, so a test that only runs `execute()`
 cannot see a paging regression; the paging tests lower
 `reconcile_batch_size` (to 2) instead.
+
+## Group changes re-date rows (`local/sla/observer.php`)
+
+A student's groups decide their dates through the governing group override
+(`rule_resolver`), and core fires no override event when membership changes.
+So `group_member_added` / `group_member_removed` run
+`observer::group_membership_changed()`, which moves the user's rows to the
+group they report under (`submission_ledger::reattribute_user()`) and then
+re-dates them with `submission_ledger::re_resolve_rules_for_group_change()`.
+
+The cost is bounded on purpose, because this runs inside whatever request
+edits the group:
+
+- **One query over that user's current rows in the course**, limited to
+  activities that still carry a group override, or to rows storing dates
+  other than the activity's own (a deleted group's overrides may already be
+  gone when this runs). On a course with no group override, whose rows store
+  the dates they resolve to, that one query returns nothing and nothing is
+  written; `group_change_dates_test` counts the reads.
+- **Only rows whose dates drift are written**, selected with
+  `rule_resolver::drift_sql()`, the predicate `reconcile_ledger`'s rule-drift
+  sweep uses; the writer, this path and that sweep all read the dates through
+  `rule_resolver::joins_sql()` / `select_sql()`, so they cannot disagree.
+  Only the current cycle (`iscurrent = 1`) is written, as the writer and the
+  sweep do. Each written row's tuple is re-queued with `REASON_PAUSE`.
+- **At most `observer::BULK_CHUNK` (50) rows inline.** When more would move,
+  nothing is written in the request and a `reattribute_users` adhoc task is
+  queued for that one user; it re-attributes again (moving nothing the second
+  time) and re-dates without a limit.
+
+`group_deleted` re-dates the users whose rows reported under the deleted
+group, in the request up to `BULK_CHUNK` users and in `reattribute_users`
+chunks above that. A former member whose rows report under another of their
+groups is not found (nothing left in the database says they were a member) and
+keeps the deleted group's dates until the rule-drift sweep reaches the row.
+The older override-event paths, `re_resolve_rules_for_assign_group()` and
+`re_resolve_rules_for_assign_user()`, still rewrite closed cycles as well;
+which rule is right is an open decision, so don't copy either into new code
+without choosing.
 
 ## Submission-status scope (submitted-only)
 
@@ -869,6 +939,23 @@ The canonical guard is in [`lib.php`](lib.php):
 - `assertContains` is strict (`===`) by default. When asserting against
   DB-derived arrays (which carry string ids), normalise the haystack:
   `array_map('intval', $contextlist->get_contextids())`.
+- **A race between two writers is testable with one connection.**
+  `tests/local/sla/concurrent_insert_test.php` replaces `$DB` with a PHPUnit
+  mock of the live driver class carrying the real instance's state (the open
+  connection included), which answers the chosen calls of one read method with
+  nothing and runs everything else for real, so the insert that follows
+  collides with a row the test wrote first. It needs
+  `preventResetByRollback()` (on PostgreSQL a collision aborts the test's
+  wrapping transaction) and a stubbed `dispose()`. Reuse it for any other
+  read-then-insert writer rather than calling a race untestable.
+- **Suite-level guards** — each fails on a change no single-feature test sees:
+  `process_memos_test` (a static memo added in `classes/` must also be reset by
+  `process_memos::reset()`), `ci_matrix_test` (the branches of
+  `$plugin->supported` and the jobs of `.github/workflows/ci.yml` are the same
+  set; skipped in a release archive, which has no `.github`),
+  `upgrade_test::test_no_savepoint_is_ahead_of_version_php`,
+  `vendor_bundle_test` (see *Vendor layout*) and `stylesheet_contract_test`
+  (see *Component conventions*).
 
 ### Clock-dependent tests — the width rule
 
@@ -940,6 +1027,18 @@ had `disable_behat`); a failing scenario uploads a faildump artifact.
   locator like "Language" also matches "Preferred language". Scope lookups
   to a container — `I set the field "X" in the "Section name" "fieldset"
   to "Y"` — whenever the page may carry similar labels.
+- `tests/generator/behat_block_feedback_tracker_generator.php` gives scenarios
+  one entity, `the following "block_feedback_tracker > site days" exist`: rows
+  of `{block_feedback_tracker_site}` with a required `daysago`, counted back
+  from today in `calendar::timezone()`, the zone `get_school_comparison`
+  measures its window in. Add further entities there rather than a custom step.
+- `vendor_bundle_smoke.feature` opens every surface that loads the Preact
+  bundle (the block, the teacher dashboard, the pending report, the score
+  simulator and `spike_react.php`) and fails when one renders no Preact tree:
+  run it after any change to the bundle or to `vendor_bundle`.
+- A **new** `.feature` file is invisible to a stack until its behat config is
+  refreshed (`admin/tool/behat/cli/util.php --enable`, or `mdl behat-init`);
+  editing an existing one needs nothing.
 
 ## Settings (settings.php) reset pattern
 
@@ -954,6 +1053,17 @@ had `disable_behat`); a failing scenario uploads a faildump artifact.
   never turn off. Treat unset (`false`/`null`) as the default and only an
   explicit `'0'` as off (pattern: `bootstrap::config_bundle()`'s
   `show_peer_context` read).
+- The three cutoff triples (`bucket_thresholds_days`, `bucket_thresholds_eff`,
+  `score_thresholds_band`) are `local\admin\thresholds_setting`s: three
+  numbers, none below 0 (and none above 100 for the score bands), strictly
+  ascending (buckets) or descending (score bands). `settings.php` builds each
+  from its entry in `thresholds_setting::SETTINGS` (default, order, range), and
+  `thresholds_setting_test` fails if the page builds one any other way. The parsers
+  (`bucket::parse_thresholds_eff()` / `parse_thresholds_days()`,
+  `responsiveness_calculator::parse_thresholds_band()`) stay tolerant of any
+  stored value; the 2026092500 upgrade step reset the ones saved before the
+  setting validated them. A change to these rules does not reach that step,
+  which keeps its own copy (see *Upgrade savepoints*).
 
 ## Score formula
 
@@ -1025,6 +1135,26 @@ hours/%/score value (hours and fractions go through `formatHours` /
 so the caller formats, not the component. Hours/percent/score/dates are
 deliberately left ungrouped.
 
+**Site benchmarks (school comparison).** The teacher dashboard ends with
+`amd/src/components/SchoolComparison.js`: the site-wide daily series of
+`get_school_comparison` as a table (newest day first) under a compact median
+sparkline, for a 7, 30 or 90-day window. Its gate is one helper,
+`bootstrap::can_view_school_comparison()`
+(`block/feedback_tracker:viewschoolcomparison` at system context, the check the
+web service makes on every call). It feeds `config.school_comparison` in
+`config_bundle()`, which is the only thing `DashboardView` reads to render the
+section, and it decides whether `dashboard_i18n()` ships the
+`dashboard_comparison_*` strings at all; don't add another check of the
+capability on the page side. The section is collapsed on load and fetches only
+when opened, then keeps each window's rows for the page load; a request counter
+stops a slow answer for an abandoned window from changing the loading or error
+state. The site table stores hours only, so the section stays in business hours
+when `display_time_unit` is business days and says so in a note (days are never
+derived from hours). Its day column comes from `formatYmd()` in `lib/format.js`,
+which formats the YYYYMMDD key in UTC in the user's locale: the key is a
+calendar day the server already resolved, and passing it through the user's time
+zone would move it by a day far from UTC.
+
 ## React conventions
 
 Moodle 4.5 and 5.1 don't ship React. The plugin vendors **Preact + htm**
@@ -1038,10 +1168,23 @@ the shim, the vendor bundle and its loading, not the components (see
 - Vendored UMD code lives in [`js/vendor/`](js/vendor/), **never** under
   `amd/`. Moodle's grunt only globs `amd/src/**/*.js`, so anything in
   `js/vendor/` is left alone by ESLint and Babel.
+- The bundle is Preact **10.29.8** + htm **3.1.1**,
+  `js/vendor/bft-vendor-10.29.8-3.1.1.min.js`. Its file name is spelt in one
+  PHP place only, `local\output\vendor_bundle::FILENAME`; the block and every
+  page that mounts a Preact root call `vendor_bundle::load($PAGE)`, which adds
+  it to `<head>` (`$PAGE->requires->js(..., $inhead = true)`) so its globals
+  are set before the AMD loader resolves any module. Never write the file name
+  or a hand-rolled `requires->js()` for it anywhere else.
 - Declared in [`thirdpartylibs.xml`](thirdpartylibs.xml) (three library
-  entries, all pointing to the single concatenated bundle).
-- Loaded into `<head>` via `$PAGE->requires->js(..., $inhead = true)` so
-  the bundle's globals are set before the AMD loader resolves any module.
+  entries, all pointing to the single concatenated bundle, with the SHA-384
+  values as XML comments). [`js/vendor/README.md`](js/vendor/README.md) holds
+  the hashes and the script that rebuilds the bundle for a new version.
+- `tests/local/output/vendor_bundle_test.php` fails when the named file is
+  missing, when another bundle ships beside it, when any other PHP file outside
+  `tests/` spells a bundle name, when `thirdpartylibs.xml` names another file
+  or version, or when the file's hash differs from the README's. So an update
+  touches `FILENAME`, the README tables and `thirdpartylibs.xml` together, and
+  `vendor_bundle_smoke.feature` then proves every surface still renders.
 - The bundle is wrapped in an outer IIFE that shadows `define`, forcing
   the upstream UMDs to take their global-script branch instead of
   registering as anonymous AMD modules.
@@ -1121,7 +1264,21 @@ so the mechanical offenders (spacing, `async()`) are fixed by hand here.
   so a dark navbar deeper in the page does not match. Colours that sit under white
   text use the `-fill` tokens, which keep their value in both modes. Every
   text colour keeps at least 4.5:1 against the surfaces it is painted on, in
-  both modes; don't dim text with `opacity`.
+  both modes.
+- **Don't dim text with `opacity`:** it fades a label and its background
+  together, which is how three labels fell under 4.5:1. A dimmed or disabled
+  state (`:disabled`, or a class ending in `-dim`, `-off`, `-busy`,
+  `-disabled` or `-muted`) declares its own text colour instead, and a glyph
+  that is the only sign of what a control does (the drill-down's sort arrow)
+  sets its own colour and background for 3:1, since plugin CSS cannot rely on
+  beating the theme's rules around it. `tests/lockstep/stylesheet_contract_test.php`
+  enforces all three: an opacity below 1 is allowed only on the selectors
+  listed in `DECORATIVE_OPACITY` (non-text decoration) and on keyframe steps; a
+  dimmed or disabled state must declare a colour keeping 4.5:1 on its
+  background; and each glyph in `INDICATORS` (add new ones there) must own a
+  colour and background pair of 3:1. Both ratios are measured on the
+  light-mode literal fallbacks. Dark mode rests on the theme's `--bs-*` values,
+  which no static test can resolve; check it in the browser.
 
 ### Mount-point convention
 
@@ -1198,7 +1355,8 @@ migration is mechanical but touches more than the shim:
 - `amd/src/lib/preact.js` → re-export from `react` / `react/jsx-runtime`.
 - Move `amd/src/components/*.js` → `js/esm/src/components/*.tsx`,
   optionally rename `html\`...\`` to JSX (htm still works in 5.2).
-- `$PAGE->requires->js(..., true)` of the bundle → remove.
+- `local\output\vendor_bundle` and its `load()` calls (the block and four
+  pages) → remove, with `vendor_bundle_test` and `vendor_bundle_smoke.feature`.
 - Spike page's raw mount-point divs → `{{#react}}` Mustache helper.
 
 Component logic, hook usage, props shapes, and CSS classes stay the same.

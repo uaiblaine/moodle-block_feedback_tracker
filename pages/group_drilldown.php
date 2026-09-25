@@ -24,6 +24,8 @@
 
 require(__DIR__ . '/../../../config.php');
 
+use block_feedback_tracker\local\output\drilldown_cells;
+
 $courseid = required_param('courseid', PARAM_INT);
 $groupid = optional_param('groupid', 0, PARAM_INT);
 $bucket = optional_param('bucket', '', PARAM_ALPHA);
@@ -65,22 +67,19 @@ $usedays = $unit === 'business_days';
 
 $rows = [];
 foreach ($result['submissions'] as $s) {
+    $band = drilldown_cells::band((string) $s['slabucket']);
     $rows[] = [
         'student'      => (string) $s['studentname'],
         'activity'     => (string) $s['activityname'],
         'group'        => (string) ($s['groupname'] ?: '-'),
         'submitted'    => userdate((int) $s['timesubmitted']),
         'submittedts'  => (int) $s['timesubmitted'],
-        'waiting'      => $usedays
-            ? get_string('drilldown_value_days', 'block_feedback_tracker', (int) $s['perceived_days'])
-            : get_string('drilldown_value_hours', 'block_feedback_tracker', format_float((float) $s['waitinghours'], 1)),
+        'waiting'      => drilldown_cells::wait($usedays, (int) $s['perceived_days'], (float) $s['waitinghours']),
         'waitingnum'   => (float) $s['waitinghours'],
-        'effective'    => $usedays
-            ? get_string('drilldown_value_days', 'block_feedback_tracker', (int) $s['effective_days'])
-            : get_string('drilldown_value_hours', 'block_feedback_tracker', format_float((float) $s['effectivehours'], 1)),
+        'effective'    => drilldown_cells::wait($usedays, (int) $s['effective_days'], (float) $s['effectivehours']),
         'effectivenum' => (float) $s['effectivehours'],
-        'status'       => (string) $s['slabucket'],
-        'bucket'       => (string) $s['slabucket'],
+        'status'       => drilldown_cells::band_label($band),
+        'bucket'       => $band,
     ];
 }
 

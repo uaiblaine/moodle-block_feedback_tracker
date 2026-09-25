@@ -69,6 +69,32 @@ final class thresholds_setting_test extends \advanced_testcase {
     }
 
     /**
+     * The plugin's settings as settings.php builds them, by name.
+     *
+     * @return array Setting objects keyed by name without the plugin.
+     */
+    private function page_settings(): array {
+        $this->setAdminUser();
+
+        $root = new \admin_root(true);
+        $root->add('root', new \admin_category('blocksettings', 'Blocks'));
+        \core_plugin_manager::instance()->get_plugin_info('block_feedback_tracker')
+            ->load_settings($root, 'blocksettings', true);
+        $page = $root->locate('blocksettingfeedback_tracker');
+        $this->assertInstanceOf(\admin_settingpage::class, $page);
+
+        $byname = [];
+        foreach ((array) $page->settings as $setting) {
+            if ($setting->plugin === 'block_feedback_tracker') {
+                $byname[$setting->name] = $setting;
+            }
+        }
+        // Precondition: the page was built with its settings.
+        $this->assertArrayHasKey('sla_goal_hours', $byname);
+        return $byname;
+    }
+
+    /**
      * The shipped defaults and ordinary edits pass, spaces and decimals included.
      *
      * @return void
@@ -153,23 +179,7 @@ final class thresholds_setting_test extends \advanced_testcase {
      */
     public function test_settings_page_uses_the_validating_setting(): void {
         $this->resetAfterTest();
-        $this->setAdminUser();
-
-        $root = new \admin_root(true);
-        $root->add('root', new \admin_category('blocksettings', 'Blocks'));
-        \core_plugin_manager::instance()->get_plugin_info('block_feedback_tracker')
-            ->load_settings($root, 'blocksettings', true);
-        $page = $root->locate('blocksettingfeedback_tracker');
-        $this->assertInstanceOf(\admin_settingpage::class, $page);
-
-        $byname = [];
-        foreach ((array) $page->settings as $setting) {
-            if ($setting->plugin === 'block_feedback_tracker') {
-                $byname[$setting->name] = $setting;
-            }
-        }
-        // Precondition: the page was built with its settings.
-        $this->assertArrayHasKey('sla_goal_hours', $byname);
+        $byname = $this->page_settings();
 
         foreach (['score_thresholds_band', 'bucket_thresholds_eff', 'bucket_thresholds_days'] as $name) {
             $this->assertInstanceOf(thresholds_setting::class, $byname[$name], $name);
@@ -210,5 +220,71 @@ final class thresholds_setting_test extends \advanced_testcase {
         $this->assertFalse(get_config('block_feedback_tracker', 'enable_school_comparison'));
         // Control: a setting that is read survives.
         $this->assertSame('24,48,120', get_config('block_feedback_tracker', 'bucket_thresholds_eff'));
+    }
+
+    /**
+     * The page's verdicts on the values the 2026092500 upgrade step's test
+     * samples. That step keeps a frozen copy of these rules, so a change to
+     * validate() that flips one of these verdicts does not reach it; the one
+     * sample only the inherited PARAM_TEXT check refuses is a value the step
+     * deliberately keeps (its comment in db/upgrade.php says why).
+     *
+     * @return void
+     */
+    public function test_the_upgrade_samples_get_the_pages_verdicts(): void {
+        $this->resetAfterTest();
+        $byname = $this->page_settings();
+
+        // Setting, stored value, whether the page accepts it.
+        $samples = [
+            ['score_thresholds_band', '95, 80, 50', true],
+            ['score_thresholds_band', '100,50,0', true],
+            ['score_thresholds_band', '90,70,70', false],
+            ['score_thresholds_band', '110,70,40', false],
+            ['score_thresholds_band', '90,70,-1', false],
+            ['score_thresholds_band', '90,70', false],
+            ['score_thresholds_band', '90,70,40,10', false],
+            ['score_thresholds_band', 'a,b,c', false],
+            ['score_thresholds_band', '', false],
+            ['bucket_thresholds_eff', '1,2,3', true],
+            ['bucket_thresholds_eff', '0.5,1,500', true],
+            ['bucket_thresholds_eff', '24,24,120', false],
+            ['bucket_thresholds_eff', '-1,48,120', false],
+            ['bucket_thresholds_eff', '24;48;120', false],
+            ['bucket_thresholds_days', '0,1,2', true],
+            ['bucket_thresholds_days', '10,5,2', false],
+            ['bucket_thresholds_days', '2,5,x', false],
+            // The numeric rules accept this one, since trim() drops the null byte; PARAM_TEXT does not.
+            ['bucket_thresholds_days', "2\0,5,10", false],
+        ];
+        foreach ($samples as [$name, $stored, $accepted]) {
+            $this->assertSame($accepted, $byname[$name]->validate($stored) === true, "validate {$name} '{$stored}'");
+        }
+    }
+
+    /**
+     * settings.php builds each thresholds setting with the default, order and
+     * range thresholds_setting::SETTINGS gives it, and uses the class for no
+     * other setting.
+     *
+     * @return void
+     */
+    public function test_settings_page_matches_the_rules(): void {
+        $this->resetAfterTest();
+        $byname = $this->page_settings();
+
+        $built = [];
+        foreach ($byname as $name => $setting) {
+            if ($setting instanceof thresholds_setting) {
+                $built[$name] = [
+                    $setting->defaultsetting,
+                    (new \ReflectionProperty($setting, 'order'))->getValue($setting),
+                    (new \ReflectionProperty($setting, 'min'))->getValue($setting),
+                    (new \ReflectionProperty($setting, 'max'))->getValue($setting),
+                ];
+            }
+        }
+        ksort($built);
+        $this->assertSame(thresholds_setting::SETTINGS, $built);
     }
 }

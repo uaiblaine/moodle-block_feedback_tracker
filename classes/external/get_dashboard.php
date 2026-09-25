@@ -52,7 +52,7 @@ class get_dashboard extends external_api {
      * so entries cached by an earlier plugin version stop matching without a
      * purge.
      */
-    public const CACHE_KEY_VERSION = 9;
+    public const CACHE_KEY_VERSION = 10;
 
     /**
      * Parameters.
@@ -158,7 +158,7 @@ class get_dashboard extends external_api {
                   JOIN {course} c ON c.id = g.courseid
                  WHERE $where
               GROUP BY g.courseid, c.fullname
-              ORDER BY pending DESC, c.fullname ASC";
+              ORDER BY pending DESC, g.courseid ASC";
 
         $rows = $DB->get_records_sql($sql, $sqlparams);
 
@@ -218,10 +218,27 @@ class get_dashboard extends external_api {
         $result = [
             'success'    => true,
             'lastsynced' => time(),
-            'courses'    => $courses,
+            'courses'    => self::sorted_by_pending_then_name($courses),
         ];
         $cache->set($key, $result);
         return $result;
+    }
+
+    /**
+     * Order the courses by pending count, most first, then by the name the
+     * caller reads.
+     *
+     * The name is sorted after format_string(), not in SQL: a multilang name
+     * sorts by its markup in the database, and by the caller's language here.
+     * Each sort is stable, so equal names keep the course id order of the query.
+     *
+     * @param array $courses Course rows as execute() builds them.
+     * @return array The same rows, reordered and reindexed.
+     */
+    private static function sorted_by_pending_then_name(array $courses): array {
+        \core_collator::asort_array_of_arrays_by_key($courses, 'coursename');
+        usort($courses, static fn(array $a, array $b): int => $b['pending'] <=> $a['pending']);
+        return $courses;
     }
 
     /**

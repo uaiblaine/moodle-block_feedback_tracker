@@ -10,7 +10,8 @@
     * empty         Truthy when no submitted-but-ungraded submissions match the filter
     * emptytext     Empty-state message
     * cols          {student, activity, group, submitted, waiting, effective, status}
-    * rows          Array of {student, activity, group, submitted, waiting, effective, status, bucket}
+    * rows          Array of {student, activity, group, submitted, waiting, effective, status, bucket}:
+                    status is the band's localised label, bucket its slug (the badge class)
     * pagingbar     Pre-rendered paging-bar HTML (raw)
     * hasdrafts     Truthy when there is at least one draft (not-yet-submitted) row
     * draftheading  Heading for the drafts section
@@ -35,7 +36,7 @@
                 "submitted": "2026-05-16 09:14", "submittedts": 1747380840,
                 "waiting": "27.0 h", "waitingnum": 27.0,
                 "effective": "16.0 h", "effectivenum": 16.0,
-                "status": "good", "bucket": "good"
+                "status": "Good", "bucket": "good"
             }
         ],
         "pagingbar": "",

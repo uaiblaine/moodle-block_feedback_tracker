@@ -797,7 +797,13 @@ class observer {
     }
 
     /**
-     * Group member added / removed. Re-attribute the user's ledger rows.
+     * Group member added / removed.
+     *
+     * Moves the user's ledger rows to the group they report under now, and
+     * re-dates the rows whose governing group override the change replaced
+     * ({@see self::redate_after_group_change()}): core fires no other event
+     * for it, and the reconciler's rule-drift sweep reaches a given row only
+     * as its rotation through the whole ledger does.
      *
      * @param \core\event\base $event
      * @return void
@@ -812,14 +818,53 @@ class observer {
             return;
         }
         submission_ledger::reattribute_user($courseid, $userid);
+        self::redate_after_group_change($courseid, $userid);
+    }
+
+    /**
+     * Re-date one user's rows after a group change, inside the request while
+     * at most {@see self::BULK_CHUNK} rows move, otherwise in the background.
+     *
+     * The background path is {@see \block_feedback_tracker\task\reattribute_users}
+     * for this one user: it re-attributes again, which moves nothing the
+     * second time, and then re-dates without a limit.
+     *
+     * @param int $courseid
+     * @param int $userid
+     * @return void
+     */
+    private static function redate_after_group_change(int $courseid, int $userid): void {
+        if (submission_ledger::re_resolve_rules_for_group_change($courseid, $userid, self::BULK_CHUNK) !== null) {
+            return;
+        }
+        try {
+            $task = new \block_feedback_tracker\task\reattribute_users();
+            $task->set_custom_data(['courseid' => $courseid, 'userids' => [$userid]]);
+            \core\task\manager::queue_adhoc_task($task, true);
+        } catch (\Throwable $e) {
+            debugging(sprintf(
+                'block_feedback_tracker: could not queue the re-dating of user %d in course %d: %s',
+                $userid,
+                $courseid,
+                $e->getMessage()
+            ));
+        }
     }
 
     /**
      * Group deleted. Reattribute affected users' ledger rows to their new
-     * latest-joined groups (which excludes the now-deleted group).
+     * latest-joined groups (which excludes the now-deleted group), and re-date
+     * them.
      *
-     * Up to {@see self::BULK_CHUNK} users are re-attributed inside the request;
-     * a larger group is handed to {@see \block_feedback_tracker\task\reattribute_users}
+     * Core deletes the memberships without a group_member_removed event per
+     * member, so this is the only signal. The users are those whose rows
+     * reported under the deleted group; a former member whose rows report
+     * under another group of theirs keeps the deleted group's dates until the
+     * reconciler's rule-drift sweep reaches them, since nothing left in the
+     * database says they were a member.
+     *
+     * Up to {@see self::BULK_CHUNK} users are handled inside the request; a
+     * larger group is handed to {@see \block_feedback_tracker\task\reattribute_users}
      * in chunks of that size, as the other bulk handlers hand theirs to the
      * backfill task. At most {@see self::BULK_MAX_ROWS} users are taken, with a
      * debugging notice when the ceiling is reached.
@@ -862,6 +907,7 @@ class observer {
         if (count($userids) <= self::BULK_CHUNK) {
             foreach ($userids as $userid) {
                 submission_ledger::reattribute_user($courseid, $userid);
+                self::redate_after_group_change($courseid, $userid);
             }
             return;
         }
