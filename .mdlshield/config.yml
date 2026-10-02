@@ -1,0 +1,32 @@
+# MDL Shield pull request reviews. Read from the default branch only (main), so a
+# pull request cannot change the rules that judge it. A key written here overrides the same
+# setting on the MDL Shield website; a key left out keeps inheriting.
+#
+# Reviews run only when asked: comment `!mdlshield review` (new commits since the last
+# review) or `!mdlshield review full` (the whole pull request) on the pull request. An
+# empty `include.branches` is a rule, not an absence: no target branch matches, so nothing
+# is reviewed automatically, while a forced command bypasses the filters.
+
+fail_on:
+  severity: high      # the check fails on an open finding at or above this level
+
+on-error: open        # a failure on MDL Shield's side must not block a merge
+
+moodle:
+  # One version per repository, with no per-branch mapping: this plugin supports 4.5 through 5.2 on one branch, and the highest supported core is the one reviewed.
+  # Quoted: an unquoted 5.2 is read as a number and rejects the file.
+  versions: ["5.2"]
+
+trusted_users: ["uaiblaine"]   # GitHub usernames whose !mdlshield commands count
+
+include:
+  branches: []
+
+exclude:              # exclude wins over include
+  authors: ["dependabot[bot]", "renovate[bot]"]
+  paths:              # leave the review scope: prose, language packs and generated output
+    - "docs/**"
+    - "lang/**"
+    - "amd/build/**"
+    - "CHANGELOG.md"
+    - "CLAUDE.md"

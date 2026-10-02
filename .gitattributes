@@ -18,3 +18,4 @@
 /CLAUDE.md            export-ignore
 /docs                 export-ignore
 /phpcs.xml            export-ignore
+/.mdlshield          export-ignore
