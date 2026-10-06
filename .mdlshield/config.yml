@@ -3,9 +3,14 @@
 # setting on the MDL Shield website; a key left out keeps inheriting.
 #
 # Reviews run only when asked: comment `!mdlshield review` (new commits since the last
-# review) or `!mdlshield review full` (the whole pull request) on the pull request. An
-# empty `include.branches` is a rule, not an absence: no target branch matches, so nothing
-# is reviewed automatically, while a forced command bypasses the filters.
+# review) or `!mdlshield review full` (the whole pull request) on the pull request.
+#
+# Manual-only is made with a NON-empty include list that no pull request can match. The
+# documentation says a non-empty `include` makes it a requirement ("only matching pull
+# requests auto-review") and a forced command bypasses the filters. An EMPTY list does not
+# do it: measured 2026-10-06, every pull request in the fleet was reviewed on opening and
+# again on every push with `include.branches: []`, the first run starting 2-3 seconds
+# after the pull request opened. Nothing targets the branch named below.
 
 fail_on:
   severity: high      # the check fails on an open finding at or above this level
@@ -20,13 +25,21 @@ moodle:
 trusted_users: ["uaiblaine"]   # GitHub usernames whose !mdlshield commands count
 
 include:
-  branches: []
+  branches: ["mdlshield-manual-only"]   # a branch no pull request targets: see the note above
 
 exclude:              # exclude wins over include
   authors: ["dependabot[bot]", "renovate[bot]"]
-  paths:              # leave the review scope: prose, language packs and generated output
+  paths:              # leave the review scope: they are also dropped from the lines counted against the size limits
     - "docs/**"
     - "lang/**"
     - "amd/build/**"
+    - "**/*.min.js"
+    - "**/*.map"
+    - "mutations/**"
+    - "tests/fixtures/**"
+    - "tests/behat/**/*.feature"
+    - ".mdlshield/**"
+    - ".gitattributes"
+    - "README.md"
     - "CHANGELOG.md"
     - "CLAUDE.md"
