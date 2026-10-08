@@ -15,27 +15,30 @@ when `supported` changes**. Development happens on 5.1.
 
 ## Agent orchestration budget (fleet rule, repeated here on purpose)
 
-Section 6 of `~/dev/CLAUDE.md` (`moodle-dev/CLAUDE.fleet.md`) is the authority and
-says why. This short copy reaches sessions that do not load that file: cloud
-sessions and checkouts outside `~/dev`. Every subagent gets the model and effort of
-its role, and none runs on the session model (Fable).
+Section 6 of `~/dev/CLAUDE.md` (`moodle-dev/CLAUDE.fleet.md`) is the authority and says why.
+This short copy reaches sessions that do not load that file: cloud sessions and checkouts
+outside `~/dev`. Every subagent gets the model and effort of its role from its agent
+definition, and none runs on the session model.
 
 | Role | model | effort | agent |
 |---|---|---|---|
-| Mechanical sweeps, greps, renames, stale-reference checks | `sonnet` | `medium` | `fleet-sweeper` |
-| Readers, verifiers, refuters, graders, measurers | `sonnet` | `high` | `fleet-reader` |
-| Well-scoped implementation: a bug whose cause is established, a feature whose design is settled, a task with a written recipe, tests against a stated contract | `sonnet` | `high` | `fleet-fixer` |
-| Non-trivial implementation and its fixers: open design, several files, long tasks | `opus` | `xhigh` | `fleet-implementer` |
-| Consolidators, critics, estimators, ADR and documentation drafters | `opus` | `xhigh` | `fleet-synthesist` |
+| Mechanical sweeps, greps, renames, counts, log reading | `haiku` | `medium` | `fleet-sweeper` |
+| Checklists against evidence (handoff counts, spec lines against a sweep log, lang lockstep) | `haiku` | `high` | `fleet-checker` |
+| Readers, measurers, graders | `sonnet` | `medium` | `fleet-reader` |
+| Refuters and verifiers of a blocking finding | `sonnet` | `high` | `fleet-verifier` |
+| Well-scoped implementation (established cause, settled design, written recipe) | `sonnet` | `medium` | `fleet-fixer` |
+| Non-trivial implementation (open design, several files, long tasks) | `opus` | `high` | `fleet-implementer` |
+| Consolidators, critics, estimators, ADR and documentation drafters | `opus` | `high` | `fleet-synthesist` |
 
-- Launch the `Agent` tool with `subagent_type: "fleet-*"`; the tool has no `effort`
-  parameter, so the role's effort comes from that definition (`mdl claude-setup`
-  installs them). Where they are not installed, pass `model`.
-- Set `model` and `effort` on every Workflow `agent()`. Never `xhigh` or `max` on
-  Sonnet.
-- A subagent that changes code runs the gate its prompt names and reports the
-  command with its counts.
-- Workflows run only on the user's opt-in, and stay under 10 agents.
+- Launch the `Agent` tool with `subagent_type: "fleet-*"`; it has no `effort` parameter, so
+  the role's effort comes from that definition (`mdl claude-setup` installs them). Where they
+  are not installed, pass `model`. Aliases only; never `fable`; `xhigh` only for a long-horizon
+  implementer whose prompt says why; never `xhigh`/`max` on Sonnet or Haiku.
+- No long command inside a subagent: `mdl ci --matrix`, `mdl mutate` and Behat run from the
+  main session in a background Bash command; a subagent runs the fast gate its prompt names and
+  reports the command with its counts.
+- Workflows only on the user's opt-in, every `agent()` with `agentType: 'fleet-*'`, under 10
+  agents. Advisor off by default.
 
 ## Commands
 
