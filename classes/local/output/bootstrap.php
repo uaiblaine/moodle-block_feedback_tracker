@@ -263,6 +263,10 @@ class bootstrap {
             'pendingreport_col_effective' => get_string('pendingreport_col_effective', 'block_feedback_tracker'),
             'pendingreport_col_perceived' => get_string('pendingreport_col_perceived', 'block_feedback_tracker'),
             'priority_open' => get_string('priority_open', 'block_feedback_tracker'),
+            'status_resubmitted' => get_string('status_resubmitted', 'block_feedback_tracker'),
+            // Placeholder kept for the card to fill with the earlier mark's date.
+            'status_resubmitted_help' => get_string('status_resubmitted_help', 'block_feedback_tracker', '{$a}'),
+            'status_resubmitted_help_nodate' => get_string('status_resubmitted_help_nodate', 'block_feedback_tracker'),
             'trend_window_label' => get_string('trend_window_label', 'block_feedback_tracker'),
         ];
         if (self::can_view_school_comparison()) {

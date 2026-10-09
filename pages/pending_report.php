@@ -89,6 +89,10 @@ $i18n['status_closed_in_gradebook'] = get_string('status_closed_in_gradebook', '
 $i18n['status_closed_in_gradebook_help'] = get_string('status_closed_in_gradebook_help', 'block_feedback_tracker');
 $i18n['status_grade_hidden'] = get_string('status_grade_hidden', 'block_feedback_tracker');
 $i18n['status_grade_hidden_help'] = get_string('status_grade_hidden_help', 'block_feedback_tracker');
+$i18n['status_resubmitted'] = get_string('status_resubmitted', 'block_feedback_tracker');
+// The dated variant keeps its placeholder; the view puts the earlier mark's date in it.
+$i18n['status_resubmitted_help'] = get_string('status_resubmitted_help', 'block_feedback_tracker', '{$a}');
+$i18n['status_resubmitted_help_nodate'] = get_string('status_resubmitted_help_nodate', 'block_feedback_tracker');
 $i18n['alloc_split_tip'] = get_string('alloc_split_tip', 'block_feedback_tracker');
 
 // Collapse state for the hero + academic-days container (per-user pref).

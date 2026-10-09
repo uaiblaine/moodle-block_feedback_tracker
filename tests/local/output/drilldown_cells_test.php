@@ -98,4 +98,24 @@ final class drilldown_cells_test extends \basic_testcase {
         $this->assertSame(bucket::PENDING, drilldown_cells::band('bogus'));
         $this->assertSame(get_string('band_pending', 'block_feedback_tracker'), drilldown_cells::band_label('bogus'));
     }
+
+    /**
+     * The Resubmitted explanation carries the earlier mark's date when it is
+     * known, and falls back to the undated wording when retention took it.
+     *
+     * @return void
+     */
+    public function test_resubmitted_tip(): void {
+        $when = 1778572800;
+        $date = userdate($when, get_string('strftimedate', 'langconfig'));
+        $this->assertSame(
+            get_string('status_resubmitted_help', 'block_feedback_tracker', $date),
+            drilldown_cells::resubmitted_tip($when)
+        );
+        $this->assertStringContainsString($date, drilldown_cells::resubmitted_tip($when));
+        $this->assertSame(
+            get_string('status_resubmitted_help_nodate', 'block_feedback_tracker'),
+            drilldown_cells::resubmitted_tip(0)
+        );
+    }
 }

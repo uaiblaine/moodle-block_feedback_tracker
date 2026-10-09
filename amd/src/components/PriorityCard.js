@@ -27,7 +27,7 @@
 
 import {html} from 'block_feedback_tracker/lib/preact';
 import Badge from 'block_feedback_tracker/components/Badge';
-import {formatHours, formatDays, usesDays} from 'block_feedback_tracker/lib/format';
+import {formatHours, formatDays, formatDate, usesDays} from 'block_feedback_tracker/lib/format';
 
 /**
  * Initials from a full name; falls back to "??" on empty input.
@@ -80,6 +80,21 @@ const priorityLabel = (band, i18n) => {
 };
 
 /**
+ * The resubmitted chip's explanation, dated with the earlier mark when known.
+ *
+ * @param {number} previousmarktime Epoch of the earlier mark, 0 when unknown.
+ * @param {object} i18n
+ * @returns {string}
+ */
+const resubmittedTip = (previousmarktime, i18n) => {
+    const when = Number(previousmarktime) || 0;
+    if (when > 0) {
+        return String(i18n.status_resubmitted_help || '').replace('{$a}', formatDate(when));
+    }
+    return i18n.status_resubmitted_help_nodate || '';
+};
+
+/**
  * @param {object} props
  * @param {number} props.idx          1-based rank shown in the header.
  * @param {object} props.submission   Row from get_grader_priority_list.
@@ -110,6 +125,13 @@ export default function PriorityCard({idx, submission, i18n, config}) {
             <header class="bft-priority-header">
                 <span class="bft-priority-idx">#${idx}</span>
                 <${Badge} band=${band} label=${bandLabel} />
+                ${Number(submission.resubmitted) === 1 && html`
+                    <span class="bft-badge bft-badge-resubmitted"
+                          title=${resubmittedTip(submission.previousmarktime, i18n)}>
+                        ${i18n.status_resubmitted || 'Resubmitted'}
+                        <span class="bft-sr-only">${resubmittedTip(submission.previousmarktime, i18n)}</span>
+                    </span>
+                `}
             </header>
             <div class="bft-priority-title">${submission.activityname || ''}</div>
             <div class="bft-priority-course">${(submission.coursename || '').toUpperCase()}</div>

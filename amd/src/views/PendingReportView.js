@@ -228,11 +228,27 @@ const AllocSplitTag = ({queuehours, allochours, tip}) => {
 };
 
 /**
+ * The explanation of a resubmitted row, dated with the earlier mark when it is
+ * still known (retention can prune the cycle that held it).
+ *
+ * @param {number} previousmarktime Epoch of the earlier mark, 0 when unknown.
+ * @param {object} i18n
+ * @returns {string}
+ */
+const resubmittedTip = (previousmarktime, i18n) => {
+    const when = Number(previousmarktime) || 0;
+    if (when > 0) {
+        return String(i18n.status_resubmitted_help || '').replace('{$a}', formatDate(when));
+    }
+    return i18n.status_resubmitted_help_nodate || '';
+};
+
+/**
  * A per-row disclosure: a short tag whose explanation opens on click.
  *
- * Used wherever a row's status is true but incomplete on its own — a mark the
- * workflow has not released, a cycle answered outside the activity, a grade the
- * gradebook is hiding. The key carries the variant as well as the row, because
+ * Used wherever a row's status is true but incomplete on its own — work handed
+ * in again after a mark, a mark the workflow has not released, a cycle answered
+ * outside the activity, a grade the gradebook is hiding. The key carries the variant as well as the row, because
  * one row can raise more than one of these and a key of the row alone would let
  * them fight over the single open slot.
  *
@@ -834,6 +850,15 @@ export default function PendingReportView({initial}) {
                                                     const pb = pendingBadge(row.pendingband, i18n);
                                                     return html`<${Badge} band=${pb.band} label=${pb.label} />`;
                                                 })()}
+                                            ${!graded && Number(row.resubmitted) === 1 && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':resubmitted'}
+                                                    variant="resubmitted"
+                                                    tip=${resubmittedTip(row.previousmarktime, i18n)}
+                                                    label=${i18n.status_resubmitted || 'Resubmitted'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
                                             ${Number(row.awaitingrelease) === 1 && html`
                                                 <${RowDisclosureTag}
                                                     tagkey=${row.submissionid + ':release'}

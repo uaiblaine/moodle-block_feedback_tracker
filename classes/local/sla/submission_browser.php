@@ -216,6 +216,7 @@ class submission_browser {
         $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
         $namefields = \core_user\fields::for_name()->get_sql('u')->selects;
         $select = "SELECT sub.id, sub.cmid, sub.userid, sub.iteminstance, sub.groupid, sub.timesubmitted,
+                          sub.attemptnumber, sub.cycle,
                           sub.timegraded, sub.timemarked, sub.timeclosed,
                           sub.closedsource,
                           sub.queuehours, sub.allochours,
@@ -247,6 +248,7 @@ class submission_browser {
         $usedays = bucket::use_day_thresholds();
         [$daygoal, $daycrit] = self::band_bounds_days();
         $hiddennow = self::hidden_from_student($rows);
+        $previousmarks = resubmission::previous_marks($rows);
         $out = [];
         foreach ($rows as $r) {
             $eff = $r->effectivehours !== null ? (float) $r->effectivehours : 0.0;
@@ -317,6 +319,11 @@ class submission_browser {
                 'awaitingrelease'  => (int) (
                     $r->timemarked !== null && $r->timeclosed === null
                 ),
+                /* Core's "Graded - resubmitted": the attempt already carried a
+                 * mark when this work was handed in, so the wait is measured
+                 * from the re-save and the teacher is looking at it again. */
+                'resubmitted'      => (int) array_key_exists((int) $r->id, $previousmarks),
+                'previousmarktime' => (int) ($previousmarks[(int) $r->id] ?? 0),
                 /* The response interval split by owner: hand-in to first
                  * allocation, then the current marker's turnaround. Null where
                  * the row has no measurement. */

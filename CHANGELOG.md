@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - Unreleased
 
 ### Added
+- **Work handed in again after a mark says so.** When a teacher grades but
+  leaves the submission editable, and the student saves it again in the same
+  attempt, Moodle asks for it to be graded again ("Graded - resubmitted") and
+  the plugin opens a new pending cycle whose clock starts at that save. The
+  pending report, the group drill-down and the dashboard's "Grade now" cards
+  now tag such rows **Resubmitted**, with the date of the earlier mark in the
+  explanation, so a teacher no longer sees work they already graded listed as
+  if it had never been answered. The tag also covers pending rows written
+  before the cycle model, whose post-grading edit had erased the response:
+  there the earlier mark is read from the activity's own grade. Saving the
+  grade again, even unchanged, still answers the row; nothing about the
+  measurement changes. `get_pending_submissions`, `get_graded_submissions` and
+  `get_grader_priority_list` return two new fields, `resubmitted` and
+  `previousmarktime`.
 - **Reconciliation now records what each tick cost.** One audit row per tick
   (reason `reconcile`), carrying per-sweep rows repaired, milliseconds and
   cursor position, plus `emptyms` — the time spent proving nothing was wrong —

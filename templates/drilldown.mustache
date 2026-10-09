@@ -10,8 +10,11 @@
     * empty         Truthy when no submitted-but-ungraded submissions match the filter
     * emptytext     Empty-state message
     * cols          {student, activity, group, submitted, waiting, effective, status}
-    * rows          Array of {student, activity, group, submitted, waiting, effective, status, bucket}:
-                    status is the band's localised label, bucket its slug (the badge class)
+    * rows          Array of {student, activity, group, submitted, waiting, effective, status, bucket,
+                    resubmitted, resubmittedtip}: status is the band's localised label, bucket its
+                    slug (the badge class); resubmitted marks work handed in again after a mark,
+                    explained by resubmittedtip
+    * resubmittedlabel  Text of the Resubmitted badge
     * pagingbar     Pre-rendered paging-bar HTML (raw)
     * hasdrafts     Truthy when there is at least one draft (not-yet-submitted) row
     * draftheading  Heading for the drafts section
@@ -36,9 +39,12 @@
                 "submitted": "2026-05-16 09:14", "submittedts": 1747380840,
                 "waiting": "27.0 h", "waitingnum": 27.0,
                 "effective": "16.0 h", "effectivenum": 16.0,
-                "status": "Good", "bucket": "good"
+                "status": "Good", "bucket": "good",
+                "resubmitted": true,
+                "resubmittedtip": "This attempt was already marked on 12 May 2026 when the student saved the submission again."
             }
         ],
+        "resubmittedlabel": "Resubmitted",
         "pagingbar": "",
         "hasdrafts": true,
         "draftheading": "Not yet submitted",
@@ -96,7 +102,13 @@
                     <td data-sort-value="{{submittedts}}">{{submitted}}</td>
                     <td data-sort-value="{{waitingnum}}">{{waiting}}</td>
                     <td data-sort-value="{{effectivenum}}">{{effective}}</td>
-                    <td><span class="badge badge-{{bucket}}">{{status}}</span></td>
+                    <td data-sort-value="{{status}}">
+                        <span class="badge badge-{{bucket}}">{{status}}</span>
+                        {{#resubmitted}}
+                            <span class="badge bft-badge-resubmitted" title="{{resubmittedtip}}">{{resubmittedlabel}}</span>
+                            <span class="bft-sr-only">{{resubmittedtip}}</span>
+                        {{/resubmitted}}
+                    </td>
                 </tr>
             {{/rows}}
         </tbody>
