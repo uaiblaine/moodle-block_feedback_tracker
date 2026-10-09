@@ -371,6 +371,7 @@ $string['privacy:metadata:sub:submissionstatus'] = 'Status of the submission (su
 $string['privacy:metadata:sub:timeallocated'] = 'Timestamp at which a marker was first allocated to this submission, or null.';
 $string['privacy:metadata:sub:timeallocmarker'] = 'Timestamp at which the teacher currently allocated to mark this submission was allocated, or null.';
 $string['privacy:metadata:sub:timeclosed'] = 'Timestamp at which the feedback reached the student, or null while it has not.';
+$string['privacy:metadata:sub:timedismissed'] = 'When an administrator took this submission out of the response-time figures without a measurement, because its original response time was lost before the plugin recorded grading cycles.';
 $string['privacy:metadata:sub:timegraded'] = 'Timestamp of grading, or null while pending.';
 $string['privacy:metadata:sub:timemarked'] = 'Timestamp at which a mark was entered, which under marking workflow precedes the release.';
 $string['privacy:metadata:sub:timereleased'] = 'Timestamp at which the marking-workflow state reached released, or null.';

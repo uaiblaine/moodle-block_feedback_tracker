@@ -36,10 +36,12 @@ use block_feedback_tracker\local\sla\retention;
  *
  * Two rules make this safe to run unattended:
  *
- *  - Only closed rows are deleted. A row still awaiting feedback is
- *    outstanding work whose age is the signal this plugin exists to surface;
- *    it leaves the ledger only when its submission, course or enrolment does,
- *    which the reconciler handles.
+ *  - Only closed rows are deleted: answered ones by their response time, and
+ *    dismissed ones ({@see \block_feedback_tracker\local\sla\legacy_dismissal})
+ *    by their dismissal time. A row still awaiting feedback is outstanding
+ *    work whose age is the signal this plugin exists to surface; it leaves the
+ *    ledger only when its submission, course or enrolment does, which the
+ *    reconciler handles.
  *  - The reconciler's row-creating sweeps read the same
  *    {@see retention::cutoff()}, so they do not recreate what is deleted here.
  *
@@ -92,6 +94,9 @@ class prune_ledger extends \core\task\scheduled_task {
         ));
 
         $subs = $this->prune_closed_submissions($cutoff, $batch);
+        if ($subs < $batch) {
+            $subs += $this->prune_dismissed_submissions($cutoff, $batch - $subs);
+        }
         mtrace(sprintf('prune_ledger: %d closed submission row(s) deleted.', $subs));
 
         if (time() > $deadline) {
@@ -129,6 +134,39 @@ class prune_ledger extends \core\task\scheduled_task {
               WHERE timegraded IS NOT NULL
                 AND timegraded < :cutoff
            ORDER BY timegraded ASC",
+            ['cutoff' => $cutoff],
+            0,
+            $batch
+        );
+        if (empty($ids)) {
+            return 0;
+        }
+        [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
+        $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
+        return count($ids);
+    }
+
+    /**
+     * Delete dismissed ledger rows whose dismissal predates the cutoff.
+     *
+     * A dismissed row never gets `timegraded`, so the closed-row query never
+     * reaches it; without this its personal data would outlive the window.
+     * Its hand-in predates the dismissal, so the reconciler's retention floor
+     * keeps the missing-row sweep from recreating it.
+     *
+     * @param int $cutoff Epoch seconds.
+     * @param int $batch Row ceiling left for this run.
+     * @return int Rows deleted.
+     */
+    private function prune_dismissed_submissions(int $cutoff, int $batch): int {
+        global $DB;
+
+        $ids = $DB->get_fieldset_sql(
+            "SELECT id
+               FROM {block_feedback_tracker_sub}
+              WHERE timedismissed IS NOT NULL
+                AND timedismissed < :cutoff
+           ORDER BY timedismissed ASC",
             ['cutoff' => $cutoff],
             0,
             $batch

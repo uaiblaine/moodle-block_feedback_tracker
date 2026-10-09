@@ -741,5 +741,16 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026092500, 'feedback_tracker');
     }
 
+    if ($oldversion < 2026100901) {
+        // The dismissal instant of cli/dismiss_legacy_pending.php.
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $field = new xmldb_field('timedismissed', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'closedsource');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_block_savepoint(true, 2026100901, 'feedback_tracker');
+    }
+
     return true;
 }

@@ -305,7 +305,7 @@ class submission_ledger {
             ['cmid' => $cmid, 'userid' => $userid, 'attemptnumber' => $attemptnumber],
             'cycle DESC',
             'id, cycle, submissionstatus, timesubmitted, timegraded, timemarked, timereleased,
-             timeclosed, closedsource, timeallocated, timeallocmarker',
+             timeclosed, closedsource, timedismissed, timeallocated, timeallocmarker',
             0,
             1
         );
@@ -318,6 +318,22 @@ class submission_ledger {
         $storedstudentclosed = null;
         $storedsource = null;
         $newcycle = false;
+
+        /* A dismissed cycle ({@see legacy_dismissal}) stays out of every
+         * population, so it is never rewritten: a re-derivation would put it
+         * back as current and pending. Only work saved after the dismissal
+         * reopens the attempt, in a cycle of its own, as work saved after a
+         * mark does. A mark made after the dismissal answers nothing that is
+         * still listed, so it is not measured. */
+        if ($existing !== null && $existing->timedismissed !== null) {
+            if ($livesubmitted <= (int) $existing->timedismissed) {
+                self::set_islatest($cmid, $userid, $attemptnumber, $latest);
+                return (int) $existing->id;
+            }
+            $cycle = (int) $existing->cycle + 1;
+            $existing = null;
+            $newcycle = true;
+        }
 
         if ($existing !== null) {
             $cycle = (int) $existing->cycle;
@@ -602,21 +618,7 @@ class submission_ledger {
             }
         }
 
-        /* islatest is an attempt-wide fact, so it is maintained set-based
-         * across every cycle of the tuple — the upsert above only touches the
-         * highest one, and a superseded attempt whose cycle-0 row still
-         * claimed islatest = 1 would stay pending for ever. */
-        $DB->execute(
-            'UPDATE {block_feedback_tracker_sub}
-                SET islatest = :islatest
-              WHERE cmid = :cmid AND userid = :userid AND attemptnumber = :att',
-            [
-                'islatest' => $latest,
-                'cmid' => $cmid,
-                'userid' => $userid,
-                'att' => $attemptnumber,
-            ]
-        );
+        self::set_islatest($cmid, $userid, $attemptnumber, $latest);
         if ($newcycle) {
             $DB->execute(
                 'UPDATE {block_feedback_tracker_sub}
@@ -634,6 +636,35 @@ class submission_ledger {
         );
 
         return $subid;
+    }
+
+    /**
+     * Mirror assign_submission.latest onto every cycle of one attempt.
+     *
+     * islatest is an attempt-wide fact, so it is maintained set-based across
+     * every cycle of the tuple: the upsert only touches the highest one, and a
+     * superseded attempt whose cycle-0 row still claimed islatest = 1 would
+     * stay pending for ever.
+     *
+     * @param int $cmid
+     * @param int $userid
+     * @param int $attemptnumber
+     * @param int $latest assign_submission.latest of the authoritative row.
+     * @return void
+     */
+    private static function set_islatest(int $cmid, int $userid, int $attemptnumber, int $latest): void {
+        global $DB;
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET islatest = :islatest
+              WHERE cmid = :cmid AND userid = :userid AND attemptnumber = :att',
+            [
+                'islatest' => $latest,
+                'cmid' => $cmid,
+                'userid' => $userid,
+                'att' => $attemptnumber,
+            ]
+        );
     }
 
     /**

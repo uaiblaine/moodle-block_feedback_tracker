@@ -103,7 +103,8 @@ classes/
     payload/                 responsiveness_payload (block + WS share this)
     score/                   responsiveness_calculator (5-term formula) + peer_stats
     sla/                     Ledger, rollup, observer, course_access gate
-cli/                         reset / recompute_all / recompute_one / backfill_* maintenance scripts
+cli/                         reset / recompute_all / recompute_one / backfill_* /
+                             dismiss_legacy_pending maintenance scripts
 pages/                       Admin + teacher UIs (dashboard, calendar editor, drilldown)
 templates/                   Mustache (server-rendered UI)
 amd/src/                     Preact UI — see "React conventions"
@@ -657,6 +658,26 @@ the fixture, and read `reconcile_cursor_<key>` between calls. A fixture
 smaller than the batch pages nothing, so a test that only runs `execute()`
 cannot see a paging regression; the paging tests lower
 `reconcile_batch_size` (to 2) instead.
+
+## Dismissed cycles (`local/sla/legacy_dismissal.php`)
+
+`cli/dismiss_legacy_pending.php` takes out of every population the cycle-0
+rows that lost their response before the cycle model (2026080202): it sets
+`timedismissed` and `iscurrent = 0`, never `timegraded`. No reader names the
+column. Pending reads require `iscurrent = 1` and graded reads require
+`timegraded`, so the row falls out of both; the reconciler sweeps that
+re-derive rows window on `iscurrent = 1` and skip it too. Two rules keep it
+that way:
+
+- **A new pending or graded read keeps one of those two predicates.** A read
+  over `timegraded IS NULL` alone would list dismissed rows again.
+- **The writer never rewrites a dismissed cycle.** `build_and_store()` returns
+  early for one, and opens a new cycle only when the live hand-in postdates
+  `timedismissed`. A mark made after the dismissal measures nothing.
+
+Retention (`prune_ledger`) deletes closed rows by `timegraded`, which a
+dismissed row never gets, so it prunes dismissed rows by `timedismissed` in a
+query of its own.
 
 ## Group changes re-date rows (`local/sla/observer.php`)
 

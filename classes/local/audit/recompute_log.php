@@ -74,6 +74,14 @@ class recompute_log {
     public const REASON_BULK_REMOVAL = 'bulk_removal';
 
     /**
+     * Open cycles taken out of every population by
+     * cli/dismiss_legacy_pending.php. The ledger keeps only the dismissal
+     * instant per row; this row says who ran it, with which cutoff, and how
+     * many rows it took.
+     */
+    public const REASON_LEGACY_DISMISSAL = 'legacy_dismissal';
+
+    /**
      * Insert one audit row.
      *
      * @param string $reason One of self::REASON_*.
