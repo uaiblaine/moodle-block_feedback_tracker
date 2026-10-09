@@ -230,6 +230,14 @@ class get_pending_submissions extends external_api {
                 PARAM_INT,
                 '1 when a grade exists but the gradebook is hiding it from the student'
             ),
+            'resubmitted' => new external_value(
+                PARAM_INT,
+                '1 when the attempt already carried a mark when this work was handed in (core\'s Graded - resubmitted)'
+            ),
+            'previousmarktime' => new external_value(
+                PARAM_INT,
+                'When the attempt was marked before this hand-in; 0 when not resubmitted or the time is no longer known'
+            ),
             'queuehours' => new external_value(
                 PARAM_FLOAT,
                 'Effective hours from hand-in to first marker allocation; null when never allocated',

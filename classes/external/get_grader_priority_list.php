@@ -164,6 +164,7 @@ class get_grader_priority_list extends external_api {
         $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
         $namefields = \core_user\fields::for_name()->get_sql('u')->selects;
         $sql = "SELECT sub.id, sub.cmid, sub.userid, sub.courseid, sub.groupid,
+                       sub.iteminstance, sub.attemptnumber, sub.cycle, sub.submissionstatus,
                        sub.timesubmitted, sub.waitinghours, sub.effectivehours,
                        sub.effectivedays, sub.slabucket,
                        c.fullname AS coursename,
@@ -200,6 +201,7 @@ class get_grader_priority_list extends external_api {
             }
         }
 
+        $previousmarks = \block_feedback_tracker\local\sla\resubmission::previous_marks($rows);
         $submissions = [];
         foreach ($rows as $r) {
             // Pending-only list (timegraded IS NULL): elapsed days run up to now.
@@ -229,6 +231,8 @@ class get_grader_priority_list extends external_api {
                         $r->effectivedays !== null ? (float) $r->effectivedays : null
                     )
                     : (string) $r->slabucket,
+                'resubmitted'    => (int) array_key_exists((int) $r->id, $previousmarks),
+                'previousmarktime' => (int) ($previousmarks[(int) $r->id] ?? 0),
             ];
         }
 
@@ -307,6 +311,14 @@ class get_grader_priority_list extends external_api {
                 'effective_days' => new external_value(PARAM_INT, 'Elapsed business days (date-based)'),
                 'perceived_days' => new external_value(PARAM_INT, 'Elapsed calendar days (date-based)'),
                 'slabucket'      => new external_value(PARAM_ALPHA, ''),
+                'resubmitted'    => new external_value(
+                    PARAM_INT,
+                    '1 when the attempt already carried a mark when this work was handed in (core\'s Graded - resubmitted)'
+                ),
+                'previousmarktime' => new external_value(
+                    PARAM_INT,
+                    'When the attempt was marked before this hand-in; 0 when the time is no longer known'
+                ),
             ])),
         ]);
     }

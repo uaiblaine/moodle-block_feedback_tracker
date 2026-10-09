@@ -80,6 +80,8 @@ foreach ($result['submissions'] as $s) {
         'effectivenum' => (float) $s['effectivehours'],
         'status'       => drilldown_cells::band_label($band),
         'bucket'       => $band,
+        'resubmitted'  => (int) $s['resubmitted'] === 1,
+        'resubmittedtip' => drilldown_cells::resubmitted_tip((int) $s['previousmarktime']),
     ];
 }
 
@@ -133,6 +135,7 @@ echo $OUTPUT->render_from_template('block_feedback_tracker/drilldown', [
         'status'    => get_string('drilldown_col_status', 'block_feedback_tracker'),
     ],
     'rows'      => $rows,
+    'resubmittedlabel' => get_string('status_resubmitted', 'block_feedback_tracker'),
     'pagingbar' => $OUTPUT->paging_bar($result['total'], $page, $perpage, $PAGE->url),
     'hasdrafts'    => !empty($draftrows),
     'draftheading' => get_string('drilldown_drafts_heading', 'block_feedback_tracker'),

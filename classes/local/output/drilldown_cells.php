@@ -82,4 +82,24 @@ final class drilldown_cells {
             default => get_string('band_pending', 'block_feedback_tracker'),
         };
     }
+
+    /**
+     * Explanation of the Resubmitted badge, dated with the earlier mark.
+     *
+     * The undated variant covers a row whose earlier cycle retention pruned:
+     * it is still a resubmission, only the date is gone.
+     *
+     * @param int $previousmarktime previousmarktime from get_pending_submissions; 0 when unknown.
+     * @return string
+     */
+    public static function resubmitted_tip(int $previousmarktime): string {
+        if ($previousmarktime > 0) {
+            return get_string(
+                'status_resubmitted_help',
+                'block_feedback_tracker',
+                userdate($previousmarktime, get_string('strftimedate', 'langconfig'))
+            );
+        }
+        return get_string('status_resubmitted_help_nodate', 'block_feedback_tracker');
+    }
 }

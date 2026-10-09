@@ -2076,6 +2076,26 @@ a.bft-activity-action:focus {
     outline-offset: 2px;
 }
 
+/* Work handed in again after a mark (core's "Graded - resubmitted"). Plum: it
+   says why the row is back, neither a warning nor a result. The .badge form is
+   the drilldown's, qualified because a bare Bootstrap badge sets its own
+   colours. */
+.bft-badge-resubmitted,
+.badge.bft-badge-resubmitted {
+    border: 1px solid var(--bft-plum-fg);
+    background: var(--bft-plum-bg);
+    color: var(--bft-plum-fg);
+}
+
+button.bft-badge-resubmitted {
+    cursor: pointer;
+}
+
+button.bft-badge-resubmitted:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
 /* Queue-to-turnaround chip: the response interval split by owner. Muted, so
  * it reads as annotation beside the result badge rather than competing with
  * it. */
