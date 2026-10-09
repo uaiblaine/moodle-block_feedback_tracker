@@ -140,13 +140,16 @@ final class legacy_dismissal {
      *
      * Re-selects rather than taking ids from the caller, so a row that changed
      * between a dry run and this call is judged on its current state. The
-     * UPDATE repeats the guard on `timedismissed`, `iscurrent` and
-     * `timegraded`, so a row a concurrent writer answered or reopened in the
-     * meantime is left alone.
+     * UPDATE repeats the guard on the ledger's own state (`timedismissed`,
+     * `iscurrent`, `timegraded`, `timemarked`), so a row a concurrent writer
+     * marked, answered or reopened in the meantime is left alone. Each chunk
+     * re-queues its own rollups as soon as it is written, so a failure later
+     * in the run cannot leave dismissed rows behind stale figures.
      *
      * @param int $before Only rows handed in strictly before this instant.
      * @param int $courseid One course, or 0 for every course.
-     * @param int|null $userid Who ran it, for the audit row; null for the CLI's admin.
+     * @param int|null $userid Who ran it, for the audit row; null when nobody is
+     *                         logged in, as on the CLI.
      * @return int Rows dismissed.
      */
     public static function dismiss(int $before, int $courseid = 0, ?int $userid = null): int {
@@ -154,14 +157,18 @@ final class legacy_dismissal {
         $started = time();
         $rows = self::candidates($before, $courseid);
         $dismissed = 0;
-        $tuples = [];
+        $alltuples = [];
         foreach (array_chunk(array_keys($rows), self::CHUNK) as $ids) {
             [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'ld');
             $now = time();
             $DB->execute(
                 "UPDATE {block_feedback_tracker_sub}
                     SET timedismissed = :dismissed, iscurrent = 0, timemodified = :modified
-                  WHERE id $isql AND timedismissed IS NULL AND iscurrent = 1 AND timegraded IS NULL",
+                  WHERE id $isql
+                    AND timedismissed IS NULL
+                    AND iscurrent = 1
+                    AND timegraded IS NULL
+                    AND timemarked IS NULL",
                 $iparams + ['dismissed' => $now, 'modified' => $now]
             );
             // Counted after the write, so a row the guard skipped is not reported.
@@ -170,19 +177,21 @@ final class legacy_dismissal {
                 "id $isql AND timedismissed = :dismissed",
                 $iparams + ['dismissed' => $now]
             );
+            $tuples = [];
             foreach ($ids as $id) {
                 $r = $rows[$id];
                 $tuples[(int) $r->courseid . ':' . (int) $r->groupid] = [(int) $r->courseid, (int) $r->groupid];
             }
-        }
-        foreach ($tuples as [$tcourseid, $tgroupid]) {
-            dirty_queue::enqueue($tcourseid, $tgroupid, dirty_queue::REASON_BULK);
+            foreach ($tuples as $key => [$tcourseid, $tgroupid]) {
+                dirty_queue::enqueue($tcourseid, $tgroupid, dirty_queue::REASON_BULK);
+                $alltuples[$key] = true;
+            }
         }
         recompute_log::record(
             recompute_log::REASON_LEGACY_DISMISSAL,
             $dismissed,
             $userid,
-            ['before' => $before, 'courseid' => $courseid, 'tuples' => count($tuples)],
+            ['before' => $before, 'courseid' => $courseid, 'tuples' => count($alltuples)],
             $started,
             time()
         );

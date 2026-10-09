@@ -107,6 +107,16 @@ if ($beforeopt === '') {
 // The fixday and fixhour arguments off: userdate() strips leading zeros by default.
 $format = '%Y-%m-%d %H:%M';
 $when = fn(int $time): string => userdate($time, $format, 99, false, false);
+
+/* The cutoff is what tells a row that lost its response before the cycle
+ * model from a cycle-0 row pending by the same rule as any resubmission. A
+ * later --before is the operator's call, so say what it reaches. */
+$upgraded = legacy_dismissal::cycle_model_time();
+if ($beforeopt !== '' && ($upgraded === null || $before > $upgraded)) {
+    mtrace('Warning: this cutoff is later than the cycle-model upgrade'
+        . ($upgraded !== null ? ' (' . $when($upgraded) . ')' : ', which never ran here')
+        . '; it also selects rows the cycle model recorded correctly.');
+}
 $rows = legacy_dismissal::candidates($before, $courseid);
 mtrace(sprintf(
     '%d row(s) handed in before %s%s:',
@@ -135,6 +145,7 @@ if (!$options['run']) {
     exit(0);
 }
 
-$dismissed = legacy_dismissal::dismiss($before, $courseid, (int) get_admin()->id);
+// The CLI has no logged-in user, so the audit row records the system.
+$dismissed = legacy_dismissal::dismiss($before, $courseid);
 mtrace("Dismissed $dismissed row(s). Their rollups recompute on the next drain_queue run.");
 exit(0);
