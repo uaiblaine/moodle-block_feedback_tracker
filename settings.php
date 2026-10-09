@@ -255,7 +255,7 @@ if ($ADMIN->fulltree) {
         'backfill_sub_chunk'        => '50',
         'trend_window_days'         => '30',
         'purge_inactive_after_days' => '730',
-        'reconcile_batch_size'      => '500',
+        'reconcile_batch_size'      => '1000',
         'reconcile_time_cap_seconds' => '50',
         'retention_days'            => '365',
         'retention_batch_size'      => '5000',

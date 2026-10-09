@@ -644,9 +644,28 @@ defect once:
   must agree row for row or a repair is dispatched on every pass.
 
 Resolve the activity through `{course_modules}` → `{modules}` → `{assign}` in
-the probes, as the writer does. Joining `{assign}` straight from
+the ledger probes, as the writer does. Joining `{assign}` straight from
 `l.iteminstance` is faster and selects rows the writer cannot repair (module
-row gone, activity row alive). `idx_course_id (courseid, id)` serves a
+row gone, activity row alive).
+
+The two sweeps that drive on `{assign_submission}` (`missing`, `team`) follow
+three rules measured on 5 million submissions, on PostgreSQL and MariaDB:
+
+- **The window is a bare primary-key range** (`submission_window()`), and the
+  rows a sweep is about are kept in PHP (`tracked_submissions()`). Every
+  filter tried in SQL made one engine read every submission of the tracked
+  courses per window: by course through joins on PostgreSQL (1.3 s per
+  window), by a list of assignment ids on MariaDB (1.6 s).
+- **The probe drives from the window's primary keys**: `{course_modules}` by
+  instance and module id, no `{assign}` join. With `{assign}` joined,
+  PostgreSQL drove from the activity and scanned every submission of each one.
+- **"Active participant" is one predicate**, `active_participant_sql()`, shared
+  with the departed-participant sweep, written as a correlated EXISTS on the user
+  and course columns. Core's `get_enrolled_sql()` fixes the course as a constant,
+  and PostgreSQL then compared every ledger row of the course with every
+  participant. Keep it in step with `get_enrolled_join()`.
+
+`idx_course_id (courseid, id)` serves a
 single-course equality only; with the processable-course `IN` list the planner
 walks the primary key and filters, which is fine at the window size but is
 why a per-course cursor (the `bfcursor` table `backfill_history` already

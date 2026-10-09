@@ -195,6 +195,27 @@ final class upgrade_test extends \advanced_testcase {
     }
 
     /**
+     * The 2026100902 step moves a site still on the old reconciliation window
+     * default (500) to the new one (1000), and keeps any value an
+     * administrator chose.
+     *
+     * @return void
+     */
+    public function test_the_old_reconcile_batch_default_moves_to_the_new_one(): void {
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+
+        foreach (['500' => '1000', '750' => '750', '2000' => '2000'] as $stored => $expected) {
+            set_config('reconcile_batch_size', $stored, 'block_feedback_tracker');
+            set_config('version', 2026100901, 'block_feedback_tracker');
+
+            xmldb_block_feedback_tracker_upgrade(2026100901);
+
+            $this->assertSame($expected, get_config('block_feedback_tracker', 'reconcile_batch_size'), "Stored '$stored'.");
+        }
+    }
+
+    /**
      * No upgrade step records a version above version.php's. The next upgrade
      * of a site running such a tree records it, and the site then reads
      * version.php as a downgrade and stops.

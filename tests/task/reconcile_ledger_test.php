@@ -1506,6 +1506,135 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * The submission sweeps walk every submission by primary key and keep only
+     * those of their kind: tracked assignments, team container rows or
+     * individual ones, and nothing older than the retention floor.
+     *
+     * A course without the block and a submission past the retention window
+     * are the controls the filter must drop.
+     *
+     * @return void
+     */
+    public function test_the_submission_sweeps_keep_only_tracked_rows_of_their_kind(): void {
+        global $DB;
+        $this->resetAfterTest();
+        set_config('retention_active', '1', 'block_feedback_tracker');
+        set_config('retention_days', '365', 'block_feedback_tracker');
+        [, , $assign, $course] = $this->build_environment();
+        $students = $this->seed_submissions($assign, $course, 3);
+        $DB->set_field('assign_submission', 'timemodified', time() - 400 * 86400, [
+            'assignment' => $assign->id,
+            'userid' => $students[2]->id,
+        ]);
+        $team = $this->getDataGenerator()->create_module('assign', ['course' => $course->id, 'teamsubmission' => 1]);
+        $now = time();
+        foreach ([1, 2] as $groupid) {
+            $DB->insert_record('assign_submission', (object) [
+                'assignment' => $team->id, 'userid' => 0, 'groupid' => $groupid, 'attemptnumber' => 0,
+                'timecreated' => $now, 'timemodified' => $now, 'status' => 'submitted', 'latest' => 1,
+            ]);
+        }
+        // A member's own row on the team assignment: neither sweep's business.
+        $this->seed_submissions($team, $course, 1);
+        $untracked = $this->getDataGenerator()->create_course();
+        $other = $this->getDataGenerator()->create_module('assign', ['course' => $untracked->id]);
+        $this->seed_submissions($other, $untracked, 2);
+
+        $ids = static fn(string $where, array $params): array => array_map('intval', $DB->get_fieldset_sql(
+            "SELECT id FROM {assign_submission} WHERE $where ORDER BY id ASC",
+            $params
+        ));
+        $task = new reconcile_ledger();
+        $window = (new \ReflectionMethod($task, 'submission_window'))->invoke($task, 2);
+        $filter = new \ReflectionMethod($task, 'tracked_submissions');
+        $kept = static function (bool $isteam) use ($task, $filter, $window, $course): array {
+            $seen = [];
+            $act = $filter->invoke($task, [(int) $course->id], $isteam, function (array $rows) use (&$seen): int {
+                $seen = array_merge($seen, array_map('intval', array_keys($rows)));
+                return count($rows);
+            });
+            $cursor = 0;
+            while ($rows = $window($cursor)) {
+                $act($rows);
+                $cursor = (int) array_key_last($rows);
+            }
+            return $seen;
+        };
+
+        $this->assertSame(
+            $ids('assignment = :a AND userid <> :old', ['a' => $assign->id, 'old' => $students[2]->id]),
+            $kept(false),
+            'The tracked individual submissions, without the one past the retention window.'
+        );
+        $this->assertSame($ids('assignment = :a AND userid = 0', ['a' => $team->id]), $kept(true), 'The team container rows.');
+        $this->assertCount(2, $kept(false));
+    }
+
+    /**
+     * An enrolment in a disabled instance, one not started yet and one already
+     * ended all leave the participant: the departed sweep deletes the row and
+     * the missing-row sweep does not rebuild it. Both read the one predicate,
+     * so they agree. The active classmate in the same course is the control.
+     *
+     * @return void
+     */
+    public function test_inactive_enrolments_leave_and_are_not_rebuilt(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $now = time();
+        $cases = [
+            'disabled instance' => fn(int $userid, int $courseid) => $DB->set_field(
+                'enrol',
+                'status',
+                ENROL_INSTANCE_DISABLED,
+                ['courseid' => $courseid, 'enrol' => 'manual']
+            ),
+            'not started' => fn(int $userid, int $courseid) => $DB->set_field(
+                'user_enrolments',
+                'timestart',
+                $now + 86400,
+                ['userid' => $userid]
+            ),
+            'ended' => fn(int $userid, int $courseid) => $DB->set_field(
+                'user_enrolments',
+                'timeend',
+                $now - 60,
+                ['userid' => $userid]
+            ),
+        ];
+        foreach ($cases as $why => $leave) {
+            [$cm, $student, $assign, $course] = $this->build_environment();
+            $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+            [$classmate] = $this->seed_submissions($assign, $course, 1);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $classmate->id, 0);
+
+            $leave((int) $student->id, (int) $course->id);
+            unset_config('reconcile_cursor_participant', 'block_feedback_tracker');
+            $task = new reconcile_ledger();
+            (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, time() + 60);
+            (new \ReflectionMethod($task, 'sweep_departed_participants'))->invoke($task, [(int) $course->id], 500, 'participant');
+
+            $this->assertFalse(
+                $DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]),
+                "$why: the departed sweep deletes the row."
+            );
+            $this->assertNotContains(
+                (int) $student->id,
+                $this->sweep_dispatches($course, 'sweep_missing_rows', 'missing'),
+                "$why: the missing-row sweep does not rebuild it."
+            );
+            if ($why !== 'disabled instance') {
+                $this->assertTrue(
+                    $DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $classmate->id]),
+                    "$why: the active classmate stays."
+                );
+            }
+        }
+    }
+
+    /**
      * The orphan sweep deletes across windows without wrapping its cursor.
      *
      * It acts inside each window rather than dispatching, and its driving set
