@@ -107,7 +107,8 @@ final class upgrade_test extends \advanced_testcase {
             $queued[] = [(int) $row->courseid, (int) $row->groupid];
         }
         $this->assertSame([[1101, 7]], $queued);
-        $this->assertEquals(2026092500, get_config('block_feedback_tracker', 'version'));
+        // The step reached its savepoint (a later step may have moved the version on).
+        $this->assertGreaterThanOrEqual(2026092500, (int) get_config('block_feedback_tracker', 'version'));
     }
 
     /**
@@ -139,7 +140,8 @@ final class upgrade_test extends \advanced_testcase {
         $this->assertSame('0,1,2', get_config('block_feedback_tracker', 'bucket_thresholds_days'));
         $this->assertSame('5', get_config('block_feedback_tracker', 'calver'));
         $this->assertSame(0, $DB->count_records('block_feedback_tracker_queue'));
-        $this->assertEquals(2026092500, get_config('block_feedback_tracker', 'version'));
+        // The step reached its savepoint (a later step may have moved the version on).
+        $this->assertGreaterThanOrEqual(2026092500, (int) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

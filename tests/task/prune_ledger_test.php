@@ -131,6 +131,37 @@ final class prune_ledger_test extends \advanced_testcase {
     }
 
     /**
+     * A dismissed row never gets a response time, so it is pruned by when it
+     * was dismissed: an old dismissal goes, a recent one stays.
+     *
+     * @return void
+     */
+    public function test_dismissed_rows_past_the_window_are_deleted(): void {
+        global $DB;
+        $this->resetAfterTest();
+        set_config('retention_active', '1', 'block_feedback_tracker');
+        set_config('retention_days', '365', 'block_feedback_tracker');
+
+        $gen = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $now = time();
+        $old = $gen->create_ledger_row([
+            'timesubmitted' => $now - 500 * 86400,
+            'timedismissed' => $now - 400 * 86400,
+            'iscurrent' => 0,
+        ]);
+        $recent = $gen->create_ledger_row([
+            'timesubmitted' => $now - 500 * 86400,
+            'timedismissed' => $now - 10 * 86400,
+            'iscurrent' => 0,
+        ]);
+
+        (new prune_ledger())->execute();
+
+        $this->assertFalse($DB->record_exists('block_feedback_tracker_sub', ['id' => $old]));
+        $this->assertTrue($DB->record_exists('block_feedback_tracker_sub', ['id' => $recent]));
+    }
+
+    /**
      * A submission still awaiting feedback is outstanding work, and its age is
      * exactly the signal the plugin exists to surface. No age threshold may
      * reach it — deleting the oldest pending items would hide the worst of the

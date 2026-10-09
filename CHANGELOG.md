@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - Unreleased
 
 ### Added
+- **Pending rows that lost their response before the cycle model can be
+  dismissed.** Before measurement cycles, a student who saved an
+  already-graded submission again erased its response: the row went back to
+  pending with its clock running from that save, and the original hand-in time
+  is gone from Moodle. The new `cli/dismiss_legacy_pending.php` lists those
+  rows (cycle 0, no recorded mark, a live mark older than the hand-in, handed
+  in before this site's cycle-model upgrade, or before `--before`) and, with
+  `--run`, takes them out of the pending lists, the counts and every median
+  without inventing a response time. The ledger keeps the row with the new
+  `timedismissed` column; work the student saves afterwards opens a new cycle
+  and is tracked as usual. Each run is recorded in the recompute audit log
+  (reason `legacy_dismissal`), the column is part of the privacy export, and
+  retention prunes a dismissed row by its dismissal date, since it never gets
+  a response time.
 - **Work handed in again after a mark says so.** When a teacher grades but
   leaves the submission editable, and the student saves it again in the same
   attempt, Moodle asks for it to be graded again ("Graded - resubmitted") and

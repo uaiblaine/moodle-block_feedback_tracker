@@ -371,6 +371,7 @@ $string['privacy:metadata:sub:submissionstatus'] = 'Situação do envio (enviado
 $string['privacy:metadata:sub:timeallocated'] = 'Timestamp em que um avaliador foi alocado pela primeira vez a este envio, ou nulo.';
 $string['privacy:metadata:sub:timeallocmarker'] = 'Timestamp em que o avaliador atualmente alocado a este envio foi alocado, ou nulo.';
 $string['privacy:metadata:sub:timeclosed'] = 'Timestamp em que o feedback chegou ao estudante, ou nulo enquanto isso não aconteceu.';
+$string['privacy:metadata:sub:timedismissed'] = 'Quando um administrador retirou este envio dos indicadores de tempo de resposta sem medição, porque o tempo de resposta original se perdeu antes de o plugin registrar ciclos de avaliação.';
 $string['privacy:metadata:sub:timegraded'] = 'Timestamp da avaliação, ou nulo enquanto pendente.';
 $string['privacy:metadata:sub:timemarked'] = 'Timestamp em que a nota foi lançada, o que no fluxo de avaliação antecede a liberação.';
 $string['privacy:metadata:sub:timereleased'] = 'Timestamp em que o estado do fluxo de avaliação chegou a liberado, ou nulo.';
