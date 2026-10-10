@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - Unreleased
+
+### Changed
+- **One branch per Moodle version, each numbered in that version's range.**
+  `main` is now the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`:
+  `$plugin->requires` 5.2, `$plugin->supported = [502, 502]`, version
+  `2026042000`. `MOODLE_501_STABLE` is the Moodle 5.1 branch, version
+  `2025100600`. Each branch counts up inside its own range from here on.
+  Moodle 4.5 and 5.0 are no longer served by any branch: sites there stay on
+  1.1.0.
+- **The upgrade steps of 1.0.0 to 1.1.0 were removed.** They were numbered by
+  date, above every per-version range, so a site lowering its version to
+  switch would have run them all again. 1.1.0 (version `2026100902`) is the
+  last date-numbered release and still carries them. The upgrade now checks
+  the schema instead, and stops with instructions on a site that never
+  reached 1.1.0.
+
+### Upgrading from 1.1.0 or earlier
+The new version numbers are lower than 1.1.0's, so Moodle refuses the new code
+as a downgrade until the stored version is lowered:
+
+1. If the site is below 1.1.0, upgrade to 1.1.0 first (version `2026100902`).
+   Every earlier upgrade step runs there.
+2. Enable maintenance mode, then replace the plugin files with this release.
+3. Set the stored version just below this release, from the directory that
+   holds `admin/` (`public/` on Moodle 5.1 and later):
+   - Moodle 5.2 (`main`, `MOODLE_502_STABLE`):
+     `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2026041999`
+   - Moodle 5.1 (`MOODLE_501_STABLE`):
+     `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2025100599`
+4. Run `php admin/cli/upgrade.php`, then disable maintenance mode.
+
+Do step 3 only after step 2: with the 1.1.0 files still in place, a lowered
+version would make the next upgrade run every step of 1.1.0 again.
+
 ## [1.1.0] - Unreleased
 
 ### Changed
