@@ -27,8 +27,8 @@ jobs:
   # Single reusable-workflow call for this branch's one Moodle version
   # (version.php $plugin->supported). Named explicitly rather than detected
   # from the branch name, so a pull request from any branch tests the right
-  # core. On `main` this file makes one call per supported core branch — keep
-  # each branch's own form when resolving merges and cherry-picks.
+  # core. Every branch has this form with its own core; keep each branch's
+  # own when resolving merges and cherry-picks.
   ci-501:
     name: Moodle 5.01
     uses: moodle-an-hochschulen/moodle-workflows/.github/workflows/moodle-plugin-ci.yml@main
