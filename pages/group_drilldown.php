@@ -24,6 +24,8 @@
 
 require(__DIR__ . '/../../../config.php');
 
+use block_feedback_tracker\local\output\drilldown_cells;
+
 $courseid = required_param('courseid', PARAM_INT);
 $groupid = optional_param('groupid', 0, PARAM_INT);
 $bucket = optional_param('bucket', '', PARAM_ALPHA);
@@ -65,22 +67,21 @@ $usedays = $unit === 'business_days';
 
 $rows = [];
 foreach ($result['submissions'] as $s) {
+    $band = drilldown_cells::band((string) $s['slabucket']);
     $rows[] = [
         'student'      => (string) $s['studentname'],
         'activity'     => (string) $s['activityname'],
         'group'        => (string) ($s['groupname'] ?: '-'),
         'submitted'    => userdate((int) $s['timesubmitted']),
         'submittedts'  => (int) $s['timesubmitted'],
-        'waiting'      => $usedays
-            ? (int) $s['perceived_days'] . ' d'
-            : format_float((float) $s['waitinghours'], 1) . ' h',
+        'waiting'      => drilldown_cells::wait($usedays, (int) $s['perceived_days'], (float) $s['waitinghours']),
         'waitingnum'   => (float) $s['waitinghours'],
-        'effective'    => $usedays
-            ? (int) $s['effective_days'] . ' d'
-            : format_float((float) $s['effectivehours'], 1) . ' h',
+        'effective'    => drilldown_cells::wait($usedays, (int) $s['effective_days'], (float) $s['effectivehours']),
         'effectivenum' => (float) $s['effectivehours'],
-        'status'       => (string) $s['slabucket'],
-        'bucket'       => (string) $s['slabucket'],
+        'status'       => drilldown_cells::band_label($band),
+        'bucket'       => $band,
+        'resubmitted'  => (int) $s['resubmitted'] === 1,
+        'resubmittedtip' => drilldown_cells::resubmitted_tip((int) $s['previousmarktime']),
     ];
 }
 
@@ -110,6 +111,15 @@ foreach ($draftresult['submissions'] as $s) {
 
 $PAGE->requires->js_call_amd('block_feedback_tracker/pending_table', 'init');
 
+// Log this page view to the standard site log, once per navigation. The web
+// services the page uses do not log.
+$event = \block_feedback_tracker\event\report_viewed::create([
+    'context' => $context,
+    'courseid' => (int) $courseid,
+    'other' => ['report' => 'drilldown', 'groupid' => (int) $groupid],
+]);
+$event->trigger();
+
 echo $OUTPUT->header();
 echo $OUTPUT->render_from_template('block_feedback_tracker/drilldown', [
     'heading'   => get_string('drilldown_title', 'block_feedback_tracker'),
@@ -125,6 +135,7 @@ echo $OUTPUT->render_from_template('block_feedback_tracker/drilldown', [
         'status'    => get_string('drilldown_col_status', 'block_feedback_tracker'),
     ],
     'rows'      => $rows,
+    'resubmittedlabel' => get_string('status_resubmitted', 'block_feedback_tracker'),
     'pagingbar' => $OUTPUT->paging_bar($result['total'], $page, $perpage, $PAGE->url),
     'hasdrafts'    => !empty($draftrows),
     'draftheading' => get_string('drilldown_drafts_heading', 'block_feedback_tracker'),

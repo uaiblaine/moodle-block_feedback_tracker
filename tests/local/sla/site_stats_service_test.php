@@ -67,4 +67,106 @@ final class site_stats_service_test extends \advanced_testcase {
         $this->assertSame(1, (int) $row->numgraded);
         $this->assertEqualsWithDelta(8.0, (float) $row->medianh_eff, 0.01);
     }
+
+    /**
+     * Every field of the day row, across several rows and groups.
+     *
+     * All the columns come from one pass over the day's graded submissions, so
+     * each is pinned here: a change to that pass must not alter any of them
+     * unnoticed.
+     *
+     * @return void
+     */
+    public function test_the_whole_day_row_is_derived_from_the_graded_rows(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $gen->seed_default_platform_calendar();
+        set_config('sla_goal_hours', 24, 'block_feedback_tracker');
+
+        $coursea = (int) $this->getDataGenerator()->create_course()->id;
+        $courseb = (int) $this->getDataGenerator()->create_course()->id;
+        $tz = new \DateTimeZone('UTC');
+        $dt = new \DateTimeImmutable('2026-03-15 10:00:00', $tz);
+        $ts = $dt->getTimestamp();
+        $day = (int) $dt->format('Ymd');
+
+        /* Odd count so the median is the middle value under any tie-breaking
+         * rule. Four distinct (course, group) tuples over two courses that
+         * reuse the same group ids: keying the tuple set on groupid alone would
+         * count 2, and a single-course fixture could not tell the difference.
+         * Real sites reuse group 0 in every course.
+         *
+         * One value sits exactly on the 24-hour goal, because the comparison is
+         * `<=` and no fixture that avoids the boundary can tell that from `<`. */
+        $rows = [
+            [$coursea, 0, 4.0],
+            [$coursea, 1, 8.0],
+            [$courseb, 0, 12.0],
+            [$courseb, 1, 24.0],
+            [$coursea, 0, 100.0],
+        ];
+        foreach ($rows as [$courseid, $groupid, $eff]) {
+            $gen->create_ledger_row([
+                'courseid' => $courseid,
+                'groupid' => $groupid,
+                'submissionstatus' => submission_status::SUBMITTED,
+                'timegraded' => $ts,
+                'effectivehours' => $eff,
+                'waitinghours' => $eff + 1.0,
+            ]);
+        }
+
+        site_stats_service::recompute_for_day($day);
+
+        $row = $DB->get_record('block_feedback_tracker_site', ['day' => $day]);
+        $this->assertNotFalse($row);
+        $this->assertSame(5, (int) $row->numgraded);
+        $this->assertSame(4, (int) $row->numgroups, 'Four distinct (course, group) tuples contributed.');
+        $this->assertEqualsWithDelta(12.0, (float) $row->medianh_eff, 0.01);
+        $this->assertEqualsWithDelta(13.0, (float) $row->medianh_raw, 0.01, 'The raw clock has its own median.');
+        $this->assertEqualsWithDelta(
+            80.0,
+            (float) $row->compliance_pct_site,
+            0.01,
+            'Four of five within goal — the one sitting exactly on it counts.'
+        );
+        /* Asserted as numbers, not as an ordering: an ordering against the
+         * median also holds when the percentiles are computed from the raw
+         * clock instead of the effective one. The values follow
+         * stats::percentile(): rank = p/100 * (n - 1) over the sorted
+         * effective hours, interpolated linearly. */
+        $this->assertEqualsWithDelta(5.6, (float) $row->p10h_eff, 0.01);
+        $this->assertEqualsWithDelta(69.6, (float) $row->p90h_eff, 0.01);
+    }
+
+    /**
+     * A day with nothing graded writes a row of nulls, not a row of zeroes.
+     *
+     * Zero effective hours bands as the best possible result, so a quiet day
+     * recorded as zero would read as a site-wide flawless turnaround. The
+     * distinction lives in the `count ? … : null` arms, which only a day with
+     * no rows at all reaches.
+     *
+     * @return void
+     */
+    public function test_a_day_with_nothing_graded_records_nulls(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $gen->seed_default_platform_calendar();
+
+        $tz = new \DateTimeZone('UTC');
+        $day = (int) (new \DateTimeImmutable('2026-03-16 10:00:00', $tz))->format('Ymd');
+
+        site_stats_service::recompute_for_day($day);
+
+        $row = $DB->get_record('block_feedback_tracker_site', ['day' => $day]);
+        $this->assertNotFalse($row, 'The day is still recorded, so the absence is a fact rather than a gap.');
+        $this->assertSame(0, (int) $row->numgraded);
+        $this->assertSame(0, (int) $row->numgroups);
+        $this->assertNull($row->medianh_eff);
+        $this->assertNull($row->medianh_raw);
+        $this->assertNull($row->compliance_pct_site);
+    }
 }

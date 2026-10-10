@@ -45,21 +45,28 @@ class site_stats_service {
         global $DB;
         [$start, $end] = self::day_bounds($daydate);
 
-        $rows = $DB->get_records_select(
+        /* A recordset, because this reads every graded submission on the site
+         * for one day with no course scope to bound it. PostgreSQL streams it
+         * through a server-side cursor; the mysqli driver buffers the whole
+         * result (MYSQLI_STORE_RESULT), so on MariaDB only the record objects
+         * are saved. The two float arrays stay: a median needs every value, and
+         * SQL percentile_cont is PostgreSQL-only. */
+        $rs = $DB->get_recordset_select(
             'block_feedback_tracker_sub',
             'timegraded IS NOT NULL AND timegraded >= :start AND timegraded < :end'
                 . ' AND submissionstatus = :substatus',
             ['start' => $start, 'end' => $end, 'substatus' => submission_status::SUBMITTED],
             '',
-            'id, courseid, groupid, effectivehours, waitinghours'
+            'courseid, groupid, effectivehours, waitinghours'
         );
-        $count = count($rows);
+        $count = 0;
         $effs = [];
         $raws = [];
         $tuples = [];
         $compliant = 0;
         $slagoal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
-        foreach ($rows as $r) {
+        foreach ($rs as $r) {
+            $count++;
             $eff = (float) ($r->effectivehours ?? 0.0);
             $raw = (float) ($r->waitinghours ?? 0.0);
             $effs[] = $eff;
@@ -69,6 +76,7 @@ class site_stats_service {
                 $compliant++;
             }
         }
+        $rs->close();
 
         $existing = $DB->get_record(
             'block_feedback_tracker_site',

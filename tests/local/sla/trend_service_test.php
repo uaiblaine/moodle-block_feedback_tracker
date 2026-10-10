@@ -71,10 +71,9 @@ final class trend_service_test extends \advanced_testcase {
     }
 
     /**
-     * recompute_day() must write one row per (course, group) — not collapse
-     * to a single group per course. Regression: the previous get_records_sql()
-     * keyed the result by courseid (non-unique), silently dropping all but one
-     * group of each course (and emitting a "Duplicate value" debugging notice).
+     * recompute_day() writes one row per (course, group). A get_records_sql()
+     * keyed by courseid alone would keep one group per course and raise a
+     * "Duplicate value" debugging notice.
      *
      * @return void
      */

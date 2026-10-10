@@ -1,10 +1,15 @@
 <?xml version="1.0"?>
+<!--
+    The three libraries ship concatenated in one bundle, assembled as js/vendor/README.md
+    describes. Bundle SHA-384: sha384-3YsbCSP54Ouy0vZww7yj9uTpF2K2PTpnu4D6OfR63Xk53KNRFLdRufSZzdSMXb1P
+-->
 <libraries>
     <library>
-        <location>js/vendor/bft-vendor-10.29.2-3.1.1.min.js</location>
+        <!-- preact@10.29.8 dist/preact.min.js: sha384-umzx2g5uHatVsBNHavak2lu2T+zmk3Y9Rsi0o/N7Gi+1QTcpVScRMQaazAnC3TqX -->
+        <location>js/vendor/bft-vendor-10.29.8-3.1.1.min.js</location>
         <name>Preact</name>
         <description>Fast 3kB React alternative with the same modern API. Provides the vnode + render runtime that the plugin's React-shaped components target.</description>
-        <version>10.29.2</version>
+        <version>10.29.8</version>
         <license>MIT</license>
         <repository>https://github.com/preactjs/preact</repository>
         <copyrights>
@@ -13,10 +18,11 @@
         <customised/>
     </library>
     <library>
-        <location>js/vendor/bft-vendor-10.29.2-3.1.1.min.js</location>
+        <!-- preact@10.29.8 hooks/dist/hooks.umd.js: sha384-5BuvBL8F0gboRla2VFizWuUXbA44J2dFYJZZGhPD7/8zlTbKMJAPtgIerv7vIpPw -->
+        <location>js/vendor/bft-vendor-10.29.8-3.1.1.min.js</location>
         <name>Preact hooks</name>
-        <description>Hooks add-on for Preact: useState, useEffect, useReducer, useMemo, useRef, useContext, etc. Bundled with the Preact 10.29.2 release.</description>
-        <version>10.29.2</version>
+        <description>Hooks add-on for Preact: useState, useEffect, useReducer, useMemo, useRef, useContext, etc. Bundled with the Preact 10.29.8 release.</description>
+        <version>10.29.8</version>
         <license>MIT</license>
         <repository>https://github.com/preactjs/preact</repository>
         <copyrights>
@@ -25,7 +31,8 @@
         <customised/>
     </library>
     <library>
-        <location>js/vendor/bft-vendor-10.29.2-3.1.1.min.js</location>
+        <!-- htm@3.1.1 dist/htm.js: sha384-iPOMe3E8jVgp/PepuDy7lJvw7L/QP97X5POfi+X1EVyDVQi8Kuv/MooNVB5OFXVN -->
+        <location>js/vendor/bft-vendor-10.29.8-3.1.1.min.js</location>
         <name>htm</name>
         <description>JSX-like tagged-template syntax that compiles to vnodes at runtime. Lets components use familiar markup without a JSX build step.</description>
         <version>3.1.1</version>

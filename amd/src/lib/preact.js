@@ -19,9 +19,9 @@
  * The bundle at js/vendor/bft-vendor-*.min.js sets `window.bftPreact`,
  * `window.bftPreactHooks`, and `window.bftHtm`. This module is the only
  * place those globals are read; everything else in the plugin imports
- * `h`, `render`, `html`, hooks, etc. from here. That way the migration to
- * Moodle 5.2's native React (`import React from 'react'`) is a one-file
- * change.
+ * `h`, `render`, `html`, hooks, etc. from here, so moving to another
+ * implementation (e.g. Moodle 5.2's native React) changes the imports in
+ * this file only.
  *
  * @module    block_feedback_tracker/lib/preact
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

@@ -14,10 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Priority card — used three-up on the dashboard for "GRADE NOW · PICKED
- * FOR YOU" (top-3 urgent pending submissions across all courses).
+ * Priority card — used three-up on the dashboard for "Grade now · picked
+ * for you" (the most urgent pending submissions across the dashboard's
+ * courses).
  *
- * Driven by the existing get_grader_priority_list WS shape.
+ * Takes one row of the get_grader_priority_list WS response.
  *
  * @module    block_feedback_tracker/components/PriorityCard
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -26,7 +27,7 @@
 
 import {html} from 'block_feedback_tracker/lib/preact';
 import Badge from 'block_feedback_tracker/components/Badge';
-import {formatHours, formatDays, usesDays} from 'block_feedback_tracker/lib/format';
+import {formatHours, formatDays, formatDate, usesDays} from 'block_feedback_tracker/lib/format';
 
 /**
  * Initials from a full name; falls back to "??" on empty input.
@@ -46,9 +47,8 @@ const initialsOf = (name) => {
 };
 
 /**
- * Perceived calendar wait as "Nd". Uses the server's date-based elapsed
- * calendar days (perceived_days) — the previous heuristic derived it from
- * effective hours and drifted badly on long waits.
+ * Perceived calendar wait as "Nd", from the server's date-based
+ * perceived_days; never derive days from hours.
  *
  * @param {number|null|undefined} days
  * @returns {string}
@@ -59,12 +59,11 @@ const perceivedDays = (days) => {
 };
 
 /**
- * Label for a priority card's band badge. The priority list is pending work,
- * so it uses the Waiting / Attention / Priority vocabulary shared with the
- * group-card stat tiles rather than the score-gauge words — "Excellent" /
- * "Good" never read right on a "grade now" card and stay reserved for the
- * score gauge. The band slug still drives the badge colour; only the text
- * changes. Falls back to the score band label for non-bucket bands.
+ * Label for a priority card's band badge. The list is pending work, so it
+ * uses the Waiting / Attention / Priority strings of the group-card stat
+ * tiles; the score-gauge words ("Excellent", "Good") stay on the gauge. The
+ * band slug still drives the badge colour. Other slugs fall back to the
+ * score band label.
  *
  * @param {string} band   SLA bucket slug (excellent|good|regular|critical|…).
  * @param {object} i18n   Label bundle.
@@ -78,6 +77,21 @@ const priorityLabel = (band, i18n) => {
         case 'excellent': return i18n.card_pending || '';
         default: return (i18n.bands || {})[band] || '';
     }
+};
+
+/**
+ * The resubmitted chip's explanation, dated with the earlier mark when known.
+ *
+ * @param {number} previousmarktime Epoch of the earlier mark, 0 when unknown.
+ * @param {object} i18n
+ * @returns {string}
+ */
+const resubmittedTip = (previousmarktime, i18n) => {
+    const when = Number(previousmarktime) || 0;
+    if (when > 0) {
+        return String(i18n.status_resubmitted_help || '').replace('{$a}', formatDate(when));
+    }
+    return i18n.status_resubmitted_help_nodate || '';
 };
 
 /**
@@ -111,6 +125,13 @@ export default function PriorityCard({idx, submission, i18n, config}) {
             <header class="bft-priority-header">
                 <span class="bft-priority-idx">#${idx}</span>
                 <${Badge} band=${band} label=${bandLabel} />
+                ${Number(submission.resubmitted) === 1 && html`
+                    <span class="bft-badge bft-badge-resubmitted"
+                          title=${resubmittedTip(submission.previousmarktime, i18n)}>
+                        ${i18n.status_resubmitted || 'Resubmitted'}
+                        <span class="bft-sr-only">${resubmittedTip(submission.previousmarktime, i18n)}</span>
+                    </span>
+                `}
             </header>
             <div class="bft-priority-title">${submission.activityname || ''}</div>
             <div class="bft-priority-course">${(submission.coursename || '').toUpperCase()}</div>

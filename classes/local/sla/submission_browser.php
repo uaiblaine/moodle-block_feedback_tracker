@@ -41,13 +41,99 @@ namespace block_feedback_tracker\local\sla;
 class submission_browser {
     /** Pending mode: submitted work awaiting feedback (timegraded IS NULL). */
     public const MODE_PENDING = 'pending';
-    /** Graded mode: submitted work already returned (timegraded IS NOT NULL). */
+    /**
+     * Graded mode: submitted work already returned (timegraded IS NOT NULL).
+     *
+     * All-time on purpose, unlike the windowed graded stats in rollup_service:
+     * this tab is an audit of everything a teacher returned, while the windowed
+     * stats feed the score and must stay comparable across groups.
+     */
     public const MODE_GRADED = 'graded';
     /** Draft mode: saved-but-not-submitted work (never counts toward the SLA). */
     public const MODE_DRAFT = 'draft';
 
     /** Hard upper bound on a page size to discourage all-the-things reads. */
     public const MAX_PAGE_SIZE = 200;
+
+    /**
+     * Which of these rows currently have a grade the gradebook hides from the
+     * student, keyed by ledger row id.
+     *
+     * One bounded query for the whole page rather than a join on the row
+     * query, which is also used for the count and would carry the cost twice.
+     * The over-fetch is deliberate: matching item ids against user ids
+     * separately admits a few pairs that are not on this page, and discarding
+     * those in PHP is cheaper than a composite predicate.
+     *
+     * @param array $rows Rows from the page query; each needs id, iteminstance, userid.
+     * @return array Ledger row id => 1, for the hidden ones only.
+     */
+    private static function hidden_from_student(array $rows): array {
+        global $CFG, $DB;
+
+        // See gradebook_response::for_assign_user() — the same constant, the
+        // same reason: gradelib is not loaded on every request that gets here.
+        require_once($CFG->libdir . '/grade/constants.php');
+        if (empty($rows)) {
+            return [];
+        }
+        $assignids = [];
+        $userids = [];
+        foreach ($rows as $r) {
+            $assignids[(int) $r->iteminstance] = true;
+            $userids[(int) $r->userid] = true;
+        }
+        [$asql, $aparams] = $DB->get_in_or_equal(array_keys($assignids), SQL_PARAMS_NAMED, 'ga');
+        [$usql, $uparams] = $DB->get_in_or_equal(array_keys($userids), SQL_PARAMS_NAMED, 'gu');
+        $now = time();
+        $grades = $DB->get_records_sql(
+            "SELECT gg.id, gi.iteminstance, gg.userid, gg.hidden AS gradehidden, gi.hidden AS itemhidden
+               FROM {grade_items} gi
+               JOIN {grade_grades} gg ON gg.itemid = gi.id
+              WHERE gi.itemtype = :itemtype
+                AND gi.itemmodule = :itemmodule
+                AND gi.itemnumber = 0
+                AND gi.gradetype <> :nograde
+                AND (gg.finalgrade IS NOT NULL OR " . $DB->sql_isnotempty('gg', 'gg.feedback', true, true) . ")
+                AND gi.iteminstance $asql
+                AND gg.userid $usql",
+            $aparams + $uparams + [
+                'itemtype' => 'mod',
+                'itemmodule' => 'assign',
+                'nograde' => GRADE_TYPE_NONE,
+            ]
+        );
+        $hidden = [];
+        foreach ($grades as $g) {
+            $ishidden = self::flag_hides((int) $g->gradehidden, $now)
+                || self::flag_hides((int) $g->itemhidden, $now);
+            if ($ishidden) {
+                $hidden[(int) $g->iteminstance . ':' . (int) $g->userid] = true;
+            }
+        }
+        $out = [];
+        foreach ($rows as $r) {
+            $key = (int) $r->iteminstance . ':' . (int) $r->userid;
+            if (isset($hidden[$key])) {
+                $out[(int) $r->id] = 1;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Whether one of core's overloaded `hidden` flags is hiding right now.
+     *
+     * 1 means hidden outright; anything larger is a hide-until instant that
+     * stops hiding once it passes.
+     *
+     * @param int $flag
+     * @param int $now
+     * @return bool
+     */
+    private static function flag_hides(int $flag, int $now): bool {
+        return $flag === 1 || ($flag > 1 && $flag > $now);
+    }
 
     /**
      * Browse the ledger for one course as seen by one user.
@@ -77,6 +163,8 @@ class submission_browser {
         $order = strtolower((string) ($opts['order'] ?? '')) === 'asc' ? 'ASC' : 'DESC';
         $page = max(0, (int) ($opts['page'] ?? 0));
         $perpage = max(1, min((int) ($opts['perpage'] ?? 25), self::MAX_PAGE_SIZE));
+        // One reference time for the counts, the filter, the order and the badges.
+        $now = time();
 
         // Respect Moodle group mode: SEPARATEGROUPS without accessallgroups
         // must not leak rows from groups the user can't see.
@@ -106,24 +194,51 @@ class submission_browser {
         );
 
         // Distribution counts over the base set (band/bucket filter excluded).
-        $counts = self::counts($from, $basewhere, $baseparams, $mode);
+        $counts = self::counts($from, $basewhere, $baseparams, $mode, $now);
+
+        // Graded results use a three-band set (Excellent / Good / Regular):
+        // critical results are rare and fold into Regular, mirroring the
+        // academic-days strip. The critical band is kept (as zero) so the WS
+        // return shape is unchanged.
+        if ($mode === self::MODE_GRADED) {
+            $counts[bucket::REGULAR] += $counts[bucket::CRITICAL];
+            $counts[bucket::CRITICAL] = 0;
+        }
 
         // Layer the band/bucket filter for the displayed rows + their total.
-        [$rowswhere, $rowsparams] = self::apply_band_filter($basewhere, $baseparams, $mode, $band, $bucket);
+        [$rowswhere, $rowsparams] = self::apply_band_filter($basewhere, $baseparams, $mode, $band, $bucket, $now);
 
         $total = (int) $DB->count_records_sql("SELECT COUNT(1) $from WHERE $rowswhere", $rowsparams);
 
-        $select = "SELECT sub.id, sub.cmid, sub.userid, sub.groupid, sub.timesubmitted,
-                          sub.timegraded, sub.waitinghours, sub.effectivehours, sub.effectivedays,
+        /* The row query alone also joins the module context, whose columns
+         * preload the contexts the activity names are formatted in; the name
+         * fields are the ones fullname() reads. */
+        $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
+        $namefields = \core_user\fields::for_name()->get_sql('u')->selects;
+        $select = "SELECT sub.id, sub.cmid, sub.userid, sub.iteminstance, sub.groupid, sub.timesubmitted,
+                          sub.attemptnumber, sub.cycle,
+                          sub.timegraded, sub.timemarked, sub.timeclosed,
+                          sub.closedsource,
+                          sub.queuehours, sub.allochours,
+                          sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
-                          u.firstname, u.lastname, a.name AS activityname, g.name AS groupname";
-        $orderby = self::order_by($mode, $sort, $order);
+                          a.name AS activityname, g.name AS groupname,
+                          $ctxfields
+                          $namefields";
+        $ctxjoin = "LEFT JOIN {context} ctx ON ctx.instanceid = sub.cmid AND ctx.contextlevel = :bftctxmodule";
+        $orderby = self::order_by($mode, $sort, $order, $now);
         $rows = $DB->get_records_sql(
-            "$select $from WHERE $rowswhere ORDER BY $orderby",
-            $rowsparams,
+            "$select $from $ctxjoin WHERE $rowswhere ORDER BY $orderby",
+            $rowsparams + ['bftctxmodule' => CONTEXT_MODULE],
             $page * $perpage,
             $perpage
         );
+        foreach ($rows as $r) {
+            if ($r->ctxid !== null) {
+                \context_helper::preload_from_record($r);
+            }
+        }
+        $names = self::display_names($rows, $courseid);
 
         [$goal, $crit] = self::band_bounds();
         // Banding follows the global display unit: business-days mode
@@ -131,38 +246,49 @@ class submission_browser {
         // (same comparisons as the filter + distribution counts), hours mode
         // keeps the stored slabucket + hour bounds.
         $usedays = bucket::use_day_thresholds();
-        [$daygoal, , $daycrit] = bucket::parse_thresholds_days();
+        [$daygoal, $daycrit] = self::band_bounds_days();
+        $hiddennow = self::hidden_from_student($rows);
+        $previousmarks = resubmission::previous_marks($rows);
         $out = [];
         foreach ($rows as $r) {
             $eff = $r->effectivehours !== null ? (float) $r->effectivehours : 0.0;
             $gradedrow = $r->timegraded !== null;
             // Date-based elapsed days for the "business days" display unit;
             // pending rows (timegraded null) elapse up to now.
-            $t2 = $gradedrow ? (int) $r->timegraded : time();
+            $t2 = $gradedrow ? (int) $r->timegraded : $now;
             $days = \block_feedback_tracker\local\calendar\day_counter::between((int) $r->timesubmitted, $t2);
             $storeddays = $r->effectivedays !== null ? (float) $r->effectivedays : null;
-            // Displayed result band. A graded row freezes its effective
-            // measure at grading time, so its band is always knowable: when
-            // the stored value still resolves to the "pending" sentinel (a
-            // legacy row whose effectivedays column was never backfilled, or a
-            // row graded entirely within a paused window), reclassify from the
-            // frozen effective measure so a graded row never shows "pending".
+            /* A row not yet backfilled is banded on the estimate the counts
+             * and the band filter fall back to, so its badge sits in the band
+             * that counts it. */
+            $bandingdays = $storeddays ?? self::estimated_days($r, $mode, $now);
+            // Displayed result band. When a graded row's stored value still
+            // resolves to the "pending" sentinel (a legacy row: effectivedays
+            // never backfilled, or slabucket left at its column default), it is
+            // reclassified so a graded row never shows "pending": from its
+            // effective hours, or in business-days mode from the day estimate
+            // the graded counts use for it.
             $slabucket = $usedays
                 ? bucket::for_effective_days($storeddays)
                 : (string) $r->slabucket;
             if ($gradedrow && $slabucket === bucket::PENDING) {
                 $slabucket = $usedays
-                    ? bucket::for_effective_days((float) $days['business'])
+                    ? bucket::for_effective_days($bandingdays)
                     : bucket::for_effective($eff);
+            }
+            // Critical graded results fold into Regular — the three-band result
+            // set (Excellent / Good / Regular) the academic-days strip uses.
+            if ($mode === self::MODE_GRADED && $slabucket === bucket::CRITICAL) {
+                $slabucket = bucket::REGULAR;
             }
             $out[] = [
                 'submissionid'     => (int) $r->id,
                 'cmid'             => (int) $r->cmid,
                 'userid'           => (int) $r->userid,
-                'studentname'      => trim($r->firstname . ' ' . $r->lastname),
-                'activityname'     => (string) ($r->activityname ?? ''),
+                'studentname'      => fullname($r),
+                'activityname'     => $names['activities'][(int) $r->cmid] ?? '',
                 'groupid'          => (int) $r->groupid,
-                'groupname'        => (string) ($r->groupname ?? ''),
+                'groupname'        => $names['groups'][(int) $r->groupid] ?? '',
                 'timesubmitted'    => (int) $r->timesubmitted,
                 'timegraded'       => $r->timegraded !== null ? (int) $r->timegraded : 0,
                 'waitinghours'     => $r->waitinghours !== null ? (float) $r->waitinghours : 0.0,
@@ -170,17 +296,130 @@ class submission_browser {
                 'effective_days'   => $days['business'],
                 'perceived_days'   => $days['calendar'],
                 'slabucket'        => $slabucket,
-                // Pending band using the same bounds as the distribution
-                // counts + band filter so the per-row Status badge can never
-                // disagree with the bar.
+                // Pending band using the same bounds and the same day measure as
+                // the distribution counts + band filter, so the per-row Status
+                // badge cannot disagree with the bar.
                 'pendingband'      => $usedays
-                    ? self::pending_band_days($storeddays, $daygoal, $daycrit)
+                    ? self::pending_band_days($bandingdays, $daygoal, $daycrit)
                     : self::pending_band($eff, $goal, $crit),
                 'submissionstatus' => (string) $r->submissionstatus,
+                /* closedsource and gradehidden are disclosed like awaitingrelease:
+                 * a cycle closed from the gradebook leaves nothing on the
+                 * activity's grading screen to explain it, and a grade the
+                 * gradebook hides has not reached the student yet. */
+                'closedsource'     => (string) ($r->closedsource ?? ''),
+                /* Read live from the gradebook, never stored in the ledger: core
+                 * fires no event when a grade is hidden or un-hidden, and a
+                 * hide-until date expires by itself. */
+                'gradehidden'      => (int) ($hiddennow[(int) $r->id] ?? 0),
+                /* A mark the marking workflow has not released is invisible to
+                 * the student, and releasing often needs a capability the marker
+                 * lacks (mod/assign:releasegrades), so it is flagged rather than
+                 * shown as plain "graded". */
+                'awaitingrelease'  => (int) (
+                    $r->timemarked !== null && $r->timeclosed === null
+                ),
+                /* Core's "Graded - resubmitted": the attempt already carried a
+                 * mark when this work was handed in, so the wait is measured
+                 * from the re-save and the teacher is looking at it again. */
+                'resubmitted'      => (int) array_key_exists((int) $r->id, $previousmarks),
+                'previousmarktime' => (int) ($previousmarks[(int) $r->id] ?? 0),
+                /* The response interval split by owner: hand-in to first
+                 * allocation, then the current marker's turnaround. Null where
+                 * the row has no measurement. */
+                'queuehours'       => $r->queuehours !== null ? (float) $r->queuehours : null,
+                'allochours'       => $r->allochours !== null ? (float) $r->allochours : null,
             ];
         }
 
         return ['total' => $total, 'counts' => $counts, 'rows' => $out];
+    }
+
+    /**
+     * Activity and group names of a page of rows, each formatted once.
+     *
+     * Names are filtered (multilang and other string filters) but not escaped:
+     * the PARAM_TEXT fields of the web services, the report's text nodes and
+     * the drilldown's double stashes all escape for themselves. An activity
+     * name is formatted in its module context, where filters can be switched
+     * off per activity, and a group name in the course context.
+     *
+     * @param array $rows Page rows; each needs cmid, activityname, groupid and groupname.
+     * @param int $courseid The course every row belongs to.
+     * @return array{activities: array<int, string>, groups: array<int, string>} Plain
+     *         names keyed by course module id and by group id.
+     */
+    private static function display_names(array $rows, int $courseid): array {
+        $activities = [];
+        $groups = [];
+        $courseoptions = null;
+        foreach ($rows as $r) {
+            $cmid = (int) $r->cmid;
+            if (!isset($activities[$cmid])) {
+                $activities[$cmid] = format_string(
+                    (string) ($r->activityname ?? ''),
+                    true,
+                    ['context' => \context_module::instance($cmid), 'escape' => false]
+                );
+            }
+            $groupid = (int) $r->groupid;
+            if ($r->groupname !== null && !isset($groups[$groupid])) {
+                $courseoptions ??= ['context' => \context_course::instance($courseid), 'escape' => false];
+                $groups[$groupid] = format_string((string) $r->groupname, true, $courseoptions);
+            }
+        }
+        return ['activities' => $activities, 'groups' => $groups];
+    }
+
+    /**
+     * SQL expression for a row's elapsed-day count, with a fallback for rows
+     * whose `effectivedays` was never backfilled.
+     *
+     * Without a fallback every day-mode predicate compares against NULL, so an
+     * un-backfilled row leaves every band while still counting in the total.
+     *
+     * The fallback measures the same interval the stored column would have:
+     * submission to grading for graded rows, submission to now for pending
+     * ones (which is what `pending_recomputer` writes). It counts calendar
+     * days, because the business-day engine has no SQL equivalent; calendar
+     * days are always >= business days, so a row can only land in a worse
+     * band, never be reported as better than it is.
+     *
+     * Once the `backfill_effectivedays` task completes no row reaches the
+     * fallback. {@see self::estimated_days()} is its PHP twin, which the row
+     * badges use, and the two must stay in step.
+     *
+     * @param string $mode Browse mode.
+     * @param int $now Reference timestamp for pending rows.
+     * @return string SQL expression usable anywhere sub.effectivedays was.
+     */
+    private static function days_expr(string $mode, int $now): string {
+        /* Clamped at zero: a legacy row written before the cycle model can hold
+         * timegraded < timesubmitted. CASE rather than GREATEST, which core
+         * never uses and SQL Server lacks before 2022. */
+        if ($mode === self::MODE_GRADED) {
+            $raw = 'COALESCE(sub.effectivedays, (sub.timegraded - sub.timesubmitted) / 86400.0)';
+        } else {
+            // The reference time is server-generated, so inlining it keeps the
+            // expression free of parameters the four call sites would each rebind.
+            $raw = sprintf('COALESCE(sub.effectivedays, (%d - sub.timesubmitted) / 86400.0)', $now);
+        }
+        return sprintf('(CASE WHEN %s < 0 THEN 0 ELSE %s END)', $raw, $raw);
+    }
+
+    /**
+     * The fallback of {@see self::days_expr()} for one row, in PHP: elapsed
+     * calendar days from hand-in to grading in graded mode, or to now
+     * otherwise, clamped at zero.
+     *
+     * @param \stdClass $r Row carrying timesubmitted and timegraded.
+     * @param string $mode Browse mode.
+     * @param int $now The reference time days_expr() was given.
+     * @return float
+     */
+    private static function estimated_days(\stdClass $r, string $mode, int $now): float {
+        $end = $mode === self::MODE_GRADED ? (int) $r->timegraded : $now;
+        return max(0.0, ($end - (int) $r->timesubmitted) / 86400.0);
     }
 
     /**
@@ -207,15 +446,21 @@ class submission_browser {
         $where = 'sub.courseid = :courseid';
         $params = ['courseid' => $courseid];
 
+        /* Open work (pending, draft) is gated on the live state of the attempt:
+         * `islatest` mirrors assign_submission.latest, on which core gates its
+         * own needs-grading reads, and `iscurrent` keeps one live observation
+         * per attempt once a resubmission opened a later cycle. The graded side
+         * keeps every cycle: each is a genuine response event. */
         if ($mode === self::MODE_DRAFT) {
             $where .= ' AND sub.submissionstatus = :substatus';
+            $where .= ' AND sub.islatest = 1 AND sub.iscurrent = 1';
             $params['substatus'] = submission_status::DRAFT;
         } else {
             $where .= ' AND sub.submissionstatus = :substatus';
             $params['substatus'] = submission_status::SUBMITTED;
             $where .= $mode === self::MODE_GRADED
                 ? ' AND sub.timegraded IS NOT NULL'
-                : ' AND sub.timegraded IS NULL';
+                : ' AND sub.timegraded IS NULL AND sub.islatest = 1 AND sub.iscurrent = 1';
         }
 
         if ($visibleids !== null) {
@@ -228,10 +473,12 @@ class submission_browser {
             $params['groupid'] = $groupid;
         }
         if ($search !== '') {
-            $fullname = $DB->sql_concat('u.firstname', "' '", 'u.lastname');
+            // The student name is matched as fullname() displays it, so a needle copied from the table finds its row.
+            [$fullname, $fullnameparams] = \core_user\fields::get_sql_fullname('u');
             $like = $DB->sql_like_escape($search);
             $where .= ' AND (' . $DB->sql_like($fullname, ':searchname', false)
                 . ' OR ' . $DB->sql_like('a.name', ':searchact', false) . ')';
+            $params += $fullnameparams;
             $params['searchname'] = '%' . $like . '%';
             $params['searchact'] = '%' . $like . '%';
         }
@@ -248,6 +495,7 @@ class submission_browser {
      * @param string $mode Browse mode.
      * @param string $band aguardando|atencao|prioridade (pending/draft only).
      * @param string $bucket excellent|good|regular|critical (slabucket).
+     * @param int $now Reference time for the day measure of open rows.
      * @return array{0:string, 1:array<string, mixed>}
      */
     private static function apply_band_filter(
@@ -255,7 +503,8 @@ class submission_browser {
         array $baseparams,
         string $mode,
         string $band,
-        string $bucket
+        string $bucket,
+        int $now
     ): array {
         $where = $basewhere;
         $params = $baseparams;
@@ -269,22 +518,25 @@ class submission_browser {
             // bucket::for_effective_days).
             if ($bucket !== '') {
                 if ($usedays) {
-                    [$d1, $d2, $d3] = bucket::parse_thresholds_days();
+                    [$d1, $d2] = bucket::parse_thresholds_days();
+                    $days = self::days_expr(self::MODE_GRADED, $now);
                     if ($bucket === bucket::EXCELLENT) {
-                        $where .= ' AND sub.effectivedays <= :bktda';
+                        $where .= " AND $days <= :bktda";
                         $params['bktda'] = $d1;
                     } else if ($bucket === bucket::GOOD) {
-                        $where .= ' AND sub.effectivedays > :bktda AND sub.effectivedays <= :bktdb';
+                        $where .= " AND $days > :bktda AND $days <= :bktdb";
                         $params['bktda'] = $d1;
                         $params['bktdb'] = $d2;
-                    } else if ($bucket === bucket::REGULAR) {
-                        $where .= ' AND sub.effectivedays > :bktda AND sub.effectivedays <= :bktdb';
+                    } else if ($bucket === bucket::REGULAR || $bucket === bucket::CRITICAL) {
+                        // Regular folds in critical: everything past the Good ceiling.
+                        $where .= " AND $days > :bktda";
                         $params['bktda'] = $d2;
-                        $params['bktdb'] = $d3;
-                    } else if ($bucket === bucket::CRITICAL) {
-                        $where .= ' AND sub.effectivedays > :bktda';
-                        $params['bktda'] = $d3;
                     }
+                } else if ($bucket === bucket::REGULAR || $bucket === bucket::CRITICAL) {
+                    // Regular folds in critical (three-band graded result).
+                    $where .= ' AND sub.slabucket IN (:bucketr, :bucketc)';
+                    $params['bucketr'] = bucket::REGULAR;
+                    $params['bucketc'] = bucket::CRITICAL;
                 } else {
                     $where .= ' AND sub.slabucket = :bucket';
                     $params['bucket'] = $bucket;
@@ -299,16 +551,17 @@ class submission_browser {
         // inclusive bounds; hours mode keeps the effective-hours ranges.
         if ($band !== '') {
             if ($usedays) {
-                [$dgoal, , $dcrit] = bucket::parse_thresholds_days();
+                [$dgoal, $dcrit] = self::band_bounds_days();
+                $days = self::days_expr($mode, $now);
                 if ($band === 'prioridade') {
-                    $where .= ' AND sub.effectivedays > :bandcrit';
+                    $where .= " AND $days > :bandcrit";
                     $params['bandcrit'] = $dcrit;
                 } else if ($band === 'atencao') {
-                    $where .= ' AND sub.effectivedays > :bandgoal AND sub.effectivedays <= :bandcrit';
+                    $where .= " AND $days > :bandgoal AND $days <= :bandcrit";
                     $params['bandgoal'] = $dgoal;
                     $params['bandcrit'] = $dcrit;
                 } else if ($band === 'aguardando') {
-                    $where .= ' AND sub.effectivedays <= :bandgoal';
+                    $where .= " AND $days <= :bandgoal";
                     $params['bandgoal'] = $dgoal;
                 }
             } else {
@@ -335,16 +588,18 @@ class submission_browser {
 
     /**
      * Distribution counts over the base (band-unfiltered) set. Pending / draft
-     * count the effective-hours bands (aguardando/atencao/prioridade); graded
-     * counts the slabucket result bands.
+     * count the wait bands (aguardando/atencao/prioridade); graded counts the
+     * result bands. Hours mode uses effective hours and the stored slabucket,
+     * business-days mode the day ruler over days_expr().
      *
      * @param string $from Shared FROM + JOIN clause.
      * @param string $basewhere Base predicate.
      * @param array $baseparams Base params.
      * @param string $mode Browse mode.
+     * @param int $now Reference time for the day measure of open rows.
      * @return array<string, int>
      */
-    private static function counts(string $from, string $basewhere, array $baseparams, string $mode): array {
+    private static function counts(string $from, string $basewhere, array $baseparams, string $mode, int $now): array {
         global $DB;
 
         $usedays = bucket::use_day_thresholds();
@@ -354,13 +609,14 @@ class submission_browser {
                 // Day-ruler result bands over the stored elapsed-day count
                 // (inclusive bounds, mirroring bucket::for_effective_days).
                 [$d1, $d2, $d3] = bucket::parse_thresholds_days();
+                $days = self::days_expr(self::MODE_GRADED, $now);
                 $sql = "SELECT
-                            SUM(CASE WHEN sub.effectivedays <= :d1a THEN 1 ELSE 0 END) AS excellent,
-                            SUM(CASE WHEN sub.effectivedays > :d1b AND sub.effectivedays <= :d2a THEN 1 ELSE 0 END)
+                            SUM(CASE WHEN $days <= :d1a THEN 1 ELSE 0 END) AS excellent,
+                            SUM(CASE WHEN $days > :d1b AND $days <= :d2a THEN 1 ELSE 0 END)
                                 AS good,
-                            SUM(CASE WHEN sub.effectivedays > :d2b AND sub.effectivedays <= :d3a THEN 1 ELSE 0 END)
+                            SUM(CASE WHEN $days > :d2b AND $days <= :d3a THEN 1 ELSE 0 END)
                                 AS regular,
-                            SUM(CASE WHEN sub.effectivedays > :d3b THEN 1 ELSE 0 END) AS critical
+                            SUM(CASE WHEN $days > :d3b THEN 1 ELSE 0 END) AS critical
                           $from WHERE $basewhere";
                 $params = $baseparams
                     + ['d1a' => $d1, 'd1b' => $d1, 'd2a' => $d2, 'd2b' => $d2, 'd3a' => $d3, 'd3b' => $d3];
@@ -385,12 +641,13 @@ class submission_browser {
         }
 
         if ($usedays) {
-            [$dgoal, , $dcrit] = bucket::parse_thresholds_days();
+            [$dgoal, $dcrit] = self::band_bounds_days();
+            $days = self::days_expr($mode, $now);
             $sql = "SELECT
-                        SUM(CASE WHEN sub.effectivedays <= :goala THEN 1 ELSE 0 END) AS aguardando,
-                        SUM(CASE WHEN sub.effectivedays > :goalb AND sub.effectivedays <= :critb THEN 1 ELSE 0 END)
+                        SUM(CASE WHEN $days <= :goala THEN 1 ELSE 0 END) AS aguardando,
+                        SUM(CASE WHEN $days > :goalb AND $days <= :critb THEN 1 ELSE 0 END)
                             AS atencao,
-                        SUM(CASE WHEN sub.effectivedays > :crita THEN 1 ELSE 0 END) AS prioridade
+                        SUM(CASE WHEN $days > :crita THEN 1 ELSE 0 END) AS prioridade
                       $from WHERE $basewhere";
             $params = $baseparams + ['goala' => $dgoal, 'goalb' => $dgoal, 'crita' => $dcrit, 'critb' => $dcrit];
             $agg = $DB->get_record_sql($sql, $params);
@@ -425,9 +682,10 @@ class submission_browser {
      * @param string $mode Browse mode.
      * @param string $sort Column key or legacy sort key.
      * @param string $order 'ASC' or 'DESC' (already normalised).
+     * @param int $now Reference time for the day measure of open rows.
      * @return string ORDER BY clause without the leading keyword.
      */
-    private static function order_by(string $mode, string $sort, string $order): string {
+    private static function order_by(string $mode, string $sort, string $order, int $now): string {
         if ($mode === self::MODE_DRAFT) {
             // Drafts have no SLA clock; most-recently-saved first.
             return 'sub.timesubmitted DESC, sub.id ASC';
@@ -446,9 +704,12 @@ class submission_browser {
             case 'perceived':
                 return "sub.waitinghours $order, sub.id ASC";
             case 'status':
-                // Status severity tracks effective hours (the band is derived
-                // from it), so ordering by effective hours groups same-status
-                // rows together.
+                /* Status severity tracks the measure the badge is banded on:
+                 * the day count in business-days mode, effective hours
+                 * otherwise. Ordering by it groups same-status rows together. */
+                if (bucket::use_day_thresholds()) {
+                    return self::days_expr($mode, $now) . " $order, sub.id ASC";
+                }
                 return "sub.effectivehours $order, sub.id ASC";
             case 'graded':
                 return "sub.timegraded $order, sub.id ASC";
@@ -465,7 +726,8 @@ class submission_browser {
     /**
      * Classify one row's effective hours into the pending band shown on the
      * Status badge: aguardando (within goal) | atencao (over goal) | prioridade
-     * (critical). Matches the distribution counts + band filter exactly.
+     * (critical), with the bounds and comparisons of the hours-mode
+     * distribution counts and band filter.
      *
      * @param float $eff Effective hours.
      * @param float $goal SLA goal hours.
@@ -485,19 +747,20 @@ class submission_browser {
     /**
      * Day-ruler pending band — inclusive bounds, mirroring
      * bucket::for_effective_days: prioridade > crit | atencao goal..crit |
-     * aguardando <= goal. A null (not-yet-backfilled) count reads aguardando.
+     * aguardando <= goal. The same comparisons the business-days counts and
+     * band filter run over {@see self::days_expr()}.
      *
-     * @param float|null $days Stored elapsed business days.
-     * @param float $goal First day threshold ("within goal" upper bound).
+     * @param float $days Stored elapsed business days, or for a row not yet
+     *                    backfilled the {@see self::estimated_days()} estimate.
+     * @param float $goal SLA goal in days ("within goal" upper bound).
      * @param float $crit Third day threshold (critical cutoff).
      * @return string
      */
-    private static function pending_band_days(?float $days, float $goal, float $crit): string {
-        $v = $days ?? 0.0;
-        if ($v > $crit) {
+    private static function pending_band_days(float $days, float $goal, float $crit): string {
+        if ($days > $crit) {
             return 'prioridade';
         }
-        if ($v > $goal) {
+        if ($days > $goal) {
             return 'atencao';
         }
         return 'aguardando';
@@ -512,6 +775,20 @@ class submission_browser {
     private static function band_bounds(): array {
         $goal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
         $thresholds = bucket::parse_thresholds_eff();
+        return [$goal, (float) $thresholds[2]];
+    }
+
+    /**
+     * The (goal, critical) elapsed-day bounds that partition pending work in
+     * business-days mode, the day-ruler twin of band_bounds(): the SLA goal in
+     * days and the third day threshold. {@see rollup_service} bands the
+     * block's over-goal and critical day counts on the same pair.
+     *
+     * @return array{0:float, 1:float}
+     */
+    private static function band_bounds_days(): array {
+        $goal = (float) (get_config('block_feedback_tracker', 'sla_goal_days') ?: 2);
+        $thresholds = bucket::parse_thresholds_days();
         return [$goal, (float) $thresholds[2]];
     }
 

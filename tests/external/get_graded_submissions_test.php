@@ -62,7 +62,10 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * Counts partition the graded set by result band (slabucket).
+     * Counts partition the graded set into the three result bands
+     * (excellent / good / regular). Critical graded results fold into Regular —
+     * the same three-band set the academic-days strip shows — so the critical
+     * count is always zero.
      *
      * @return void
      */
@@ -83,8 +86,43 @@ final class get_graded_submissions_test extends \advanced_testcase {
 
         $this->assertSame(1, (int) $result['counts']['excellent']);
         $this->assertSame(2, (int) $result['counts']['good']);
-        $this->assertSame(0, (int) $result['counts']['regular']);
-        $this->assertSame(1, (int) $result['counts']['critical']);
+        // The lone critical row folds into Regular; the critical band stays empty.
+        $this->assertSame(1, (int) $result['counts']['regular']);
+        $this->assertSame(0, (int) $result['counts']['critical']);
+    }
+
+    /**
+     * Critical graded results fold into Regular across the whole graded view:
+     * each row reports a "regular" slabucket (never "critical"), the counts roll
+     * critical into regular, and filtering by Regular returns the folded rows.
+     *
+     * @return void
+     */
+    public function test_critical_folds_into_regular(): void {
+        $this->resetAfterTest();
+
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $this->seed_row($course, 'regular', true);
+        $this->seed_row($course, 'critical', true);
+
+        $this->setUser($teacher);
+
+        $all = external_api::clean_returnvalue(
+            get_graded_submissions::execute_returns(),
+            get_graded_submissions::execute((int) $course->id)
+        );
+        $this->assertSame(2, (int) $all['counts']['regular']);
+        $this->assertSame(0, (int) $all['counts']['critical']);
+        foreach ($all['submissions'] as $row) {
+            $this->assertSame('regular', $row['slabucket']);
+        }
+
+        // Filtering by Regular includes the folded critical row.
+        $filtered = external_api::clean_returnvalue(
+            get_graded_submissions::execute_returns(),
+            get_graded_submissions::execute((int) $course->id, 0, 'regular')
+        );
+        $this->assertSame(2, (int) $filtered['total']);
     }
 
     /**
@@ -113,10 +151,9 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * A graded row whose stored bucket is still the "pending" sentinel (e.g.
-     * graded before its effective hours were resolved, or graded entirely
-     * within a paused window) is reclassified from its frozen effective hours
-     * so the result band is never "pending". Hours mode.
+     * A graded row whose stored bucket is still the "pending" sentinel is
+     * reclassified from its stored effective hours, so the result band is
+     * never "pending". Hours mode.
      *
      * @return void
      */
@@ -138,10 +175,10 @@ final class get_graded_submissions_test extends \advanced_testcase {
     }
 
     /**
-     * In business-days mode the displayed band is recomputed from the stored
-     * elapsed-day count, which is NULL on legacy / unbackfilled rows and would
-     * otherwise resolve to "pending". A graded row falls back to its frozen
-     * submit→grade business-day count instead, so it shows a real band.
+     * In business-days mode the displayed band comes from the stored
+     * elapsed-day count, which is NULL on rows never backfilled and would
+     * resolve to "pending". A graded row falls back to its submit-to-grade
+     * business-day count instead, so it shows a real band.
      *
      * @return void
      */
@@ -162,8 +199,48 @@ final class get_graded_submissions_test extends \advanced_testcase {
 
         $this->assertSame(1, (int) $result['total']);
         $this->assertNotSame('pending', $result['submissions'][0]['slabucket']);
-        // Same-day submit→grade ⇒ zero business days ⇒ excellent.
+        // One hour from submit to grade is at most one business day, inside the
+        // default Excellent threshold of two days.
         $this->assertSame('excellent', $result['submissions'][0]['slabucket']);
+    }
+
+    /**
+     * The graded table carries the same names as the pending one: activity and
+     * group names filtered and unescaped, the student name in the site's
+     * full-name format.
+     *
+     * @return void
+     */
+    public function test_names_are_filtered_and_plain(): void {
+        global $CFG, $DB;
+        $this->resetAfterTest();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+        $CFG->fullnamedisplay = 'lastname firstname';
+
+        $multilang = '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>';
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'name' => $multilang]);
+        $this->seed_row($course, 'good', true);
+        $row = $DB->get_record('block_feedback_tracker_sub', ['courseid' => $course->id], '*', MUST_EXIST);
+        $DB->set_field('assign', 'name', $multilang, ['id' => $row->iteminstance]);
+        $DB->set_field('block_feedback_tracker_sub', 'groupid', $group->id, ['id' => $row->id]);
+        $DB->update_record('user', (object) ['id' => $row->userid, 'firstname' => 'Alice', 'lastname' => 'Anderson']);
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_graded_submissions',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['submissions']);
+        $submission = $response['data']['submissions'][0];
+        $this->assertSame('A & B', $submission['activityname']);
+        $this->assertSame('A & B', $submission['groupname']);
+        $this->assertSame('Anderson Alice', $submission['studentname']);
     }
 
     // Helpers.
@@ -219,5 +296,21 @@ final class get_graded_submissions_test extends \advanced_testcase {
             'timecreated'      => $now - 7200,
             'timemodified'     => $now,
         ]);
+    }
+
+    /**
+     * A student cannot read the graded table for their course.
+     *
+     * @return void
+     */
+    public function test_student_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $student = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        $this->setUser($student);
+
+        $this->expectException(\required_capability_exception::class);
+        get_graded_submissions::execute((int) $course->id);
     }
 }

@@ -27,10 +27,10 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\calendar;
 
 /**
- * Verifies the worked examples documented in the plan's §6 algorithm:
- * weekend gaps, holiday clusters, manual pause overlap (course / group),
- * split shifts, timezone-aware day boundaries, and calver-driven cache
- * invalidation.
+ * Hand-computed worked examples: weekend gaps, holiday clusters, manual pause
+ * overlap (course / group), split shifts, timezone-aware day boundaries, and
+ * calver-driven cache invalidation. academic_time_fastpath_test relies on
+ * these to trust the day-by-day walker as its oracle.
  *
  * @covers \block_feedback_tracker\local\calendar\academic_time
  */
@@ -145,7 +145,7 @@ final class academic_time_test extends \advanced_testcase {
 
     /**
      * Manual pause at course scope subtracts from effective hours and emits
-     * a coursepaused audit record clipped to the active intervals.
+     * one coursepaused audit record per active interval it overlaps.
      */
     public function test_manual_pause_course_subtracted(): void {
         $this->resetAfterTest();
@@ -298,6 +298,58 @@ final class academic_time_test extends \advanced_testcase {
         $this->assertSame([], $result['pauses']);
     }
 
+    /**
+     * Business hours are wall-clock hours on the two DST-transition Sundays of
+     * 2026 in Europe/London: 08:00-18:00 local is 07:00-17:00 UTC on the
+     * spring-forward day (clocks jump from 01:00 GMT to 02:00 BST) and
+     * 08:00-18:00 UTC on the fall-back day (clocks return from 02:00 BST to
+     * 01:00 GMT). Counting elapsed minutes from local midnight instead would
+     * shift the window an hour late in spring and an hour early in autumn
+     * while keeping its ten-hour length, so the window edges are asserted,
+     * not only the total.
+     *
+     * @return void
+     */
+    public function test_business_hours_are_wall_clock_on_dst_days(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_default_calendar_no_chours();
+        set_config('timezone', 'Europe/London', 'block_feedback_tracker');
+        set_config('excludeweekends', '0', 'block_feedback_tracker');
+        $now = time();
+        // Both transition days are Sundays (dayofweek 6).
+        $DB->insert_record('block_feedback_tracker_chours', (object) [
+            'dayofweek' => 6, 'starttime' => 8 * 60, 'endtime' => 18 * 60, 'enabled' => 1,
+            'timecreated' => $now, 'timemodified' => $now,
+        ]);
+        academic_time::reset_memos();
+
+        $london = new \DateTimeZone('Europe/London');
+        $cases = [
+            'spring forward' => ['2026-03-29', '2026-03-29 07:00:00', '2026-03-29 17:00:00'],
+            'fall back' => ['2026-10-25', '2026-10-25 08:00:00', '2026-10-25 18:00:00'],
+        ];
+        foreach ($cases as $label => [$date, $openutc, $closeutc]) {
+            $midnight = (new \DateTimeImmutable($date . ' 00:00:00', $london))->getTimestamp();
+            $nextmidnight = (new \DateTimeImmutable($date . ' 00:00:00', $london))->modify('+1 day')->getTimestamp();
+
+            $result = academic_time::elapsed_with_audit(0, 0, $midnight, $nextmidnight);
+            $this->assertSame(10.0, $result['hours'], $label);
+            $outofhours = array_values(array_filter(
+                $result['pauses'],
+                static fn($p) => $p['reason'] === 'outofhours'
+            ));
+            $this->assertCount(2, $outofhours, $label);
+            $this->assertSame($this->ts($openutc), $outofhours[0]['timeend'], $label . ': opens at 08:00 local');
+            $this->assertSame($this->ts($closeutc), $outofhours[1]['timestart'], $label . ': closes at 18:00 local');
+
+            // The first local hour of the window, through the production entry point.
+            $open = (new \DateTimeImmutable($date . ' 08:00:00', $london))->getTimestamp();
+            $this->assertSame($this->ts($openutc), $open, $label . ': fixture check');
+            $this->assertSame(1.0, academic_time::elapsed_effective_hours(0, 0, $open, $open + 3600), $label);
+        }
+    }
+
     // Helpers.
     /**
      * Seed a clean platform calendar: UTC tz, weekends excluded, no cday rows,
@@ -353,8 +405,8 @@ final class academic_time_test extends \advanced_testcase {
     /**
      * Insert a {block_feedback_tracker_cday} row.
      *
-     * @param string $daydate The day date string.
-     * @param string $daytype The day type string.
+     * @param string $daydate The day date as YYYYMMDD.
+     * @param string $daytype The day type slug.
      * @param string|null $note The note.
      */
     private function add_cday(string $daydate, string $daytype, ?string $note = null): void {
@@ -376,7 +428,7 @@ final class academic_time_test extends \advanced_testcase {
      * @param int $scopeid Scope ID.
      * @param int $contextid Context ID.
      * @param int $tsstart Start timestamp.
-     * @param int|null $tsend End timestamp.
+     * @param int|null $tsend End timestamp; null for open-ended.
      */
     private function add_cpause(
         string $scopelevel,

@@ -36,12 +36,14 @@ use core_external\external_value;
 /**
  * Returns one card per group the caller can see in this course: score,
  * band, pending/critical/overgoal counts, raw + effective medians/p90/max,
- * compliance %, trend %, and the next/last pause indicators.
+ * compliance %, trend %, the upcoming-pause notice, peer benchmarks and the
+ * group's activity schedule.
  *
  * The actual payload assembly lives in {@see responsiveness_payload::
  * for_course()} so it can be reused from the block's get_content()
- * without going through external_api::validate_context() (which calls
- * $PAGE->set_context() — illegal after page output has begun).
+ * without going through external_api::validate_context(), which resets
+ * $PAGE's theme and output and sets its context: unsafe once the page
+ * has started rendering.
  */
 class get_responsiveness extends external_api {
     /**
@@ -132,9 +134,15 @@ class get_responsiveness extends external_api {
     private static function group_structure(): external_single_structure {
         return new external_single_structure([
             'groupid'              => new external_value(PARAM_INT, ''),
-            'groupname'            => new external_value(PARAM_TEXT, ''),
-            'groupsubtitle'        => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'coursename'           => new external_value(PARAM_TEXT, ''),
+            'groupname'            => new external_value(PARAM_TEXT, 'Card title as plain text, not HTML-escaped'),
+            'groupsubtitle'        => new external_value(
+                PARAM_TEXT,
+                'Card subtitle as plain text, not HTML-escaped',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'coursename'           => new external_value(PARAM_TEXT, 'Course full name as plain text, not HTML-escaped'),
             'pending'              => new external_value(PARAM_INT, ''),
             'critical'             => new external_value(PARAM_INT, ''),
             'overgoal'             => new external_value(PARAM_INT, ''),
@@ -147,11 +155,38 @@ class get_responsiveness extends external_api {
             'median_raw_h'         => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'p90_raw_h'            => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'max_raw_h'            => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'perceived_median_hours' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_eff_h'     => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_raw_h'     => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_eff_days'  => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'cur_median_perc_days' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
+            'unallocated' => new external_value(
+                PARAM_INT,
+                'Pending submissions with no marker allocated yet',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'median_queue_h' => new external_value(
+                PARAM_FLOAT,
+                'Median effective hours from hand-in to first allocation',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'median_alloc_h' => new external_value(
+                PARAM_FLOAT,
+                'Median effective hours from allocation to grading (marker turnaround)',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'alloc_coverage_pct' => new external_value(
+                PARAM_FLOAT,
+                'Share of the graded window carrying a usable marker-turnaround measurement',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
             'responsiveness_score' => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'score_band'           => new external_value(PARAM_ALPHA, '', VALUE_DEFAULT, null, NULL_ALLOWED),
             'comp_compliance'      => new external_value(PARAM_FLOAT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
@@ -169,24 +204,14 @@ class get_responsiveness extends external_api {
                 VALUE_DEFAULT,
                 []
             ),
-            'nextpause_ts'         => new external_value(PARAM_INT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'nextpause_reason'     => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'nextpause_note'       => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'lastpause_endts'      => new external_value(PARAM_INT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'lastpause_reason'     => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, null, NULL_ALLOWED),
-            'paused_days_30d'      => new external_value(PARAM_INT, '', VALUE_DEFAULT, 0),
-            'paused_breakdown_30d' => new external_single_structure([
-                'weekend' => new external_value(PARAM_INT, ''),
-                'holiday' => new external_value(PARAM_INT, ''),
-                'recess'  => new external_value(PARAM_INT, ''),
-            ]),
-            /* v1.0.9 — sub-day optional events sidecar. */
-            'paused_events_30d' => new external_multiple_structure(
+            /* Scheduled-pause notice ("Upcoming pause"): up to 3 upcoming pauses. */
+            'upcoming_pauses' => new external_multiple_structure(
                 new external_single_structure([
-                    'date'      => new external_value(PARAM_INT, 'YYYYMMDD'),
-                    'starttime' => new external_value(PARAM_INT, 'Minutes since midnight'),
-                    'endtime'   => new external_value(PARAM_INT, 'Minutes since midnight'),
-                    'label'     => new external_value(PARAM_RAW, 'Pre-sanitised event label'),
+                    'start'     => new external_value(PARAM_INT, 'Pause start unix ts (sort key)'),
+                    'type'      => new external_value(PARAM_ALPHA, 'Pause type / reason slug'),
+                    'label'     => new external_value(PARAM_RAW, 'Pause note as plain text: tags stripped, not HTML-escaped'),
+                    'when'      => new external_value(PARAM_TEXT, 'Localised date / time window'),
+                    'typelabel' => new external_value(PARAM_TEXT, 'Localised pause-type label'),
                 ]),
                 '',
                 VALUE_DEFAULT,

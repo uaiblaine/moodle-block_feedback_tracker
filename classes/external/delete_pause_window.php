@@ -34,10 +34,10 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Delete one {block_feedback_tracker_cpause} row. The same capability gate
- * as save: at the row's `contextid` the caller must hold
- * `:managepausewindows`. Fires `cal_pause_updated` so the observer
- * re-enqueues exactly the same scope subtree.
+ * Delete one {block_feedback_tracker_cpause} row. The caller must hold
+ * `:managepausewindows` at the row's `contextid`, as for an update in
+ * save_pause_window. Fires `cal_pause_updated` with the deleted row's scope so
+ * the observer re-enqueues the rollups that pause affected.
  */
 class delete_pause_window extends external_api {
     /**

@@ -29,9 +29,12 @@ namespace block_feedback_tracker\local\calendar;
 /**
  * Stores the resolved per-day calendar rule keyed by (calver, ymd).
  *
- * Because the cache key embeds calver, a bump_version() invocation makes
- * every previously-cached day become unreachable: old entries TTL out
- * naturally; no explicit purge required.
+ * The key embeds calver, so {@see calendar::bump_version()} makes every earlier
+ * entry unreachable. The definition has no TTL, so the callers that bump the
+ * version at run time also purge it ({@see observer},
+ * block_feedback_tracker_invalidate_rollups() and
+ * block_feedback_tracker_reset_data()); otherwise each calendar edit would
+ * leave a full copy of the cached days in the store.
  */
 class effective_day_cache {
     /**
@@ -62,7 +65,7 @@ class effective_day_cache {
      * Build the cache key.
      *
      * @param int $daydate
-     * @return string
+     * @return string "{calver}_{YYYYMMDD}", e.g. "7_20260529".
      */
     private static function key(int $daydate): string {
         return calendar::current_version() . '_' . $daydate;

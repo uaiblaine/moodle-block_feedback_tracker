@@ -16,12 +16,9 @@
 /**
  * Trend row — arrow + percentage + verbal label + 14-day sparkline.
  *
- * The trend percentage in the payload is the week-over-week change in median
- * effective hours (rolling 7-day vs the prior 7-day window). A negative number
- * means work was returned faster (hours dropped), so we present it as speed:
- * faster = ▲ green,
- * slower = ▼ priority/red, within ±2% = stable (muted). The magnitude is
- * shown unsigned — direction is carried by the arrow, colour and label.
+ * `pct` is the week-over-week change in median effective hours (last 7 days
+ * vs the 7 before); negative means work was returned faster. The speed tone,
+ * arrow and unsigned magnitude come from lib/trend.js::classifySpeed().
  *
  * @module    block_feedback_tracker/components/TrendRow
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -36,7 +33,8 @@ import {classifySpeed, speedLabel} from 'block_feedback_tracker/lib/trend';
  * @param {object} props
  * @param {number|null|undefined} props.pct  Trend percentage; negative = faster.
  * @param {Array<number|null>} props.series  14-day sparkline values.
- * @param {object} props.i18n  Bundle with trend_faster / trend_slower / trend_stable / trend_window_label.
+ * @param {object} props.i18n  Bundle with trend_faster / trend_slower / trend_stable / trend_window_label /
+ *                             sparkline_aria.
  * @param {number|null} [props.goal]  Optional SLA goal line on the sparkline.
  * @returns {object|null} vnode
  */
@@ -58,7 +56,8 @@ export default function TrendRow({pct, series, i18n, goal}) {
             </div>
             ${hasSeries && html`
                 <div class="bft-trend-row-spark">
-                    <${Sparkline} values=${series} goal=${goal} width=${96} height=${28} />
+                    <${Sparkline} values=${series} goal=${goal} width=${96} height=${28}
+                        arialabel=${i18n.sparkline_aria} />
                 </div>
             `}
         </div>

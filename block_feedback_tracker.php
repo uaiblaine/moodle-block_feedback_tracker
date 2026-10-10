@@ -32,9 +32,6 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class block_feedback_tracker extends block_base {
-    /** Vendored Preact + htm bundle (path relative to plugin root). */
-    private const VENDOR_BUNDLE = '/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js';
-
     /**
      * Block initialisation
      */
@@ -49,8 +46,8 @@ class block_feedback_tracker extends block_base {
      * bootstrap payload (empty groups + i18n + config) as JSON. block_app.js
      * fetches the group cards asynchronously in sequential pages after mount;
      * a short no-JS hint is wrapped inside <noscript> for graceful
-     * degradation. On the site front page or dashboard the block emits a
-     * short hint instead — those surfaces aren't supported in this MVP.
+     * degradation. On a page without a real course (the front page) it emits
+     * a hint to add the block to a course instead.
      *
      * @return stdClass
      */
@@ -108,9 +105,7 @@ class block_feedback_tracker extends block_base {
             . '<noscript>' . $ssrhtml . '</noscript>'
             . '</div>';
 
-        // Load the Preact bundle into <head> (inhead=true) so its globals
-        // are set before any AMD module factory resolves.
-        $this->page->requires->js(new \moodle_url(self::VENDOR_BUNDLE), true);
+        \block_feedback_tracker\local\output\vendor_bundle::load($this->page);
         $this->page->requires->js_call_amd('block_feedback_tracker/block_app', 'init');
 
         return $this->content;
@@ -124,7 +119,7 @@ class block_feedback_tracker extends block_base {
      * blocks subsystem.
      *
      * @param int $courseid
-     * @param array $groups Group payload entries (25-key shape).
+     * @param array $groups Group payload entries; get_content() passes none.
      * @param int $lastsynced Unix timestamp of the last rollup compute.
      * @return array
      */
@@ -152,8 +147,7 @@ class block_feedback_tracker extends block_base {
     }
 
     /**
-     * Where this block can be placed. Course pages are the supported surface;
-     * site front and my-dashboard render a short hint.
+     * Where this block can be placed: course pages only.
      *
      * @return array<string, bool>
      */
@@ -164,5 +158,79 @@ class block_feedback_tracker extends block_base {
             'my' => false,
             'admin' => false,
         ];
+    }
+
+    /**
+     * Called once by core during plugin uninstall, before it deletes every
+     * instance of this block (each through instance_delete()).
+     *
+     * It is the only signal that separates "the plugin is going away" from
+     * "somebody removed the block from a course page", and it stops
+     * instance_delete() from queuing cleanup tasks for tables that are about
+     * to be dropped. {@see \block_feedback_tracker\local\sla\removal_grace::mark_uninstalling()}
+     *
+     * @return void
+     */
+    public function before_delete() {
+        \block_feedback_tracker\local\sla\removal_grace::mark_uninstalling();
+    }
+
+    /**
+     * Arm the delayed discard of this course's measured history.
+     *
+     * Unlike the usual synchronous delete, the discard is deferred by the grace
+     * period ({@see \block_feedback_tracker\local\sla\removal_grace} explains
+     * why), and the task re-checks at run time whether the block came back.
+     *
+     * No decision about sibling instances is taken here: core calls this before
+     * deleting the block_instances row, and blocks_delete_instances() deletes
+     * the rows only after its whole loop, so a count taken now still includes
+     * instances that are being deleted. The task counts when it runs.
+     *
+     * @return bool
+     */
+    public function instance_delete() {
+        if (\block_feedback_tracker\local\sla\removal_grace::is_uninstalling()) {
+            return true;
+        }
+        if (!\block_feedback_tracker\local\sla\removal_grace::is_active()) {
+            return true;
+        }
+        $courseid = $this->resolve_course_id();
+        if ($courseid <= 0) {
+            return true;
+        }
+
+        $task = new \block_feedback_tracker\task\discard_course_data();
+        $task->set_custom_data(['courseid' => $courseid]);
+        $task->set_next_run_time(
+            time() + \block_feedback_tracker\local\sla\removal_grace::seconds()
+        );
+        /* A course whose block is removed, put back and removed again inside
+         * one window keeps one task, moved to the latest removal's deadline:
+         * queue_adhoc_task() with its duplicate check would keep the first
+         * removal's run time, which core reserves that check for ASAP tasks. */
+        \core\task\manager::reschedule_or_queue_adhoc_task($task);
+        return true;
+    }
+
+    /**
+     * The course this instance sat on, or 0 when it did not sit on one.
+     *
+     * Read from the instance's parent context rather than from $this->page:
+     * core loads the block against whatever the global $PAGE is, which on bulk
+     * deletes, course teardown and CLI runs need not be the block's course.
+     *
+     * @return int
+     */
+    private function resolve_course_id(): int {
+        if (empty($this->instance->parentcontextid)) {
+            return 0;
+        }
+        $context = \context::instance_by_id((int) $this->instance->parentcontextid, IGNORE_MISSING);
+        if (!$context || $context->contextlevel != CONTEXT_COURSE) {
+            return 0;
+        }
+        return (int) $context->instanceid;
     }
 }

@@ -16,12 +16,8 @@
 /**
  * Collapsible score-breakdown panel — term / value / weight / points table.
  *
- * Holds the only piece of local state in Phase 2A (the open/closed flag via
- * useState), so it doubles as a worked example of the hook-state pattern
- * Phase 2B will lean on.
- *
- * Props mirror the `breakdown` sub-array produced by
- * classes/output/responsiveness_card.php::build_breakdown().
+ * Keeps its open/closed flag in local state (closed by default). Every value
+ * arrives pre-formatted.
  *
  * @module    block_feedback_tracker/components/BreakdownPanel
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

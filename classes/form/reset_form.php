@@ -32,8 +32,9 @@ global $CFG;
 require_once($CFG->libdir . '/formslib.php');
 
 /**
- * Drops every ledger / pause / rollup / trend / site-stats / queue row.
- * Calendar configuration is preserved.
+ * Confirmation form for {@see block_feedback_tracker_reset_data()}.
+ *
+ * Its only option is whether to re-enable the history backfill afterwards.
  */
 class reset_form extends \moodleform {
     /**

@@ -27,8 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Maps an hours value to an SLA bucket using the configured boundary
- * thresholds (default 24, 48, 120).
+ * Maps effective hours, or a business-day count, to an SLA bucket using the
+ * configured thresholds (defaults 24, 48, 120 hours and 2, 5, 10 days).
  */
 class bucket {
     /** Excellent bucket. */
@@ -43,7 +43,8 @@ class bucket {
     public const PENDING = 'pending';
 
     /**
-     * Classify a value of effective hours into a bucket.
+     * Classify a value of effective hours into a bucket. Each threshold is an
+     * exclusive upper bound: exactly 24 h is good, not excellent.
      *
      * @param float|null $hours
      * @return string One of self::EXCELLENT|GOOD|REGULAR|CRITICAL|PENDING.
@@ -67,7 +68,8 @@ class bucket {
 
     /**
      * Parse the effective-hours thresholds setting (CSV) into a three-element
-     * float array. Returns sensible defaults if the setting is malformed.
+     * float array. Each missing or non-numeric element falls back to its own
+     * default (24, 48, 120); the values are not sorted.
      *
      * @return array{0:float, 1:float, 2:float}
      */
@@ -81,10 +83,9 @@ class bucket {
     }
 
     /**
-     * Classify an elapsed-business-days count into a bucket. Boundaries are
-     * inclusive ("up to 2 days" is still excellent), unlike the hour
-     * classifier — day counts are whole numbers, so the natural reading of
-     * "até 2 dias" includes day 2.
+     * Classify an elapsed-business-days count into a bucket. Unlike the hour
+     * classifier, boundaries are inclusive: day counts are whole numbers, and
+     * "up to 2 days" naturally includes day 2.
      *
      * @param float|null $days Elapsed business days (date-based count).
      * @return string One of self::EXCELLENT|GOOD|REGULAR|CRITICAL|PENDING.
@@ -108,7 +109,8 @@ class bucket {
 
     /**
      * Parse the business-days thresholds setting (CSV) into a three-element
-     * float array (default 2, 5, 10). Returns the defaults if malformed.
+     * float array. Each missing or non-numeric element falls back to its own
+     * default (2, 5, 10); the values are not sorted.
      *
      * @return array{0:float, 1:float, 2:float}
      */
@@ -122,10 +124,9 @@ class bucket {
     }
 
     /**
-     * True when banding should use the business-days ruler — i.e. the global
-     * display unit is business days. Server-side switch shared by the
-     * submission browser, the priority list, the academic-days strip and the
-     * payload count swap, so every surface classifies with the same ruler.
+     * True when banding should use the business-days ruler, i.e. the global
+     * display unit is business days. Every server-side surface reads this one
+     * switch so they all classify with the same ruler.
      *
      * @return bool
      */

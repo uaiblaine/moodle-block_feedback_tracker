@@ -14,12 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Insight card — used three-up at the top of the dashboard for the
- * "Bright spot / Most improved / Gentle watch" surface. Each variant has
- * its own accent colour and decorative icon.
+ * Insight card — the dashboard's "Bright spot / Most improved / Gentle watch"
+ * row. Each tone has its own accent colour and decorative icon.
  *
- * Stateless. The data shape mirrors the get_insights WS so callers can
- * pass payload rows directly.
+ * Stateless. `metric_value` and `metric_suffix` keep the get_insights key
+ * names so callers pass those fields straight through.
  *
  * @module    block_feedback_tracker/components/InsightCard
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

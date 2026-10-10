@@ -14,19 +14,19 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Compact SVG line chart for a daily trend series.
+ * Compact SVG line chart for a daily trend series. Null values mean "no data
+ * that day" and are skipped — the polyline runs through the days that do have
+ * values.
  *
- * Direct port of templates/sparkline.mustache + classes/output/sparkline.php
- * (keep all three in lockstep). Null values represent "no data that day" and
- * are skipped — the polyline runs through the days that do have values.
+ * The vertical axis reads as speed: fewer effective hours plot higher. A
+ * `goal` adds the desired-speed zone, a band from 0 hours at the top edge
+ * down to the goal, with a solid line at 0 and a dotted line at the goal
+ * (colours in styles.css). The optional `zonelabel` is drawn inside the
+ * chart when it is at least ZONE_LABEL_MIN_WIDTH wide.
  *
- * The vertical axis reads as speed: fewer effective hours (faster turnaround)
- * render HIGHER. When a `goal` is supplied it drives the "desired-speed zone":
- * a light-green band anchored at the TOP spanning effective hours 0 → goal
- * (the acceptable window), with a solid green baseline at 0 hours (top edge)
- * and a dotted green line at the goal (the minimum-desired-speed boundary).
- * A slowdown pushes the line down, below the goal line. The optional
- * `zonelabel` is drawn discreetly inside the chart when it is wide enough.
+ * `arialabel` is the chart's accessible name; callers pass the i18n bundle's
+ * sparkline_aria string. Without one the chart is aria-hidden, since it has
+ * no name to announce.
  *
  * @module    block_feedback_tracker/components/Sparkline
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -46,10 +46,11 @@ const ZONE_LABEL_MIN_WIDTH = 110;
  * @param {number} [props.height]
  * @param {string} [props.color]             Polyline stroke (band colour).
  * @param {string} [props.zonelabel]         Discreet "improvement zone" caption.
+ * @param {string} [props.arialabel]         Accessible name (i18n sparkline_aria).
  * @returns {object} vnode
  */
 export default function Sparkline({values, goal = null, width = 120, height = 30,
-    color = '#6366f1', zonelabel = ''}) {
+    color = '#6366f1', zonelabel = '', arialabel = ''}) {
     const arr = Array.isArray(values) ? values : [];
     const valid = arr.filter((v) => v !== null && v !== undefined);
     const haszone = goal !== null && goal !== undefined && Number(goal) > 0;
@@ -82,7 +83,9 @@ export default function Sparkline({values, goal = null, width = 120, height = 30
         <svg class="bft-sparkline"
              viewBox=${'0 0 ' + width + ' ' + height}
              width=${width} height=${height}
-             role="img" aria-label=${zonelabel || '30-day trend'}>
+             role=${arialabel ? 'img' : null}
+             aria-label=${arialabel || null}
+             aria-hidden=${arialabel ? null : 'true'}>
             ${haszone && html`
                 <rect class="bft-sparkline-zone"
                       x="0" y="0"
@@ -97,7 +100,7 @@ export default function Sparkline({values, goal = null, width = 120, height = 30
                           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                           points=${points.join(' ')} />`
                 : html`<line x1="0" y1=${height} x2=${width} y2=${height}
-                          stroke="#cbd5e1" stroke-width="0.5" />`}
+                          stroke="var(--bft-border-strong, #cbd5e1)" stroke-width="0.5" />`}
             ${showlabel && html`
                 <text class="bft-sparkline-zone-label" x="2" y="9">${zonelabel}</text>
             `}

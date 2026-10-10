@@ -41,8 +41,9 @@ import Skeleton from 'block_feedback_tracker/components/Skeleton';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
 import {getResponsiveness} from 'block_feedback_tracker/lib/api';
+import {formatDateTime} from 'block_feedback_tracker/lib/format';
 
-/** Client cache: how long a stored page set stays fresh (matches server TTL). */
+/** Client cache: how long a stored page set stays fresh (matches responsiveness_payload::CACHE_TTL). */
 const CACHE_TTL_SECONDS = 900;
 /** SessionStorage key prefix + schema version (bump to invalidate old shapes). */
 const CACHE_PREFIX = 'bft-resp-v2-';
@@ -121,10 +122,10 @@ const clearCacheForCourse = (courseid) => {
 };
 
 /**
- * Pending-weighted average of per-group scores. A group with no pending
- * work doesn't drag the headline figure — its score still counts but with
- * a minimum weight of 1 so courses early in the term don't end up with
- * "no overall score" simply because nobody has submitted yet.
+ * Average of the loaded groups' scores weighted by pending count, with a
+ * minimum weight of 1 so a group with nothing pending still counts. Groups
+ * without a score are skipped. Mirrors responsiveness_payload::overall_score(),
+ * which computes the same figure over the whole course.
  *
  * @param {Array<object>} groups
  * @param {{excellent?: number, good?: number, regular?: number}|null} thresholds
@@ -152,118 +153,25 @@ const overallScore = (groups, thresholds) => {
 };
 
 /**
- * Format minutes-since-midnight as HH:MM (24-hour).
- *
- * @param {number} min
- * @returns {string}
- */
-const fmtMin = (min) => {
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-};
-
-/**
- * Format a YYYYMMDD int as "DD/MM".
- *
- * @param {number} ymd
- * @returns {string}
- */
-const fmtYmd = (ymd) => {
-    const n = Number(ymd) || 0;
-    const m = Math.floor((n / 100) % 100);
-    const d = n % 100;
-    return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0');
-};
-
-/**
- * Render an event entry's "DD/MM HH:MM-HH:MM: label" string.
- *
- * @param {{date:number, starttime:number, endtime:number, label:string}} ev
- * @returns {string}
- */
-const fmtEvent = (ev) => {
-    const head = fmtYmd(ev.date) + ' ' + fmtMin(ev.starttime) + '-' + fmtMin(ev.endtime);
-    return ev.label ? head + ': ' + ev.label : head;
-};
-
-/**
- * Format a Unix timestamp (seconds) as "DD/MM/YYYY HH:MM" in local time.
- *
- * @param {number} ts
- * @returns {string}
- */
-const fmtTimestamp = (ts) => {
-    const n = Number(ts) || 0;
-    if (n <= 0) {
-        return '';
-    }
-    const d = new Date(n * 1000);
-    const pad = (x) => String(x).padStart(2, '0');
-    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear()
-        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-};
-
-/**
- * Best-effort localiser for a pause-reason slug. Falls back to the slug
- * itself when the i18n bundle doesn't carry the key. Mirrors the
- * `pause_reason_*` family already shipped in pending_report_i18n().
- *
- * @param {string} reason
- * @param {object} i18n
- * @returns {string}
- */
-const reasonLabel = (reason, i18n) => {
-    const key = 'pause_reason_' + reason;
-    return i18n[key] || reason;
-};
-
-/**
- * Pull the "paused current" + "next paused" strings from the most relevant
- * group's payload (any non-empty group works — the calendar is platform-wide).
- *
- * v1.0.11 — prefer the paused_events_30d sidecar when present so the
- * block surfaces the event date/window/label directly, independent of
- * the next/last pause rollup state (which may be stale until the drain
- * queue catches up). Falls back to nextpause_* / lastpause_* for
- * non-event pause reasons.
+ * The scheduled-pause list (already decorated + visibility-filtered by
+ * upcoming_pauses::for_display() on the server). The payload builds it once
+ * per course, without group-scoped pauses, and attaches it identically to
+ * every group, so the first group carrying a non-empty list wins and the
+ * block renders it once.
  *
  * @param {Array<object>} groups
- * @param {object} i18n
- * @returns {{current: string|null, next: string|null}}
+ * @returns {Array<object>}
  */
-const pausedSummary = (groups, i18n) => {
+const upcomingFromGroups = (groups) => {
     if (!Array.isArray(groups)) {
-        return {current: null, next: null};
+        return [];
     }
     for (const g of groups) {
-        // Event sidecar takes precedence — has full date + window + label
-        // regardless of whether the rollup pause indicators are fresh.
-        const events = Array.isArray(g.paused_events_30d) ? g.paused_events_30d : [];
-        if (events.length > 0) {
-            const latest = events[events.length - 1];
-            return {
-                current: fmtEvent(latest),
-                next: null,
-            };
-        }
-        const lastreason = g.lastpause_reason ? String(g.lastpause_reason) : null;
-        const nextreason = g.nextpause_reason ? String(g.nextpause_reason) : null;
-        if (!lastreason && !nextreason) {
-            continue;
-        }
-        let current = lastreason ? reasonLabel(lastreason, i18n) : null;
-        let next = nextreason ? reasonLabel(nextreason, i18n) : null;
-        // Optional rows carry the event label in nextpause_note; surface
-        // it on the upcoming line when the sidecar didn't already win.
-        if (nextreason === 'optional' && g.nextpause_note) {
-            next = next + ': ' + g.nextpause_note;
-        }
-        if (current || next) {
-            return {current, next};
+        if (Array.isArray(g.upcoming_pauses) && g.upcoming_pauses.length > 0) {
+            return g.upcoming_pauses;
         }
     }
-    return {current: null, next: null};
+    return [];
 };
 
 /**
@@ -275,8 +183,7 @@ const pausedSummary = (groups, i18n) => {
  *                                the view loads them lazily via the WS.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function BlockView({initial}) {
     const i18n = initial.i18n || {};
@@ -287,8 +194,8 @@ export default function BlockView({initial}) {
     const sesskey = (typeof M !== 'undefined' && M.cfg && M.cfg.sesskey) || '';
 
     // Batch sizes + the DOM safety cap. Auto-loading stops at CAP rendered
-    // cards so a course with thousands of groups can't exhaust the renderer
-    // (Chrome "Código de erro: 5"); a manual button loads MANUAL_BATCH more.
+    // cards so a course with thousands of groups cannot crash the browser tab;
+    // a manual button loads MANUAL_BATCH more.
     const BATCH = 3;
     const CAP = 200;
     const MANUAL_BATCH = 25;
@@ -549,8 +456,7 @@ export default function BlockView({initial}) {
     };
 
     // Overall banner: prefer the whole-course server aggregate; fall back to a
-    // client estimate over loaded cards only when the server figure is absent
-    // (e.g. a stale cache entry written before overall_score shipped).
+    // client estimate over the loaded cards only when the server figure is absent.
     const fallback = useMemo(
         () => overallScore(groups, config && config.score_thresholds),
         [groups, config]
@@ -560,7 +466,14 @@ export default function BlockView({initial}) {
         ? 'pending'
         : bandForScore(overallvalue, config && config.score_thresholds);
     const overallBandLabel = i18n.bands && i18n.bands[overallband] ? i18n.bands[overallband] : '';
-    const paused = useMemo(() => pausedSummary(groups, i18n), [groups, i18n]);
+    // Scheduled-pause notice — gated by the admin toggle (default ON). The
+    // server already filters to the visible window; here we just hide the
+    // whole strip when the toggle is off.
+    const showpauses = config.show_scheduled_pauses !== false;
+    const upcoming = useMemo(
+        () => (showpauses ? upcomingFromGroups(groups) : []),
+        [groups, showpauses]
+    );
 
     const capreached = groups.length >= CAP && hasmore;
     // When IntersectionObserver is unavailable, auto-scroll loading can't fire,
@@ -572,7 +485,7 @@ export default function BlockView({initial}) {
         .replace('{shown}', String(groups.length))
         .replace('{total}', String(total));
     const synctext = (lastsynced
-        ? (i18n.card_footer_sync || 'Last synced {$a}').replace('{$a}', fmtTimestamp(lastsynced)) + ' · '
+        ? (i18n.card_footer_sync || 'Last synced {$a}').replace('{$a}', formatDateTime(lastsynced)) + ' · '
         : '') + (i18n.card_footer_cache || 'Updates automatically every 15 minutes.');
 
     let blockbody;
@@ -594,8 +507,7 @@ export default function BlockView({initial}) {
                 band=${overallband}
                 bandlabel=${overallBandLabel}
                 i18n=${i18n}
-                pausedcurrent=${paused.current}
-                pausednext=${paused.next} />
+                pauses=${upcoming} />
             <div class="bft-card-list">
                 ${groups.map((group) => html`
                     <${GroupCard}

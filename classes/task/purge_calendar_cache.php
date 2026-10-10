@@ -26,6 +26,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
+
 /**
  * Daily 04:00 cleanup:
  *  - drop {block_feedback_tracker_cpause} rows whose `timeend` is more than
@@ -55,6 +57,7 @@ class purge_calendar_cache extends \core\task\scheduled_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
         $days = (int) (get_config('block_feedback_tracker', 'purge_inactive_after_days') ?: self::DEFAULT_RETENTION_DAYS);
         if ($days <= 0) {
             $days = self::DEFAULT_RETENTION_DAYS;

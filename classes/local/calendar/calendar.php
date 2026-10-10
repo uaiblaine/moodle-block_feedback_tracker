@@ -37,20 +37,20 @@ class calendar {
     /** Default weekend mask: Sat (bit 5) + Sun (bit 6) = 32 + 64 = 96. */
     public const WEEKEND_MASK_DEFAULT = 96;
 
-    /** Day types stored in {block_feedback_tracker_cday}.daytype. */
+    /** Day types stored in {block_feedback_tracker_cday}.daytype. A school day is active even on a weekend. */
     public const DAYTYPE_SCHOOLDAY = 'schoolday';
-    /** A holiday. */
+    /** A holiday; inactive while holidays are excluded. */
     public const DAYTYPE_HOLIDAY = 'holiday';
-    /** An institutional recess (academic break). */
+    /** An institutional recess (academic break); inactive while recesses are excluded. */
     public const DAYTYPE_RECESS = 'recess';
     /** A full institutional closure (always inactive). */
     public const DAYTYPE_CLOSED = 'closed';
-    /** An optional day — inactive unless the platform opts in. */
+    /** An optional event: the whole day is inactive, unless the row carries a sub-day window. */
     public const DAYTYPE_OPTIONAL = 'optional';
     /** Implicit (no cday row); active iff not a (excluded) weekend. */
     public const DAYTYPE_IMPLICIT = 'implicit';
 
-    /** Grading-during-pause modes. */
+    /** Grading-during-pause mode (default): manual pauses subtract from effective hours. */
     public const PAUSE_MODE_CLIPPED = 'clipped';
     /** Manual pauses do not subtract effective hours (audit-only). */
     public const PAUSE_MODE_LIVE = 'live';
@@ -77,7 +77,8 @@ class calendar {
     }
 
     /**
-     * Platform timezone. The 'server' sentinel resolves to Moodle's server tz.
+     * Platform timezone. 'server', an empty value or an unknown zone name
+     * resolves to Moodle's server timezone.
      *
      * @return \DateTimeZone
      */
@@ -95,7 +96,8 @@ class calendar {
 
     /**
      * Weekend mask: bit i set iff dayofweek i is treated as weekend
-     * (0=Mon..6=Sun, ISO 8601).
+     * (0=Mon..6=Sun, ISO 8601). 0 or an out-of-range value reads as
+     * {@see self::WEEKEND_MASK_DEFAULT}.
      *
      * @return int
      */
@@ -169,12 +171,9 @@ class calendar {
     /**
      * Localised display label for a daytype slug.
      *
-     * Centralised here so the dropdown options in
-     * `classes/form/calendar_day_form.php` and the day-list column in
-     * `pages/calendar_editor.php` always agree. Uses a literal switch
-     * (not a `get_string('caleditor_type_' . $daytype, ...)` concat) to
-     * keep the PHPDoc string-checker happy — dynamic string IDs aren't
-     * statically verifiable.
+     * Shared by the dropdown in {@see \block_feedback_tracker\form\calendar_day_form},
+     * the day list in pages/calendar_editor.php and the upcoming-pause notice,
+     * so they always agree.
      *
      * @param string $daytype One of self::DAYTYPE_* values.
      * @return string Localised label, or the raw slug if unrecognised.
@@ -201,6 +200,8 @@ class calendar {
      *
      * Active days accumulate within their business-hours window; inactive
      * days contribute zero and produce one pause record for the whole day.
+     * A sub-day optional event is resolved by {@see day_rule_resolver::for_date()},
+     * not here.
      *
      * @param string $daytype One of self::DAYTYPE_*.
      * @param bool $isweekend Whether the day falls in the configured weekend mask.

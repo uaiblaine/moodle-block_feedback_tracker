@@ -27,27 +27,27 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\calendar\calendar;
+use block_feedback_tracker\local\output\numfmt;
 use core_external\external_api;
 use core_external\external_function_parameters;
 use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Returns three insight rows for the design's dashboard hero callouts —
- * a bright spot (currently top-scoring group), the most-improved course
- * over the last 30 days, and a gentle watch (course with the oldest
- * critical-band pending submission).
+ * Returns up to three insight rows for the dashboard hero callouts: a bright
+ * spot (top-scoring group), the most improved group (week-over-week momentum
+ * first, else the 30-day trend) and a gentle watch (group with the most
+ * critical-band pending submissions). A key is omitted when no row qualifies.
  *
- * All three are sourced from the existing rollup tables — no new
- * schema. Results are cached per (calver, userid) for 900s; admin
- * settings changes that bump calver naturally roll over the cache.
+ * Results are cached for 900 s per calver, user, scope mode, banding ruler and
+ * language, so a settings save that bumps calver re-keys the cache.
  */
 class get_insights extends external_api {
     /** Cache TTL in seconds. */
     public const CACHE_TTL = 900;
 
-    /** Cache-key version. Bump when the result shape changes. */
-    public const CACHE_KEY_VERSION = 3;
+    /** Cache-key version. Bump when the result shape or the formatting of its values changes. */
+    public const CACHE_KEY_VERSION = 6;
 
     /**
      * Parameters — no inputs.
@@ -83,13 +83,15 @@ class get_insights extends external_api {
         }
 
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
-        // Language is part of the key now that metric suffixes are localised
-        // server-side — a user switching language must not read a cached
-        // payload built in the previous one.
+        // Language is part of the key because the metric suffixes are
+        // localised and the course and group names filtered server-side; the
+        // banding ruler is, because it picks the gentle watch's count.
+        $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         $key = 'insights_v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
             . '_' . $USER->id
             . '_' . ($scope === null ? 'all' : 'scoped')
+            . ($usedays ? '_d' : '')
             . '_' . current_language();
         $cached = $cache->get($key);
         if (
@@ -103,7 +105,7 @@ class get_insights extends external_api {
         $rows = self::source_rows($userid);
         $brightspot = self::pick_bright_spot($rows);
         $mostimproved = self::pick_most_improved($rows);
-        $gentlewatch = self::pick_gentle_watch($rows);
+        $gentlewatch = self::pick_gentle_watch($rows, $usedays);
 
         // Omit null insight keys entirely — external_single_structure with
         // VALUE_OPTIONAL on the field allows missing keys but not literal
@@ -147,7 +149,7 @@ class get_insights extends external_api {
         $sql = "SELECT g.id, g.courseid, g.groupid, c.fullname AS coursename,
                        grp.name AS groupname,
                        g.responsiveness_score, g.score_band, g.trend_pct_30d,
-                       g.median_eff_h, g.critical, g.pending, g.numgraded30d
+                       g.median_eff_h, g.critical, g.critical_days, g.pending, g.numgraded30d
                   FROM {block_feedback_tracker_group} g
                   JOIN {course} c ON c.id = g.courseid
              LEFT JOIN {groups} grp ON grp.id = g.groupid
@@ -156,8 +158,9 @@ class get_insights extends external_api {
     }
 
     /**
-     * Bright spot — the highest-scoring group, with the oldest tie broken
-     * by larger numgraded30d. Returns null when no group has a score yet.
+     * Bright spot — the highest-scoring group; a score tie goes to the group
+     * with more submissions graded in the rollup window (numgraded30d).
+     * Returns null when no group has a score yet.
      *
      * @param array $rows
      * @return array|null
@@ -168,15 +171,12 @@ class get_insights extends external_api {
             return null;
         }
         usort($scored, static function ($a, $b) {
-            return (float) $b->responsiveness_score <=> (float) $a->responsiveness_score;
+            return ((float) $b->responsiveness_score <=> (float) $a->responsiveness_score)
+                ?: ((int) $b->numgraded30d <=> (int) $a->numgraded30d);
         });
         $top = $scored[0];
         $score = (float) $top->responsiveness_score;
-        return [
-            'courseid'     => (int) $top->courseid,
-            'coursename'   => (string) $top->coursename,
-            'groupid'      => (int) $top->groupid,
-            'groupname'    => (string) ($top->groupname ?? ''),
+        return self::identity($top) + [
             'metric_value' => (string) round($score),
             'metric_suffix' => get_string('insight_outof100', 'block_feedback_tracker'),
         ];
@@ -187,11 +187,10 @@ class get_insights extends external_api {
      * (momentum) when present, falling back to the largest negative
      * trend_pct_30d otherwise.
      *
-     * Momentum lives on the dashboard only — it never feeds the score.
-     * The intent is to recognise a new teacher who inherits a low-scoring
-     * class and turns it around in days, before the slower 30-day trend
-     * has caught up. The picked row carries a `momentum` flag so the JS
-     * InsightCard can swap eyebrow text and tone.
+     * Momentum is dashboard-only and never feeds the score. It recognises a
+     * teacher who turns a slow class around in days, before the 30-day trend
+     * has caught up. The picked row carries a `momentum` flag so
+     * DashboardView can swap the card's eyebrow and body text.
      *
      * @param array $rows
      * @return array|null
@@ -201,13 +200,12 @@ class get_insights extends external_api {
 
         // First pass: any group with sharp momentum wins, no matter what the
         // 30-day trend looks like. Momentum needs MOMENTUM_MIN_GRADES grades
-        // in the last 7 days — a window contained within the 30-day
-        // numgraded30d count — so a group with fewer than that in 30 days can
-        // never qualify. Skipping those here avoids the two per-group ledger
-        // queries momentum_pct() would otherwise issue, which is what made the
-        // dashboard fan out into thousands of queries on large sites. The
-        // filter is exact: it drops only rows momentum_pct() would have
-        // returned null for anyway.
+        // in the last 7 days, a window inside the numgraded30d count, so a
+        // group with fewer than that in the rollup window cannot qualify.
+        // Skipping those saves the two ledger queries per group that
+        // momentum_pct() issues. The filter drops only rows momentum_pct()
+        // would return null for while trend_window_days is at least 7 and the
+        // rollup row is current.
         $mingrades = \block_feedback_tracker\local\score\responsiveness_calculator::MOMENTUM_MIN_GRADES;
         $best = null;
         $bestpct = 0.0;
@@ -228,11 +226,7 @@ class get_insights extends external_api {
             }
         }
         if ($best !== null) {
-            return [
-                'courseid'      => (int) $best->courseid,
-                'coursename'    => (string) $best->coursename,
-                'groupid'       => (int) $best->groupid,
-                'groupname'     => (string) ($best->groupname ?? ''),
+            return self::identity($best) + [
                 'metric_value'  => '▲ ' . (string) round(abs($bestpct)) . '%',
                 'metric_suffix' => get_string('insight_faster_week_suffix', 'block_feedback_tracker'),
                 'momentum'      => true,
@@ -252,11 +246,7 @@ class get_insights extends external_api {
         });
         $top = $trended[0];
         $pct = (float) $top->trend_pct_30d;
-        return [
-            'courseid'      => (int) $top->courseid,
-            'coursename'    => (string) $top->coursename,
-            'groupid'       => (int) $top->groupid,
-            'groupname'     => (string) ($top->groupname ?? ''),
+        return self::identity($top) + [
             'metric_value'  => '▲ ' . (string) round(abs($pct)) . '%',
             'metric_suffix' => get_string('insight_faster_suffix', 'block_feedback_tracker'),
             'momentum'      => false,
@@ -267,34 +257,62 @@ class get_insights extends external_api {
      * Gentle watch — the group with the most critical-band pending
      * submissions. Returns null when no group has any critical pending.
      *
+     * The count follows the banding ruler, as the dashboard's courses table
+     * does: in business-days mode it is critical_days, falling back to the
+     * hour-based critical while the rollup has not filled critical_days yet.
+     *
      * @param array $rows
+     * @param bool $usedays Whether bucket::use_day_thresholds() is on.
      * @return array|null
      */
-    private static function pick_gentle_watch(array $rows): ?array {
+    private static function pick_gentle_watch(array $rows, bool $usedays): ?array {
+        $count = static function (\stdClass $r) use ($usedays): int {
+            if ($usedays && $r->critical_days !== null) {
+                return (int) $r->critical_days;
+            }
+            return (int) $r->critical;
+        };
         $critical = array_values(array_filter(
             $rows,
-            static fn ($r) => (int) $r->critical > 0
+            static fn ($r) => $count($r) > 0
         ));
         if (empty($critical)) {
             return null;
         }
-        usort($critical, static function ($a, $b) {
-            return (int) $b->critical <=> (int) $a->critical;
+        usort($critical, static function ($a, $b) use ($count) {
+            return $count($b) <=> $count($a);
         });
         $top = $critical[0];
-        $n = (int) $top->critical;
-        return [
-            'courseid'     => (int) $top->courseid,
-            'coursename'   => (string) $top->coursename,
-            'groupid'      => (int) $top->groupid,
-            'groupname'    => (string) ($top->groupname ?? ''),
-            'metric_value' => (string) $n,
+        $n = $count($top);
+        return self::identity($top) + [
+            'metric_value' => numfmt::count($n),
             'metric_suffix' => get_string('insight_criticalpending', 'block_feedback_tracker'),
         ];
     }
 
     /**
-     * Returns shape — three nullable insight rows.
+     * The course and group an insight row names.
+     *
+     * Names are filtered in the course context but not escaped: PARAM_TEXT and
+     * the text nodes the dashboard renders them into escape for themselves.
+     * The ungrouped row (groupid 0) has no group name.
+     *
+     * @param \stdClass $row A source_rows() row.
+     * @return array{courseid:int, coursename:string, groupid:int, groupname:string}
+     */
+    private static function identity(\stdClass $row): array {
+        $options = ['context' => \context_course::instance((int) $row->courseid), 'escape' => false];
+        return [
+            'courseid'   => (int) $row->courseid,
+            'coursename' => format_string((string) $row->coursename, true, $options),
+            'groupid'    => (int) $row->groupid,
+            'groupname'  => format_string((string) ($row->groupname ?? ''), true, $options),
+        ];
+    }
+
+    /**
+     * Returns shape — three optional insight rows, each omitted (never null)
+     * when nothing qualifies.
      *
      * @return external_single_structure
      */
@@ -306,10 +324,9 @@ class get_insights extends external_api {
             'groupname'     => new external_value(PARAM_TEXT, '', VALUE_DEFAULT, ''),
             'metric_value'  => new external_value(PARAM_TEXT, ''),
             'metric_suffix' => new external_value(PARAM_TEXT, ''),
-            /* v1.0.7 — true when this row was picked from week-over-week
-             * momentum rather than the 30-day trend. Optional so the
-             * bright_spot / gentle_watch picks (which never set it) stay
-             * shape-compatible. */
+            /* True when this row was picked from week-over-week momentum
+             * rather than the 30-day trend. Optional because the bright_spot
+             * and gentle_watch picks never set it. */
             'momentum'      => new external_value(PARAM_BOOL, '', VALUE_OPTIONAL),
         ], '', VALUE_OPTIONAL);
         return new external_single_structure([

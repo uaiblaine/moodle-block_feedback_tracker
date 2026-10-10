@@ -26,16 +26,16 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\rollup_service;
 
 /**
- * Queued by the submission_graded observer for fast turnaround on freshly
- * graded submissions. Calls rollup_service::recompute_group() directly and
- * removes the queue entry if one was waiting for the same tuple, so the
- * 5-minute drain task doesn't redo the work.
+ * Recomputes one (courseid, groupid) rollup and retires its queue row.
  *
- * `core\task\manager::queue_adhoc_task($task, true)` deduplicates bursts of
- * grading events on the same tuple.
+ * Queued by `drain_queue` for every dirty tuple, and by the submission_graded
+ * observer for a fast turnaround on freshly graded work. Both producers queue
+ * with `queue_adhoc_task($task, true)` and identical custom data, so bursts on
+ * one tuple collapse into a single pending task.
  */
 class recompute_one extends \core\task\adhoc_task {
     /**
@@ -54,16 +54,33 @@ class recompute_one extends \core\task\adhoc_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
         $data = (array) $this->get_custom_data();
         $courseid = (int) ($data['courseid'] ?? 0);
         $groupid = (int) ($data['groupid'] ?? 0);
         if ($courseid <= 0) {
             return;
         }
-        rollup_service::recompute_group($courseid, $groupid);
-        $DB->delete_records('block_feedback_tracker_queue', [
-            'courseid' => $courseid,
-            'groupid' => $groupid,
-        ]);
+        $started = time();
+        if (!rollup_service::recompute_group($courseid, $groupid)) {
+            /* Another worker holds the tuple's lock, so nothing was
+             * recomputed. Leaving the queue row in place keeps the tuple dirty
+             * for the next drain tick; deleting it here would retire work that
+             * was never done. */
+            return;
+        }
+
+        /* Retire the queue row only if it has not been re-enqueued while we
+         * were recomputing. dirty_queue::enqueue() refreshes timeenqueued on
+         * an existing row, so a newer stamp means fresh dirt arrived after our
+         * reads and must survive. (timeenqueued has second granularity, so a
+         * re-enqueue inside the same second as $started is indistinguishable
+         * from one that preceded it — the next event on the tuple recovers
+         * it.) */
+        $DB->delete_records_select(
+            'block_feedback_tracker_queue',
+            'courseid = :courseid AND groupid = :groupid AND timeenqueued <= :started',
+            ['courseid' => $courseid, 'groupid' => $groupid, 'started' => $started]
+        );
     }
 }

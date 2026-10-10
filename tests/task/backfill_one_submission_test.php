@@ -30,10 +30,10 @@ use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\sla\course_access;
 
 /**
- * Per-batch worker that takes a list of (cmid, userid, attemptnumber,
- * courseid) tuples from custom data and writes one ledger row per tuple
- * via `submission_ledger::upsert_for_cm_user_attempt()`. Idempotent;
- * re-checks `course_access::is_processable()` at execute time.
+ * Pins the worker that backfill_history and reconcile_ledger queue: one ledger
+ * row per individual row of its payload, idempotent on a re-run, and re-gated
+ * at execute time on course processability and on the user still being an
+ * active participant.
  *
  * @covers \block_feedback_tracker\task\backfill_one_submission
  */
@@ -147,7 +147,121 @@ final class backfill_one_submission_test extends \advanced_testcase {
         $this->assertSame((int) $cma->course, (int) $row->courseid);
     }
 
+    /**
+     * A repair queued before the student left is dropped when it finally runs.
+     *
+     * The reconciler's delete-side sweep and its dispatching sweeps run
+     * independently, and core backs a failing adhoc task off from 60 seconds up
+     * to a day, so a repair can land long after the delete. The course is still
+     * processable; only the participation re-check catches it.
+     *
+     * The still-enrolled student is the control: without them this test would
+     * pass if the task had not run at all.
+     *
+     * @return void
+     */
+    public function test_a_repair_for_someone_who_left_is_dropped_at_execute_time(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        course_access::reset_memo();
+
+        [$cm, $students] = $this->build_course_with_submissions(2);
+        [$stays, $leaves] = array_values($students);
+
+        /* Suspending the user enrolment is what get_enrolled_sql($ctx, '', 0,
+         * true) — the predicate the delete-side sweep uses — treats as gone.
+         * Scoped to user_enrolments, not enrol, so the control student's own
+         * enrolment is untouched: enrol.status is per instance and both share
+         * one manual instance. */
+        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['userid' => $leaves->id]);
+
+        $task = new backfill_one_submission();
+        $task->set_custom_data([
+            'rows' => [
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $stays->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $leaves->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+            ],
+        ]);
+        $task->execute();
+
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $stays->id]),
+            'Control: the still-enrolled student must be repaired, or nothing ran.'
+        );
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $leaves->id]),
+            'A repair must not rebuild the row of someone the delete sweep removed.'
+        );
+    }
+
+    /**
+     * Core's cron runs many tasks in one process. A block removed by another
+     * process between two executions must be seen by the second one, not
+     * answered from what the first execution memoised.
+     *
+     * @return void
+     */
+    public function test_a_block_removed_between_two_executions_is_seen_by_the_second(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+
+        [$cm, $students] = $this->build_course_with_submissions(2);
+        [$first, $second] = array_values($students);
+
+        $this->execute_for($cm, $first);
+        $this->assertTrue(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $first->id]),
+            'Control: the first execution ran while the block was on the course.'
+        );
+
+        // Removed straight from the table, as another process would: nothing here resets a memo.
+        $DB->delete_records('block_instances', [
+            'blockname' => 'feedback_tracker',
+            'parentcontextid' => \context_course::instance((int) $cm->course)->id,
+        ]);
+
+        $this->execute_for($cm, $second);
+        $this->assertFalse(
+            $DB->record_exists('block_feedback_tracker_sub', ['userid' => $second->id]),
+            'The second execution must see that the course is no longer tracked.'
+        );
+    }
+
     // Helpers.
+
+    /**
+     * Run the task for one student's submission, as its own execution.
+     *
+     * @param \stdClass $cm
+     * @param \stdClass $student
+     * @return void
+     */
+    private function execute_for(\stdClass $cm, \stdClass $student): void {
+        $task = new backfill_one_submission();
+        $task->set_custom_data([
+            'rows' => [
+                [
+                    'cmid'          => (int) $cm->id,
+                    'userid'        => (int) $student->id,
+                    'attemptnumber' => 0,
+                    'courseid'      => (int) $cm->course,
+                ],
+            ],
+        ]);
+        $task->execute();
+    }
 
     /**
      * Build a course with the block, an assign instance, and $count students
@@ -189,6 +303,9 @@ final class backfill_one_submission_test extends \advanced_testcase {
 
     /**
      * Seeds calendar configuration, business hours, and SLA settings for testing.
+     *
+     * The working day is the fixture's own: the hours db/install.php seeded are
+     * deleted first, since business_hours_lookup unions every row of a weekday.
      */
     private function seed_calendar(): void {
         set_config('calver', '1', 'block_feedback_tracker');
@@ -202,6 +319,7 @@ final class backfill_one_submission_test extends \advanced_testcase {
         set_config('bucket_thresholds_eff', '24,48,120', 'block_feedback_tracker');
 
         global $DB;
+        $DB->delete_records('block_feedback_tracker_chours');
         $now = time();
         for ($dow = 0; $dow <= 4; $dow++) {
             $DB->insert_record('block_feedback_tracker_chours', (object) [
@@ -209,6 +327,11 @@ final class backfill_one_submission_test extends \advanced_testcase {
                 'enabled' => 1, 'timecreated' => $now, 'timemodified' => $now,
             ]);
         }
+        $this->assertSame(
+            5,
+            $DB->count_records('block_feedback_tracker_chours'),
+            'Precondition: the working day is this fixture\'s.'
+        );
         academic_time::reset_memos();
     }
 }

@@ -36,20 +36,14 @@ if ($ADMIN->fulltree) {
         get_string('settings_scoring_desc', $plugin)
     ));
 
-    // The five score-formula weights. Saved values may sum to anything; the
-    // score calculator normalises at read time via load_weights(). Save-time
-    // normalisation is intentionally NOT performed, because it would fire
-    // partway through admin_apply_default_settings() (which writes each
-    // default one-by-one) and corrupt the values.
+    // The five score-formula weights. Saved values may sum to anything:
+    // responsiveness_calculator::load_weights() normalises at read time. Do not
+    // normalise on save; the callback would fire partway through
+    // admin_apply_default_settings(), which writes the defaults one by one.
     //
-    // Paramtype is a regex (admin_setting_configtext recognises /.../ as a
-    // regex pattern) rather than PARAM_FLOAT. Reason: PARAM_FLOAT's validator
-    // runs clean_param() and compares the result strictly against the input
-    // string — so "0.40" gets normalised to (float) 0.4, stringified to
-    // "0.4", and the strict comparison "0.40" === "0.4" fails. Admin would
-    // see "value is not valid" whenever they typed (or defaulted to) a
-    // trailing-zero float. The regex variant stores the entered string
-    // verbatim; load_weights() does the (float) cast at read time.
+    // The paramtype is a regex, not PARAM_FLOAT: admin_setting_configtext
+    // compares clean_param() output strictly with the input, so PARAM_FLOAT
+    // rejects "0.40" (cleaned to "0.4"), including the defaults below.
     $weights = [
         'weight_compliance' => '0.40',
         'weight_median'     => '0.25',
@@ -80,36 +74,27 @@ if ($ADMIN->fulltree) {
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
 
-    $s = new admin_setting_configtext(
+    // Hour-ruler band cutoffs, in increasing order: bucket::for_effective()
+    // tests them from the lowest up. The default, order and range of the three
+    // cutoff settings are thresholds_setting::SETTINGS.
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/bucket_thresholds_eff',
         get_string('settings_bucket_thresholds_eff', $plugin),
         get_string('settings_bucket_thresholds_eff_desc', $plugin),
-        '24,48,120',
-        PARAM_TEXT
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_eff']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
 
-    $s = new admin_setting_configtext(
-        $plugin . '/bucket_thresholds_raw',
-        get_string('settings_bucket_thresholds_raw', $plugin),
-        get_string('settings_bucket_thresholds_raw_desc', $plugin),
-        '24,48,120',
-        PARAM_TEXT
-    );
-    $settings->add($s);
-
     // Day-ruler band cutoffs, used instead of the hour thresholds when the
-    // display unit (Views section) is business days: excellent <= first,
-    // good <= second, regular <= third, critical above. Inclusive bounds —
-    // "up to 2 business days" is still excellent. Feeds the rollup's
+    // display unit (Views section) is business days. Bounds are inclusive
+    // (see bucket::for_effective_days()). Feeds the rollup's
     // critical_days/overgoal_days twins, hence the invalidate callback.
-    $s = new admin_setting_configtext(
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/bucket_thresholds_days',
         get_string('settings_bucket_thresholds_days', $plugin),
         get_string('settings_bucket_thresholds_days_desc', $plugin),
-        '2,5,10',
-        PARAM_TEXT
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_days']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
@@ -120,11 +105,10 @@ if ($ADMIN->fulltree) {
         'business_days'
     );
 
-    // SLA goal in business days — the day-mode twin of sla_goal_hours. It
-    // feeds only the display-only compliance_pct_days figure; the score keeps
-    // using sla_goal_hours, so switching the display unit never moves the
-    // score. Shown only when the display unit is business days, mirroring
-    // bucket_thresholds_days.
+    // SLA goal in business days, the day-mode twin of sla_goal_hours. It bounds
+    // the display-only day figures (compliance_pct_days, overgoal_days and the
+    // report's business-days pending band); the score keeps sla_goal_hours, so
+    // switching the display unit never moves the score.
     $s = new admin_setting_configtext(
         $plugin . '/sla_goal_days',
         get_string('settings_sla_goal_days', $plugin),
@@ -142,24 +126,19 @@ if ($ADMIN->fulltree) {
     );
 
     // Score-band thresholds: three CSV cutoffs that map a 0-100 score to one
-    // of the four bands. Defaults 90/70/40 match the design palette. Stored
-    // values are clamped + ordered at read time in
-    // responsiveness_calculator::parse_thresholds_band(); admin can type any
-    // numeric values and the calculator copes.
-    $s = new admin_setting_configtext(
+    // of the four bands, in decreasing order because
+    // responsiveness_calculator::band_for() tests them from the highest down.
+    $s = new \block_feedback_tracker\local\admin\thresholds_setting(
         $plugin . '/score_thresholds_band',
         get_string('settings_score_thresholds_band', $plugin),
         get_string('settings_score_thresholds_band_desc', $plugin),
-        '90,70,40',
-        PARAM_TEXT
+        ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['score_thresholds_band']
     );
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
 
-    // Score simulator launcher — sits directly under the scoring weights so
-    // the admin can open the interactive sandbox and see how the weights
-    // behave before committing the values above. Rendered via the shared
-    // tools_links template (same pattern as the Tools section below).
+    // Score simulator launcher, directly under the scoring settings so the
+    // admin can try weights before saving them.
     global $OUTPUT;
     $simulatorlink = $OUTPUT->render_from_template('block_feedback_tracker/tools_links', [
         'links' => [
@@ -239,11 +218,9 @@ if ($ADMIN->fulltree) {
         get_string('settings_processing_scope_desc', $plugin)
     ));
 
-    // Hidden-course processing toggle. No updated-callback: flipping it
-    // has no retroactive effect on existing ledger rows / rollups — the
-    // new rule applies from the next event onward. Existing data for
-    // hidden courses stays in the tables until course_deleted fires or
-    // the admin runs the reset tool.
+    // Hidden-course processing toggle. No updated callback: the change is not
+    // retroactive. The new rule applies to later writes; rows already stored
+    // for hidden courses stay as they are.
     $settings->add(new admin_setting_configcheckbox(
         $plugin . '/process_hidden_courses',
         get_string('settings_process_hidden_courses', $plugin),
@@ -251,11 +228,10 @@ if ($ADMIN->fulltree) {
         0
     ));
 
-    // Backfill master switch. Off by default so install doesn't
-    // immediately scan {assign_submission} on sites with millions of
-    // rows. Turn on once the block is on every course you want
-    // tracked. The dispatcher reads this flag on each tick — no
-    // updated-callback needed.
+    // Backfill master switch. Off by default so install does not scan
+    // {assign_submission} on a large site; turn it on once the block is on
+    // every course to track. backfill_history reads it on each tick, so no
+    // updated callback is needed.
     $settings->add(new admin_setting_configcheckbox(
         $plugin . '/backfill_active',
         get_string('settings_backfill_active', $plugin),
@@ -279,6 +255,10 @@ if ($ADMIN->fulltree) {
         'backfill_sub_chunk'        => '50',
         'trend_window_days'         => '30',
         'purge_inactive_after_days' => '730',
+        'reconcile_batch_size'      => '1000',
+        'reconcile_time_cap_seconds' => '50',
+        'retention_days'            => '365',
+        'retention_batch_size'      => '5000',
     ];
     foreach ($perf as $key => $default) {
         $settings->add(new admin_setting_configtext(
@@ -297,18 +277,20 @@ if ($ADMIN->fulltree) {
         ''
     ));
 
-    // Note: 'exclude_grader_submissions' deliberately has no updated-callback.
-    // Flipping it has no retroactive effect — existing rows in the ledger
-    // are kept as-is. The new behaviour kicks in on the next submission
-    // event for an affected user.
+    // The exclude_grader_submissions toggle deliberately has no updated callback:
+    // it is applied when a ledger row is written, so flipping it is not retroactive.
     $viewbools = [
         'enable_admin_view_all'       => 0,
-        'enable_school_comparison'    => 1,
         'enable_teacher_simulator'    => 0,
         'show_perceived_time'         => 1,
         'show_paused_today_indicator' => 1,
         'show_peer_context'           => 1,
         'exclude_grader_submissions'  => 1,
+        'release_stops_clock'         => 0,
+        'reconcile_active'            => 1,
+        'retention_active'            => 0,
+        'removal_cleanup_active'      => 0,
+        'removal_grace_follow_recyclebin' => 1,
     ];
     foreach ($viewbools as $key => $default) {
         $settings->add(new admin_setting_configcheckbox(
@@ -319,12 +301,21 @@ if ($ADMIN->fulltree) {
         ));
     }
 
-    // Display unit for the wait-time metrics. 'hours' (default) keeps the
-    // existing effective/wall-clock hour figures; 'business_days' switches to
-    // date-based elapsed-day counts (business days skip weekends, holidays and
-    // recesses; the time of day is ignored). Both representations are computed
-    // and stored by the rollup, so this toggle is display-only — no rollup
-    // callback, no recompute on change.
+    /* Grace period before a removed block's course data is discarded. A
+     * duration control rather than a plain integer so the unit is explicit —
+     * and so it reads in the same currency as tool_recyclebin's own expiry
+     * settings, which this can follow. */
+    $settings->add(new admin_setting_configduration(
+        $plugin . '/removal_grace_seconds',
+        get_string('settings_removal_grace_seconds', $plugin),
+        get_string('settings_removal_grace_seconds_desc', $plugin),
+        \block_feedback_tracker\local\sla\removal_grace::DEFAULT_SECONDS
+    ));
+
+    // Display unit for the wait-time metrics: 'hours' (effective / wall-clock
+    // hours) or 'business_days' (date-based day counts that skip weekends,
+    // holidays and recesses and ignore the time of day). The rollup stores
+    // both, so this is display-only: no updated callback, no recompute.
     $settings->add(new admin_setting_configselect(
         $plugin . '/display_time_unit',
         get_string('settings_display_time_unit', $plugin),
@@ -336,9 +327,9 @@ if ($ADMIN->fulltree) {
         ]
     ));
 
-    // Group-card title composition from custom group fields. Empty = real group
-    // name. Display-only — no rollup callback; the 15-min payload cache (or the
-    // block's refresh button) picks up changes.
+    // Group-card title composition from custom group fields; empty means the
+    // group name. Display-only, no updated callback: the block payload cache
+    // (15 minutes) or the block's refresh button picks up changes.
     $s = new admin_setting_configtext(
         $plugin . '/group_title_fields',
         get_string('settings_group_title_fields', $plugin),
@@ -368,6 +359,10 @@ if ($ADMIN->fulltree) {
             [
                 'url'   => (new moodle_url('/blocks/feedback_tracker/pages/audit_log.php'))->out(false),
                 'label' => get_string('manage_link_audit', $plugin),
+            ],
+            [
+                'url'   => (new moodle_url('/blocks/feedback_tracker/pages/bulk_remove.php'))->out(false),
+                'label' => get_string('manage_link_bulkremove', $plugin),
             ],
             [
                 'url'   => (new moodle_url('/blocks/feedback_tracker/pages/reset.php'))->out(false),

@@ -36,10 +36,9 @@ require_once($CFG->libdir . '/formslib.php');
 /**
  * Upserts one row in {block_feedback_tracker_cday}.
  *
- * v1.0.9 — when daytype = 'optional', three additional fields are revealed:
- *  - starttime (HH:MM)
- *  - endtime   (HH:MM)
- *  - note      (event name, already on the form for every daytype)
+ * When daytype = 'optional' the form also shows a start and an end time
+ * (HH:MM) for a sub-day event, and the note, present for every daytype,
+ * serves as the event name.
  *
  * The HH:MM values are post-processed in get_data() to minutes-since-
  * midnight ints so the WS layer doesn't need its own time parser.
@@ -76,9 +75,8 @@ class calendar_day_form extends \moodleform {
         $mform->addElement('select', 'daytype', get_string('caleditor_col_type', $plugin), $types);
         $mform->setDefault('daytype', 'holiday');
 
-        /* v1.0.9 — sub-day event window. Only meaningful when daytype is
-         * 'optional'; hideIf hides the inputs otherwise. Leaving both
-         * empty preserves the legacy "full-day optional" semantics. */
+        /* Sub-day event window, only meaningful when daytype is 'optional'.
+         * Leaving both empty keeps the full-day optional rule. */
         $mform->addElement(
             'text',
             'starttime',
@@ -112,10 +110,12 @@ class calendar_day_form extends \moodleform {
         );
         $mform->setType('note', PARAM_TEXT);
 
-        // Use moodleform's default "Save changes" label — that's the unique
-        // label Behat scenarios target. The bulk-import form below has a
-        // custom "Import" label, so the two buttons stay distinguishable.
-        $this->add_action_buttons(false);
+        // A named submit, as on every form of the calendar editor, so the page's
+        // forms do not all post "submitbutton". The "Save changes" label is the
+        // only one on that page (the other forms say "Save" or "Import"), and
+        // Behat presses it by label.
+        $mform->addElement('submit', 'savedaybutton', get_string('savechanges'));
+        $mform->closeHeaderBefore('savedaybutton');
     }
 
     /**
@@ -139,8 +139,8 @@ class calendar_day_form extends \moodleform {
             }
         }
 
-        /* v1.0.9 — validate the optional time window. Either both empty
-         * (full-day optional) or both set with start < end. */
+        /* The optional time window is either both empty (full-day optional)
+         * or both set with start < end. */
         if (($data['daytype'] ?? '') === calendar::DAYTYPE_OPTIONAL) {
             $start = trim((string) ($data['starttime'] ?? ''));
             $end = trim((string) ($data['endtime'] ?? ''));
@@ -177,9 +177,8 @@ class calendar_day_form extends \moodleform {
             $data->starttime = $start === '' ? null : self::hhmm_to_minutes($start);
             $data->endtime = $end === '' ? null : self::hhmm_to_minutes($end);
         } else {
-            // Force null on non-optional daytypes — the WS otherwise
-            // silently accepts stale time-window values left over from
-            // a previous "optional" selection.
+            // Drop the window: hidden time inputs still post what they held from
+            // an earlier "optional" selection. save_calendar_day drops it as well.
             $data->starttime = null;
             $data->endtime = null;
         }

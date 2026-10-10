@@ -14,12 +14,13 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Shimmer placeholder cards shown while the block fetches group data.
+ * Shimmer placeholder cards shown while the block or the pending report is
+ * loading.
  *
  * Mirrors the GroupCard silhouette (header line + hero block + metrics row)
- * so the layout doesn't jump when the real cards replace it. Purely
- * decorative — the parent region carries the aria-busy/label, so the whole
- * stack is hidden from assistive tech.
+ * so the layout doesn't jump when the real cards replace it. The stack is
+ * aria-hidden: announcing the loading state is the caller's job (BlockView
+ * sets aria-busy and a label on its region).
  *
  * @module    block_feedback_tracker/components/Skeleton
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

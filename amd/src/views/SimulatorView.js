@@ -14,11 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Interactive Academic Responsiveness Score simulator. A sandbox where a
- * site admin moves sliders for a hypothetical group (and the five score
- * weights) and watches the score + band + term breakdown update live — so
- * they can tune the weights and build intuition before touching the real
- * settings. Pure client-side: nothing is saved.
+ * Interactive Academic Responsiveness Score simulator. A sandbox where the
+ * user moves sliders for a hypothetical group (and the five score weights)
+ * and watches the score + band + term breakdown update live, to tune the
+ * weights and build intuition before touching the real settings. Pure
+ * client-side: nothing is saved. Access rules live in pages/score_simulator.php.
  *
  * @module    block_feedback_tracker/views/SimulatorView
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -30,6 +30,7 @@ import ScoreGauge from 'block_feedback_tracker/components/ScoreGauge';
 import Badge from 'block_feedback_tracker/components/Badge';
 import {computeScore, TERMS} from 'block_feedback_tracker/lib/score';
 import {classifySpeed, speedLabel} from 'block_feedback_tracker/lib/trend';
+import {formatDecimal} from 'block_feedback_tracker/lib/format';
 
 /** Built-in scenarios — each sets the hypothetical group's metrics. */
 const SCENARIOS = [
@@ -58,14 +59,28 @@ const INPUT_FIELDS = [
 ];
 
 /**
- * A labelled range slider with a live read-out.
+ * Decimal places a slider step implies: 0 for 1, 2 for 0.01.
+ *
+ * @param {number} step
+ * @returns {number}
+ */
+const stepDigits = (step) => {
+    const text = String(step);
+    const dot = text.indexOf('.');
+    return dot === -1 ? 0 : text.length - dot - 1;
+};
+
+/**
+ * A labelled range slider with a live read-out. The read-out goes through
+ * formatDecimal with as many places as the step has, so a weight reads "0,40"
+ * in a language whose decimal separator is a comma.
  *
  * @param {object} props
  * @param {string} props.label     Field label.
  * @param {number} props.value     Current value.
  * @param {number} props.min       Range minimum.
  * @param {number} props.max       Range maximum.
- * @param {number} props.step      Step increment.
+ * @param {number} props.step      Step increment; also sets the read-out's decimal places.
  * @param {string} props.unit      Unit suffix shown next to the value ('' for none).
  * @param {boolean} props.disabled Greys out and shows '—' when true.
  * @param {Function} props.onInput Receives the new numeric value.
@@ -73,18 +88,22 @@ const INPUT_FIELDS = [
  *     directional trend cue), rendered in place of the plain numeric value.
  * @returns {object} vnode
  */
-const Slider = ({label, value, min, max, step, unit, disabled, onInput, valuenode}) => html`
-    <label class=${'bft-sim-slider' + (disabled ? ' bft-sim-slider-off' : '')}>
-        <span class="bft-sim-slider-label">${label}</span>
-        <input type="range" min=${min} max=${max} step=${step}
-               value=${value} disabled=${disabled}
-               onInput=${(e) => onInput(Number(e.target.value))} />
-        ${valuenode
-            || html`<span class="bft-sim-slider-val bft-mono">${disabled ? '—' : value + (unit ? ' ' + unit : '')}</span>`}
-    </label>
-`;
+const Slider = ({label, value, min, max, step, unit, disabled, onInput, valuenode}) => {
+    const readout = disabled ? '—' : formatDecimal(value, stepDigits(step)) + (unit ? ' ' + unit : '');
+    return html`
+        <label class=${'bft-sim-slider' + (disabled ? ' bft-sim-slider-off' : '')}>
+            <span class="bft-sim-slider-label">${label}</span>
+            <input type="range" min=${min} max=${max} step=${step}
+                   value=${value} disabled=${disabled}
+                   onInput=${(e) => onInput(Number(e.target.value))} />
+            ${valuenode || html`<span class="bft-sim-slider-val bft-mono">${readout}</span>`}
+        </label>
+    `;
+};
 
 /**
+ * Top-level simulator view.
+ *
  * @param {object} props
  * @param {object} props.initial  Mount payload: {config, i18n}.
  * @returns {object} vnode
@@ -149,7 +168,7 @@ export default function SimulatorView({initial}) {
     });
 
     const termName = (k) => (i18n['sim_term_' + k] || k);
-    const fmt = (n, d = 2) => (n === null || n === undefined ? '—' : Number(n).toFixed(d));
+    const fmt = (n, d = 2) => (n === null || n === undefined ? '—' : formatDecimal(n, d));
 
     return html`
         <div class="bft-sim">
@@ -259,7 +278,8 @@ export default function SimulatorView({initial}) {
                 <aside class="bft-sim-result">
                     <div class="bft-sim-result-sticky">
                         <div class=${'bft-sim-gauge bft-sim-tone-' + (result.band || 'pending')}>
-                            <${ScoreGauge} score=${result.score} band=${result.band} size=${168} />
+                            <${ScoreGauge} score=${result.score} band=${result.band} size=${168}
+                                arialabel=${i18n.gauge_aria || ''} />
                             <${Badge} band=${result.band} label=${bandLabel} />
                         </div>
 

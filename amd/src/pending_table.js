@@ -42,8 +42,9 @@ const cellKey = (cell) => {
 };
 
 /**
- * Numeric-aware comparator. Pure-numeric strings sort numerically; mixed
- * strings sort lexicographically.
+ * Numeric-aware comparator. When both keys start with a number (parseFloat
+ * succeeds, so "12.3 h" counts) they sort numerically; otherwise they sort
+ * with localeCompare.
  *
  * @param {string} a
  * @param {string} b
@@ -52,9 +53,6 @@ const cellKey = (cell) => {
 const compareKeys = (a, b) => {
     const an = parseFloat(a);
     const bn = parseFloat(b);
-    if (!Number.isNaN(an) && !Number.isNaN(bn) && String(an) === a && String(bn) === b) {
-        return an - bn;
-    }
     if (!Number.isNaN(an) && !Number.isNaN(bn)) {
         return an - bn;
     }
@@ -69,13 +67,22 @@ const compareKeys = (a, b) => {
 const enhanceTable = (table) => {
     const headers = table.querySelectorAll('thead th[data-sort]');
     headers.forEach((th) => {
-        th.addEventListener('click', () => {
+        // The listener goes on the button, not the cell: a button is
+        // focusable and fires on Enter and Space for free, which a th does
+        // not.
+        const trigger = th.querySelector('.bft-th-sortable-btn') || th;
+        trigger.addEventListener('click', () => {
             const colIdx = Array.from(th.parentElement.children).indexOf(th);
             const isAsc = !th.classList.contains('bft-sort-asc');
             th.parentElement.querySelectorAll('th').forEach((x) => {
                 x.classList.remove('bft-sort-asc', 'bft-sort-desc');
+                if (x.hasAttribute('aria-sort')) {
+                    x.setAttribute('aria-sort', 'none');
+                }
             });
             th.classList.add(isAsc ? 'bft-sort-asc' : 'bft-sort-desc');
+            // Announce the active column and direction to assistive tech.
+            th.setAttribute('aria-sort', isAsc ? 'ascending' : 'descending');
 
             const tbody = table.tBodies[0];
             if (!tbody) {
@@ -95,5 +102,12 @@ const enhanceTable = (table) => {
  * Initialise sortable tables in the current page.
  */
 export const init = () => {
+    // Without this guard a second init binds a second listener to every
+    // header, so one click sorts ascending then immediately re-sorts
+    // descending and the indicator no longer matches the row order.
+    if (window.bftPendingTableInitDone) {
+        return;
+    }
+    window.bftPendingTableInitDone = true;
     document.querySelectorAll('table.bft-sortable').forEach(enhanceTable);
 };

@@ -191,8 +191,8 @@ final class get_report_scopes_test extends \advanced_testcase {
         $this->seed_rollup($course, (int) $groupa->id, $studenta);
         $this->seed_rollup($course, (int) $groupb->id, $studentb);
 
-        // Strip accessallgroups from the non-editing teacher archetype so the
-        // SEPARATEGROUPS whitelist actually bites.
+        // Core does not grant accessallgroups to the non-editing teacher
+        // archetype; unassigning it keeps the test independent of that default.
         $roleid = (int) $DB->get_field('role', 'id', ['shortname' => 'teacher'], MUST_EXIST);
         unassign_capability('moodle/site:accessallgroups', $roleid);
         accesslib_clear_all_caches_for_unit_testing();
@@ -205,6 +205,81 @@ final class get_report_scopes_test extends \advanced_testcase {
         $this->assertTrue($result['success']);
         $this->assertCount(1, $result['groups']);
         $this->assertSame((int) $groupa->id, (int) $result['groups'][0]['groupid']);
+    }
+
+    /**
+     * A group name reaches the caller filtered, in the plain spelling: the
+     * multilang filter picks the English half and the ampersand is not escaped.
+     *
+     * @return void
+     */
+    public function test_group_name_is_filtered_and_plain(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $group = $this->getDataGenerator()->create_group([
+            'courseid' => $course->id,
+            'name' => '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>',
+        ]);
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $generator->create_rollup_row(['courseid' => (int) $course->id, 'groupid' => (int) $group->id]);
+        group_access::reset_memo();
+
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function(
+            'block_feedback_tracker_get_report_scopes',
+            ['courseid' => (int) $course->id]
+        );
+
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertCount(1, $response['data']['groups']);
+        $this->assertSame((int) $group->id, $response['data']['groups'][0]['groupid']);
+        $this->assertSame('A & B', $response['data']['groups'][0]['name']);
+    }
+
+    /**
+     * A rollup row whose group no longer exists is named by the plugin's lang
+     * string, the same name the block gives it, so a string customisation
+     * reaches the report's class filter too.
+     *
+     * @return void
+     */
+    public function test_a_row_without_its_group_gets_the_localised_fallback_name(): void {
+        global $CFG;
+        $this->resetAfterTest();
+        $this->seed_config();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->create_rollup_row([
+            'courseid' => (int) $course->id,
+            'groupid' => 987654,
+        ]);
+        group_access::reset_memo();
+        $this->setUser($teacher);
+
+        // The en_local file is how a customised string (tool_customlang) reaches get_string().
+        $dir = $CFG->langlocalroot . '/en_local';
+        make_writable_directory($dir);
+        $file = $dir . '/block_feedback_tracker.php';
+        file_put_contents($file, "<?php\n\$string['card_groupfallback'] = 'Removed group {\$a}';\n");
+        get_string_manager()->reset_caches();
+        try {
+            $result = get_report_scopes::execute((int) $course->id);
+        } finally {
+            unlink($file);
+            get_string_manager()->reset_caches();
+        }
+
+        $this->assertCount(1, $result['groups']);
+        $this->assertSame(987654, $result['groups'][0]['groupid']);
+        $this->assertSame('Removed group 987654', $result['groups'][0]['name']);
     }
 
     /**

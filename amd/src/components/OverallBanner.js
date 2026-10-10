@@ -15,13 +15,13 @@
 
 /**
  * Overall responsiveness banner — sits at the top of the block view above
- * the group cards. Renders the "ACADEMIC RESPONSIVENESS" eyebrow, a
- * ScoreRing with the big numeric score + status pill, and an optional
- * PausedNote underneath.
+ * the group cards. Renders the overall_eyebrow label, a ScoreRing with the
+ * big numeric score + status pill, and an optional scheduled-pause notice
+ * underneath.
  *
- * The overall score is the caller's responsibility: BlockView computes a
- * pending-weighted average of the per-group scores so a group with no work
- * doesn't drag the headline number.
+ * The caller supplies the score: BlockView uses the whole-course aggregate
+ * from get_responsiveness and falls back to a pending-weighted average of
+ * the loaded cards.
  *
  * @module    block_feedback_tracker/components/OverallBanner
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -31,7 +31,7 @@
 import {html} from 'block_feedback_tracker/lib/preact';
 import ScoreRing from 'block_feedback_tracker/components/ScoreRing';
 import Badge from 'block_feedback_tracker/components/Badge';
-import PausedNote from 'block_feedback_tracker/components/PausedNote';
+import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
 
 /**
  * @param {object} props
@@ -39,11 +39,10 @@ import PausedNote from 'block_feedback_tracker/components/PausedNote';
  * @param {string|null} props.band    Band slug.
  * @param {string} props.bandlabel    Localised band label.
  * @param {object} props.i18n         Label bundle.
- * @param {string|null} [props.pausedcurrent]
- * @param {string|null} [props.pausednext]
+ * @param {Array<object>} [props.pauses]  Upcoming scheduled pauses (already gated).
  * @returns {object} vnode
  */
-export default function OverallBanner({score, band, bandlabel, i18n, pausedcurrent, pausednext}) {
+export default function OverallBanner({score, band, bandlabel, i18n, pauses}) {
     const display = score === null || score === undefined ? '—' : Math.round(Number(score));
     return html`
         <div class="bft-overall-banner">
@@ -60,7 +59,7 @@ export default function OverallBanner({score, band, bandlabel, i18n, pausedcurre
                     <${Badge} band=${band} label=${bandlabel} />
                 </div>
             </div>
-            <${PausedNote} current=${pausedcurrent} next=${pausednext} label=${i18n.paused_today_label} />
+            <${ScheduledPauses} pauses=${pauses} i18n=${i18n} compact=${true} />
         </div>
     `;
 }

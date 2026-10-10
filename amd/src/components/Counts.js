@@ -14,10 +14,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Pending / Priority / Over-goal counts row.
+ * Row of label / value counts.
  *
- * Stateless. Props mirror the `counts` array built by
- * classes/output/responsiveness_card.php (label + value pairs).
+ * Stateless. Items are `{label, value}` pairs (e.g. Waiting / Attention /
+ * Priority). Values are rendered as given, so any number formatting is the
+ * caller's job (formatCount() for a submission count).
  *
  * @module    block_feedback_tracker/components/Counts
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

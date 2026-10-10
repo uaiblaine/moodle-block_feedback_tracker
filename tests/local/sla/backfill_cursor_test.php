@@ -27,9 +27,8 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 /**
- * Wraps {block_feedback_tracker_bfcursor}. Get-or-create / advance /
- * reset / enable / disable / delete primitives that the
- * backfill_history dispatcher and the per-course CLI tool consume.
+ * Covers the {block_feedback_tracker_bfcursor} primitives used by the
+ * backfill_history task and cli/backfill_course.php.
  *
  * @covers \block_feedback_tracker\local\sla\backfill_cursor
  */
@@ -135,8 +134,7 @@ final class backfill_cursor_test extends \advanced_testcase {
     }
 
     /**
-     * delete() removes the row. Called from the course_deleted cleanup
-     * chain so a deleted course doesn't leave orphaned cursor rows.
+     * delete() removes the row.
      */
     public function test_delete_removes_row(): void {
         $this->resetAfterTest();
@@ -148,5 +146,85 @@ final class backfill_cursor_test extends \advanced_testcase {
 
         backfill_cursor::delete($courseid);
         $this->assertFalse($DB->record_exists('block_feedback_tracker_bfcursor', ['courseid' => $courseid]));
+    }
+
+    /**
+     * Bulk creation adds the missing rows and leaves the existing ones alone.
+     *
+     * Leaving existing rows alone is what matters: backfill_history calls this
+     * every tick for every tracked course, so overwriting a found row would
+     * restart the backfill of every completed course on every tick.
+     *
+     * @return void
+     */
+    public function test_ensure_for_courses_creates_only_what_is_missing(): void {
+        global $DB;
+        $this->resetAfterTest();
+
+        // One course that has already finished its backfill.
+        $done = (int) $this->getDataGenerator()->create_course()->id;
+        backfill_cursor::get_or_create($done);
+        backfill_cursor::advance($done, 4242, true);
+        $before = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $done]);
+        $this->assertSame(0, (int) $before->active, 'Sanity: this course is complete.');
+
+        $fresh = (int) $this->getDataGenerator()->create_course()->id;
+        $second = (int) $this->getDataGenerator()->create_course()->id;
+
+        backfill_cursor::ensure_for_courses([$done, $fresh, $second]);
+
+        $this->assertSame(3, $DB->count_records('block_feedback_tracker_bfcursor'));
+        foreach ([$fresh, $second] as $courseid) {
+            $row = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $courseid]);
+            $this->assertNotEmpty($row, 'A course with no cursor gets one.');
+            $this->assertSame(1, (int) $row->active, 'And it starts active.');
+            $this->assertSame(0, (int) $row->lastsubid);
+        }
+
+        $after = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $done]);
+        $this->assertSame((int) $before->id, (int) $after->id, 'The finished course keeps its row.');
+        $this->assertSame(0, (int) $after->active, 'And stays finished.');
+        $this->assertSame(4242, (int) $after->lastsubid, 'And keeps its position.');
+
+        // Running it again changes nothing at all.
+        backfill_cursor::ensure_for_courses([$done, $fresh, $second]);
+        $this->assertSame(3, $DB->count_records('block_feedback_tracker_bfcursor'));
+    }
+
+    /**
+     * A repeated course id in the input produces one row, not a unique-key
+     * violation that takes its whole insert batch down with it.
+     *
+     * @return void
+     */
+    public function test_ensure_for_courses_tolerates_a_repeated_id(): void {
+        global $DB;
+        $this->resetAfterTest();
+
+        $courseid = (int) $this->getDataGenerator()->create_course()->id;
+        $other = (int) $this->getDataGenerator()->create_course()->id;
+
+        backfill_cursor::ensure_for_courses([$courseid, $courseid, $other]);
+
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_bfcursor', ['courseid' => $courseid]));
+        $this->assertSame(
+            1,
+            $DB->count_records('block_feedback_tracker_bfcursor', ['courseid' => $other]),
+            'Control: the rest of the batch survived, which is what a failed insert would have taken out.'
+        );
+    }
+
+    /**
+     * An empty course list is a no-op, not an empty insert.
+     *
+     * @return void
+     */
+    public function test_ensure_for_courses_with_nothing_to_do(): void {
+        global $DB;
+        $this->resetAfterTest();
+
+        backfill_cursor::ensure_for_courses([]);
+
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_bfcursor'));
     }
 }

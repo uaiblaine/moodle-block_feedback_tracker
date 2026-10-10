@@ -17,11 +17,10 @@
 /**
  * Behat page-name resolvers for block_feedback_tracker.
  *
- * Behat's "I am on the ... page" steps consult resolvers on per-component
- * classes. Without this class, scenarios that say
- * `I am on the "block_feedback_tracker > Teacher dashboard" page` fail with
- * "Step definition not found" — there's no built-in resolver for our
- * plugin-owned pages.
+ * Core's "I am on the ... page" steps resolve a "block_feedback_tracker > <name>"
+ * page through this class (behat_navigation::resolve_page_helper() and
+ * resolve_page_instance_helper()), so every plugin page a scenario opens that
+ * way needs a case here.
  *
  * @package    block_feedback_tracker
  * @category   test
@@ -49,6 +48,19 @@ class behat_block_feedback_tracker extends behat_base {
         switch ($page) {
             case 'Teacher dashboard':
                 return new moodle_url('/blocks/feedback_tracker/pages/teacher_dashboard.php');
+            case 'Settings':
+                return new moodle_url(
+                    '/admin/settings.php',
+                    ['section' => 'blocksettingfeedback_tracker']
+                );
+            case 'Audit log':
+                return new moodle_url('/blocks/feedback_tracker/pages/audit_log.php');
+            case 'Reset':
+                return new moodle_url('/blocks/feedback_tracker/pages/reset.php');
+            case 'Score simulator':
+                return new moodle_url('/blocks/feedback_tracker/pages/score_simulator.php');
+            case 'Calendar editor':
+                return new moodle_url('/blocks/feedback_tracker/pages/calendar_editor.php');
         }
         throw new Exception("Unrecognised block_feedback_tracker page: '{$page}'.");
     }
@@ -69,6 +81,12 @@ class behat_block_feedback_tracker extends behat_base {
             case 'Pending report':
                 return new moodle_url(
                     '/blocks/feedback_tracker/pages/pending_report.php',
+                    ['courseid' => $this->get_course_id($identifier)]
+                );
+            case 'Group drilldown':
+                // Course-bound: the page takes a required courseid.
+                return new moodle_url(
+                    '/blocks/feedback_tracker/pages/group_drilldown.php',
                     ['courseid' => $this->get_course_id($identifier)]
                 );
         }
