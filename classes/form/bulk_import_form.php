@@ -56,6 +56,7 @@ class bulk_import_form extends \moodleform {
         $mform->setType('csv', PARAM_RAW);
         $mform->addRule('csv', null, 'required', null, 'client');
 
-        $this->add_action_buttons(false, get_string('caleditor_bulk_button', $plugin));
+        $mform->addElement('submit', 'importbutton', get_string('caleditor_bulk_button', $plugin));
+        $mform->closeHeaderBefore('importbutton');
     }
 }

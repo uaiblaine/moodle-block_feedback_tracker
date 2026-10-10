@@ -26,8 +26,10 @@ defined('MOODLE_INTERNAL') || die();
 
 $definitions = [
     // Per-day resolved calendar rule (type, weekend flag, business hours, is_active).
-    // Keys are "{calver}_{ymd}" so a calver bump naturally invalidates old entries
-    // without an explicit purge.
+    // Keys are "{calver}_{ymd}", so a calver bump stops old entries being read.
+    // There is no ttl: the calendar observer and lib.php's invalidate and reset
+    // functions purge this definition and pause_windows_by_course after their
+    // bump, so the unreachable entries do not stay in the store.
     'calendar_effective_day' => [
         'mode' => cache_store::MODE_APPLICATION,
         'simplekeys' => false,
@@ -46,8 +48,10 @@ $definitions = [
         'staticaccelerationsize' => 100,
     ],
 
-    // Web-service response for get_responsiveness. Session-scoped; key is
-    // "{calver}_{userid}_{courseid}". WS-side staleness check uses lastsynced.
+    // Block payload from responsiveness_payload::for_course(). Session-scoped; key
+    // is "{calver}_{userid}_{courseid}" plus suffixes for the day ruler, the page, the
+    // sort and the language. Entries older than its CACHE_TTL, by their lastsynced
+    // field, are ignored.
     'responsiveness_payload' => [
         'mode' => cache_store::MODE_SESSION,
         'simplekeys' => false,
@@ -55,7 +59,8 @@ $definitions = [
         'staticacceleration' => true,
     ],
 
-    // Site-level dashboard payload. Session-scoped; key is "{calver}_{userid}".
+    // Dashboard payloads of get_dashboard and get_insights. Session-scoped; each
+    // key starts with its web service's own key version, then calver and userid.
     'dashboard_payload' => [
         'mode' => cache_store::MODE_SESSION,
         'simplekeys' => false,
@@ -63,7 +68,7 @@ $definitions = [
         'staticacceleration' => true,
     ],
 
-    // School-wide comparison stats. Application-scoped; key is "{calver}_v1".
+    // School-wide comparison stats. Application-scoped; key is "{calver}_{days}".
     'site_comparison' => [
         'mode' => cache_store::MODE_APPLICATION,
         'simplekeys' => false,

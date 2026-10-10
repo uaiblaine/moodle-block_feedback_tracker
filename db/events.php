@@ -17,10 +17,11 @@
 /**
  * Event observer registrations.
  *
- * Wires assign / group / course events to the SLA observer, and the three
- * plugin custom events to the calendar observer. Observers are lightweight:
- * they upsert one ledger row plus enqueue one dirty-queue entry; the rollup
- * recompute happens out-of-band.
+ * Assign, gradebook, course, enrolment, user and group events go to the SLA
+ * observer, and the plugin's three calendar events to the calendar observer.
+ * The SLA observer keeps the ledger in step, dispatching bulk re-derivations
+ * as adhoc tasks; rollups are recomputed out of band. Why each event matters
+ * is documented on its handler in {@see \block_feedback_tracker\local\sla\observer}.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -47,11 +48,59 @@ $observers = [
         'eventname' => '\assignsubmission_file\event\submission_created',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
     ],
+    /* Edits to an existing submission. With submissiondrafts on, saving fires
+     * no assessable_submitted, so without these the ledger keeps a stale
+     * hand-in time. Do not register \mod_assign\event\submission_created or
+     * \mod_assign\event\submission_updated: both are abstract base classes
+     * that core never instantiates. */
+    [
+        'eventname' => '\assignsubmission_onlinetext\event\submission_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
+    ],
+    [
+        'eventname' => '\assignsubmission_file\event\submission_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
+    ],
+    [
+        'eventname' => '\mod_assign\event\submission_removed',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
+    ],
+    [
+        'eventname' => '\mod_assign\event\submission_duplicated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_changed',
+    ],
 
     // Grading.
     [
         'eventname' => '\mod_assign\event\submission_graded',
         'callback' => '\block_feedback_tracker\local\sla\observer::submission_graded',
+    ],
+    /* Grades entered in the gradebook, which fire no assign event. While a
+     * gradebook override or lock stands, assign::grading_disabled() also stops
+     * submission_graded for that student. grade_deleted is deliberately not
+     * registered; see observer::gradebook_changed(). */
+    [
+        'eventname' => '\core\event\user_graded',
+        'callback' => '\block_feedback_tracker\local\sla\observer::gradebook_changed',
+    ],
+    /* Marking workflow: the release is recorded nowhere else. See
+     * observer::workflow_state_changed(). */
+    [
+        'eventname' => '\mod_assign\event\workflow_state_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::workflow_state_changed',
+    ],
+    /* Marker allocation, which core stores no timestamp for. On Moodle 4.5 and
+     * 5.1 only the batch "Set allocated marker" operation fires it. See
+     * observer::marker_changed(). */
+    [
+        'eventname' => '\mod_assign\event\marker_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::marker_changed',
+    ],
+    /* Blind marking suppresses submission_graded until identities are revealed.
+     * See observer::identities_revealed(). */
+    [
+        'eventname' => '\mod_assign\event\identities_revealed',
+        'callback' => '\block_feedback_tracker\local\sla\observer::identities_revealed',
     ],
 
     // Group overrides on assign.
@@ -67,8 +116,34 @@ $observers = [
         'eventname' => '\mod_assign\event\group_override_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
     ],
+    /* User-level overrides and extensions move the dates one student is judged
+     * against, and no other event carries them. The reconciler's rule-drift
+     * sweep repairs a row whose event was lost, but only on its next pass. */
+    [
+        'eventname' => '\mod_assign\event\user_override_created',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
+    ],
+    [
+        'eventname' => '\mod_assign\event\user_override_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
+    ],
+    [
+        'eventname' => '\mod_assign\event\user_override_deleted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
+    ],
+    [
+        'eventname' => '\mod_assign\event\extension_granted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
+    ],
 
     // Course / cm lifecycle.
+    /* An assign's settings save: markingworkflow, markingallocation and
+     * teamsubmission change what stored rows mean, which no reconciler sweep
+     * detects. See observer::course_module_updated(). */
+    [
+        'eventname' => '\core\event\course_module_updated',
+        'callback' => '\block_feedback_tracker\local\sla\observer::course_module_updated',
+    ],
     [
         'eventname' => '\core\event\course_module_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::course_module_deleted',
@@ -76,6 +151,19 @@ $observers = [
     [
         'eventname' => '\core\event\course_deleted',
         'callback' => '\block_feedback_tracker\local\sla\observer::course_deleted',
+    ],
+
+    /* Participant lifecycle, cleanup only: rows for someone who left, or whose
+     * account is gone, are a response owed to nobody. The reconciler's
+     * departed-participant sweep removes them too, but visits a limited number
+     * of courses per two-hourly run; these remove them at once. */
+    [
+        'eventname' => '\core\event\user_enrolment_deleted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::enrolment_changed',
+    ],
+    [
+        'eventname' => '\core\event\user_deleted',
+        'callback' => '\block_feedback_tracker\local\sla\observer::user_deleted',
     ],
 
     // Group membership / lifecycle.

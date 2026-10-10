@@ -28,26 +28,27 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
- * Every five minutes, pop up to `recompute_batch_size` rows from
- * {block_feedback_tracker_queue} in FIFO order and queue one
- * `recompute_one` adhoc task per tuple. Moodle's task scheduler serialises
- * identical scheduled tasks across the cluster, so the previous inline
- * model was capped by a single worker's per-tick capacity. Adhoc tasks
- * parallelise naturally — different cron workers claim different
- * `{task_adhoc}` rows — so a cluster of N workers now drains at ~Nx the
- * old rate.
+ * Every five minutes, reads up to `recompute_batch_size` tuples from
+ * {block_feedback_tracker_queue} in FIFO order and queues one `recompute_one`
+ * adhoc task per tuple. A scheduled task runs on one cron worker at a time,
+ * while any worker can claim an adhoc task, so dispatching spreads the
+ * recompute work across the cluster.
  *
- * Dedup: `queue_adhoc_task($task, true)` collapses any pending adhoc with
- * the same component + classname + custom_data, so bursts of grading on
- * the same (courseid, groupid) tuple still produce a single recompute,
- * even when the submission_graded observer has already queued one.
+ * `queue_adhoc_task($task, true)` collapses a pending task with the same
+ * component, class and custom data, so a burst of grading on one
+ * (courseid, groupid) tuple, including the task the submission_graded
+ * observer queues, yields a single recompute. Such a refusal is counted apart
+ * from the dispatches, because the same refusal also comes from a
+ * retry-exhausted task on the versions
+ * {@see reconcile_ledger::queue_repair()} lists, and then nothing will
+ * recompute the tuple while the dead row is kept.
  *
- * Queue-row lifecycle is now owned by `recompute_one::execute()`: it
- * deletes the row after a successful `rollup_service::recompute_group()`.
- * Failures leave the queue row in place for retry — same retry semantic
- * as the previous inline drain.
+ * The queue row is not removed here: `recompute_one::execute()` deletes it
+ * after a successful `rollup_service::recompute_group()`, so a recompute that
+ * fails or is skipped leaves the tuple dirty for the next tick.
  */
 class drain_queue extends \core\task\scheduled_task {
     /** Default soft time cap (seconds). */
@@ -65,13 +66,14 @@ class drain_queue extends \core\task\scheduled_task {
     }
 
     /**
-     * Pop a batch of queue rows and dispatch one adhoc recompute task per
-     * tuple. Returns quickly — actual rollup work happens on whichever
-     * cron worker picks up each adhoc task.
+     * Read a batch of queue rows and dispatch one adhoc recompute task per
+     * tuple. The rollup work itself happens on whichever cron worker picks up
+     * each adhoc task.
      *
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $started = time();
         $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
         $batchsize = (int) (get_config('block_feedback_tracker', 'recompute_batch_size') ?: self::DEFAULT_BATCH_SIZE);
@@ -83,6 +85,7 @@ class drain_queue extends \core\task\scheduled_task {
         }
 
         $ok = 0;
+        $refused = 0;
         $fail = 0;
         foreach ($batch as $row) {
             if (time() > $deadline) {
@@ -91,17 +94,20 @@ class drain_queue extends \core\task\scheduled_task {
             try {
                 $task = new recompute_one();
                 /*
-                 * Custom-data key order must match the submission_graded
-                 * observer (classes/local/sla/observer.php) so the dedup
-                 * hash collides and the two producers collapse into one
-                 * adhoc task per tuple.
+                 * Same keys in the same order as
+                 * observer::submission_graded(): core's dedup compares the
+                 * JSON-encoded custom data as a string, so any difference
+                 * would queue two tasks for one tuple.
                  */
                 $task->set_custom_data([
                     'courseid' => (int) $row->courseid,
                     'groupid'  => (int) $row->groupid,
                 ]);
-                \core\task\manager::queue_adhoc_task($task, true);
-                $ok++;
+                if (\core\task\manager::queue_adhoc_task($task, true) !== false) {
+                    $ok++;
+                } else {
+                    $refused++;
+                }
             } catch (\Throwable $e) {
                 debugging(sprintf(
                     'drain_queue dispatch failed for courseid=%d groupid=%d: %s',
@@ -113,12 +119,22 @@ class drain_queue extends \core\task\scheduled_task {
             }
         }
 
-        if ($ok > 0 || $fail > 0) {
+        if ($refused > 0) {
+            mtrace(sprintf(
+                'drain_queue: %d of %d tuple(s) were not queued '
+                . '(a recompute already pending, or blocked by a retry-exhausted task).',
+                $refused,
+                $ok + $refused + $fail
+            ));
+        }
+
+        if ($ok > 0 || $refused > 0 || $fail > 0) {
             recompute_log::record(
                 recompute_log::REASON_DRAIN,
                 $ok,
                 null,
                 [
+                    'refused'  => $refused,
                     'failures' => $fail,
                     'took_ms'  => (time() - $started) * 1000,
                     'mode'     => 'dispatch',

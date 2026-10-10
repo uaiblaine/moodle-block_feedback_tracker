@@ -35,8 +35,9 @@ namespace block_feedback_tracker\local\calendar;
  *
  * Day-types: schoolday | holiday | recess | closed | optional.
  *
- * Row separators: line break. Field separators: comma or semicolon. Blank
- * lines and lines beginning with `#` are skipped.
+ * Row separators: line break. Field separators: comma or semicolon; only the
+ * first two split, so a note may itself contain either. Blank lines and lines
+ * beginning with `#` are skipped.
  *
  * Per-line errors are reported back rather than aborting the import: valid
  * rows are upserted, malformed rows are returned in the result with line
@@ -80,16 +81,22 @@ class csv_importer {
                 $errors[] = [
                     'line'    => $lineno,
                     'raw'     => $raw,
-                    'message' => 'Expected: YYYY-MM-DD, type[, note]',
+                    'message' => get_string('caleditor_bulk_error_format', 'block_feedback_tracker'),
                 ];
                 continue;
             }
             [$daydate, $daytype, $note] = $parsed;
 
             $existing = $DB->get_record('block_feedback_tracker_cday', ['daydate' => $daydate], 'id');
+            // A CSV row has no window syntax, so it always stores a full-day rule:
+            // the window columns are written as null, or an earlier sub-day window
+            // on the same date would survive the re-import. save_calendar_day
+            // clears them the same way.
             $record = (object) [
                 'daydate'      => $daydate,
                 'daytype'      => $daytype,
+                'starttime'    => null,
+                'endtime'      => null,
                 'note'         => $note,
                 'usermodified' => $userid > 0 ? $userid : null,
                 'timemodified' => $now,

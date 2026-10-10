@@ -43,10 +43,9 @@ final class bulk_import_calendar_test extends \advanced_testcase {
         $this->resetAfterTest();
         $this->setAdminUser();
 
-        // A line containing only "; " parses as two empty fields, which is
-        // a malformed row (NOT a separator-only line) — so it counts as a
-        // 4th error. Comment lines starting with "#" are skipped, as are
-        // truly-empty lines.
+        // The ";" line splits into two empty fields and is reported as a
+        // malformed row, not skipped; only empty lines and lines starting
+        // with "#" are skipped.
         $csv = <<<CSV
 2026-04-03, holiday, Good Friday
 2026-04-06, holiday, Easter Monday
@@ -111,5 +110,22 @@ CSV;
         $result = external_api::clean_returnvalue(bulk_import_calendar::execute_returns(), $result);
 
         $this->assertGreaterThan(5, $result['calver']);
+    }
+
+    /**
+     * The import is gated by managecalendar at system context; a course role
+     * is not a way in.
+     *
+     * @return void
+     */
+    public function test_teacher_without_managecalendar_is_refused(): void {
+        $this->resetAfterTest();
+
+        $course = $this->getDataGenerator()->create_course();
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+
+        $this->expectException(\required_capability_exception::class);
+        bulk_import_calendar::execute("daydate,daytype\n20260601,holiday\n");
     }
 }

@@ -1,0 +1,57 @@
+@block @block_feedback_tracker
+Feature: The plugin's admin and drill-down pages render for authorised users
+  In order to administer and inspect feedback turnaround
+  As a manager or an editing teacher
+  I need the management, audit, reset and drill-down pages to load
+
+  Background:
+    Given the following "courses" exist:
+      | fullname | shortname |
+      | Course A | CA        |
+    And the following "users" exist:
+      | username | firstname | lastname | email                |
+      | manager1 | Morgan    | Manager  | manager1@example.com |
+      | teacher1 | Terry     | Teacher  | teacher1@example.com |
+    And the following "course enrolments" exist:
+      | user     | course | role           |
+      | teacher1 | CA     | editingteacher |
+    And the following "role assigns" exist:
+      | user     | role    | contextlevel | reference |
+      | manager1 | manager | System       |           |
+
+  # The plugin's admin settings page carries the only index of the tool pages,
+  # so it has to keep listing all four of them. It is site-config gated, which
+  # is why this one scenario uses the admin rather than the manager.
+  Scenario: The settings page indexes every tool page
+    Given I log in as "admin"
+    When I am on the "block_feedback_tracker > Settings" page
+    Then I should see "Academic calendar editor"
+    And I should see "Recompute audit log"
+    And I should see "Remove the block in bulk"
+    And I should see "Reset all data"
+
+  Scenario: A manager reaches the recompute audit log
+    Given I log in as "manager1"
+    When I am on the "block_feedback_tracker > Audit log" page
+    Then I should see "Feedback Flow"
+
+  Scenario: A manager reaches the reset page and sees the data-loss warning
+    Given I log in as "manager1"
+    When I am on the "block_feedback_tracker > Reset" page
+    Then I should see "Feedback Flow"
+    And I should see "This will permanently delete every ledger, rollup, trend, site-stats and queue row."
+    And I should see "the recompute audit log are kept"
+
+  # The simulator lets a non-admin in only with a full-site grant, or with the
+  # enable_teacher_simulator switch on AND a non-empty teaching scope. A
+  # manager holding neither is refused, so this asserts the admin path.
+  Scenario: An administrator reaches the score simulator
+    Given I log in as "admin"
+    When I am on the "block_feedback_tracker > Score simulator" page
+    Then I should see "Score simulator"
+
+  Scenario: An editing teacher reaches the group drill-down for their course
+    Given I log in as "teacher1"
+    When I am on the "Course A" "block_feedback_tracker > Group drilldown" page
+    Then I should see "Pending submissions"
+    And I should see "Course A"

@@ -31,20 +31,20 @@ use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\calendar\day_counter;
 
 /**
- * Pending submissions accumulate effective hours over time even without
- * being graded. Without periodic recomputation, an "excellent" pending
- * submission would still read excellent at hour 25 — the score would lie.
+ * Keeps the elapsed time of ungraded submissions current: without it a
+ * pending submission would keep the bucket it had when last written (still
+ * "excellent" at hour 25).
  *
  * Run hourly by the `recompute_pending` scheduled task. For each pending
  * ledger row whose `effectivecalver` is behind the current calver, or whose
  * `effectiveasof` is older than one hour, re-runs the academic-time engine
- * against `now` and updates effectivehours / slabucket / pause records in
- * place; then enqueues each touched (course, group) tuple for rollup
- * recompute.
+ * against `now` and updates the waiting/effective hours, effective days and
+ * slabucket in place; then enqueues each touched (course, group) tuple for
+ * rollup recompute.
  *
- * The recompute is per-row and skips the expensive cm/assign/grade reads of
- * `submission_ledger::upsert_for_cm_user_attempt()` since the source-of-truth
- * fields (timesubmitted etc.) don't change between hours.
+ * It skips the cm/assign/grade reads of
+ * `submission_ledger::upsert_for_cm_user_attempt()`: the source fields
+ * (timesubmitted etc.) do not change while a row waits.
  */
 class pending_recomputer {
     /**
@@ -67,6 +67,8 @@ class pending_recomputer {
                FROM {block_feedback_tracker_sub}
               WHERE timegraded IS NULL
                 AND submissionstatus = :substatus
+                AND islatest = 1
+                AND iscurrent = 1
                 AND (effectivecalver < :calver OR effectiveasof IS NULL OR effectiveasof < :asof)
               ORDER BY COALESCE(effectiveasof, 0) ASC, id ASC",
             ['substatus' => submission_status::SUBMITTED, 'calver' => $calver, 'asof' => $stalecutoff],
@@ -88,13 +90,12 @@ class pending_recomputer {
                 continue;
             }
 
-            $audit = academic_time::elapsed_with_audit(
+            $effective = academic_time::elapsed_effective_hours(
                 (int) $r->courseid,
                 (int) $r->groupid,
                 $timesubmitted,
                 $now
             );
-            $effective = $audit['hours'];
             $waiting = round(max(0.0, ($now - $timesubmitted) / 3600.0), 2);
 
             $DB->update_record('block_feedback_tracker_sub', (object) [
@@ -107,9 +108,6 @@ class pending_recomputer {
                 'slabucket'       => bucket::for_effective($effective),
                 'timemodified'    => $now,
             ]);
-
-            // V2.0.0+: pause ledger removed; get_pause_timeline recomputes
-            // on demand. $audit['pauses'] is intentionally unused here.
 
             $touched[(int) $r->courseid . ':' . (int) $r->groupid] = [
                 (int) $r->courseid, (int) $r->groupid,

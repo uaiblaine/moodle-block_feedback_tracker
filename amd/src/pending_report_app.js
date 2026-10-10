@@ -24,6 +24,7 @@
 
 import {render, html} from 'block_feedback_tracker/lib/preact';
 import PendingReportView from 'block_feedback_tracker/views/PendingReportView';
+import {setGroupingSeparator, setDecimalSeparator, setDateContext} from 'block_feedback_tracker/lib/format';
 
 /**
  * Pull the JSON payload embedded inside the mount-point root.
@@ -59,6 +60,10 @@ export const init = () => {
         if (!initial) {
             return;
         }
+        const config = initial.config || {};
+        setGroupingSeparator(config.thousandssep);
+        setDecimalSeparator(config.decsep);
+        setDateContext(config.locale, config.timezone);
         render(html`<${PendingReportView} initial=${initial} />`, root);
     });
 };

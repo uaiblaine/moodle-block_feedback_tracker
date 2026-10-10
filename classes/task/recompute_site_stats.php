@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\site_stats_service;
 
 /**
@@ -49,6 +50,7 @@ class recompute_site_stats extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         site_stats_service::recompute_yesterday();
     }
 }

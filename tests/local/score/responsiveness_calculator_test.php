@@ -34,9 +34,7 @@ namespace block_feedback_tracker\local\score;
 final class responsiveness_calculator_test extends \advanced_testcase {
     /**
      * A group with no submitted work at all (nothing graded, nothing
-     * pending) has no responsiveness to measure: it scores null / 'nodata'
-     * rather than a misleading charitable 100, so empty groups never top the
-     * dashboard or skew averages.
+     * pending) scores null / 'nodata' rather than a charitable 100.
      */
     public function test_empty_group_scores_nodata(): void {
         $this->resetAfterTest();
@@ -52,9 +50,10 @@ final class responsiveness_calculator_test extends \advanced_testcase {
 
     /**
      * A group with work in flight but nothing graded yet (pending > 0,
-     * numgraded30d = 0) is NOT empty — it keeps a real charitable score
-     * rather than 'nodata'. With every gradable term defaulting to 1.0 and
-     * the trend term dropped, a fresh-but-active group can still hit 100.
+     * numgraded30d = 0) is not empty: it keeps a real score rather than
+     * 'nodata'. Compliance and median are treated charitably (1.0) and the
+     * trend term is dropped, so it scores high (98.33 here; only the pending
+     * term, 1 - 3/20, falls below 1.0).
      */
     public function test_started_but_ungraded_group_scores_high(): void {
         $this->resetAfterTest();
@@ -143,16 +142,14 @@ final class responsiveness_calculator_test extends \advanced_testcase {
 
     /**
      * Perfect metrics: 100% compliant, median = 0, no pending or critical,
-     * trend strongly improving (-20%). Should hit or near 100.
+     * trend at -100%. Scores exactly 100 and bands 'excellent'.
      */
     public function test_perfect_metrics_score_100(): void {
         $this->resetAfterTest();
         $this->seed_defaults();
 
-        // The trend_term saturates at 1.0 when trend_pct_30d <= -100 (median
-        // collapsed by 100% or more vs prior window). Anything less negative
-        // gives a smaller trend term and the score caps below 100. With
-        // every other term at 1.0, the formula produces exactly 100.0.
+        // The trend term reaches 1.0 only when trend_pct_30d is -100 or lower;
+        // with that, every term is at its maximum.
         $r = responsiveness_calculator::compute([
             'compliance_pct' => 100.0,
             'median_eff_h'   => 0.0,
@@ -203,8 +200,8 @@ final class responsiveness_calculator_test extends \advanced_testcase {
     }
 
     /**
-     * Admin-tunable score_thresholds_band setting shifts the band cutoffs:
-     * a stricter "85,70,50" configuration matches the v1.0.0 legacy bands.
+     * The admin-tunable score_thresholds_band setting shifts the band
+     * cutoffs, here to "85,70,50".
      */
     public function test_band_thresholds_respect_setting(): void {
         $this->resetAfterTest();

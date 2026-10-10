@@ -27,11 +27,11 @@ declare(strict_types=1);
 namespace block_feedback_tracker\event;
 
 /**
- * Fired by the calendar editor / bulk-import WS when a row in
- * {block_feedback_tracker_cday} is created, updated, or deleted.
+ * Fired by the save_calendar_day and bulk_import_calendar web services when a
+ * row in {block_feedback_tracker_cday} is created, updated, or deleted.
  *
- * The plugin's own observer picks this up to bump `calver`, enqueue affected
- * (course, group) tuples for rollup recompute, and write a `*_log` audit row.
+ * {@see \block_feedback_tracker\local\calendar\observer::day_updated()} bumps
+ * `calver` and enqueues every (course, group) rollup tuple for recompute.
  */
 class cal_day_updated extends \core\event\base {
     /**
@@ -42,9 +42,9 @@ class cal_day_updated extends \core\event\base {
     protected function init(): void {
         $this->data['crud'] = 'u';
         $this->data['edulevel'] = self::LEVEL_OTHER;
-        // Intentionally do NOT set 'objecttable' — bulk-import callers don't
-        // have a single object id. Single-row callers may still pass
-        // 'objectid' in create() data as a hint; it's just no longer required.
+        // No 'objecttable': the bulk-import caller has no single row id. Core
+        // then rejects an 'objectid' too, so a single-row caller passes the
+        // saved row id as 'rowid' in 'other' instead.
     }
 
     /**

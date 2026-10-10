@@ -15,13 +15,14 @@
 
 /**
  * Dashboard courses table — one row per course with a small ScoreRing,
- * pending / priority / effective counts, and an inline 30-day sparkline.
+ * pending / priority / effective counts, and an inline 14-day sparkline.
  *
  * A native <table> with sortable column headers (aria-sort) that reflows
  * into stacked cards on narrow screens; each cell carries a data-label that
  * surfaces as the field caption in that card layout (see styles.css).
  *
- * Stateless. The parent owns sort state + click navigation.
+ * Stateless. The parent owns the sort state; rows link to the course's
+ * pending report.
  *
  * @module    block_feedback_tracker/components/CoursesTable
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -32,7 +33,7 @@ import {html} from 'block_feedback_tracker/lib/preact';
 import ScoreRing from 'block_feedback_tracker/components/ScoreRing';
 import Sparkline from 'block_feedback_tracker/components/Sparkline';
 import {bandForScore, colourFor} from 'block_feedback_tracker/lib/bands';
-import {formatHours, formatDays, usesDays} from 'block_feedback_tracker/lib/format';
+import {formatHours, formatDays, usesDays, formatCount} from 'block_feedback_tracker/lib/format';
 
 /**
  * Header cell that toggles sort when clicked.
@@ -96,16 +97,18 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
         ? (i18n.sparkline_zone_label || 'Desired speed: 0 to {$a}')
             .replace('{$a}', String(Math.round(Number(goal))))
         : '';
-    // Column labels — shared between the header row and each cell's
-    // data-label, which surfaces as the field caption in the stacked-card
-    // layout the table reflows to on narrow screens.
+    // The Effective column sorts on the figure it shows. In the business-days
+    // unit that is the date-based day count, which ignores the time of day
+    // and so need not order like the hours median.
+    const effectivekey = usesDays(config) ? 'cur_median_eff_days' : 'cur_median_eff_h';
+    // Column labels, shared by the header row and each cell's data-label.
     const cols = {
         course: i18n.dashboard_col_course || 'Course',
         avgscore: i18n.dashboard_col_avgscore || 'Score',
         pending: i18n.dashboard_col_pending || 'Pending',
         critical: i18n.dashboard_col_critical || 'Priority',
         effective: i18n.hero_effective_eyebrow || 'Effective',
-        trend: i18n.trend_window_label || '30 days',
+        trend: i18n.trend_window_label,
     };
 
     return html`
@@ -126,7 +129,7 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
                         sortKey="critical" currentKey=${sortKey} currentOrder=${sortOrder}
                         onClick=${onSort} i18n=${i18n} />
                     <${SortHeader} label=${cols.effective}
-                        sortKey="cur_median_eff_h" currentKey=${sortKey} currentOrder=${sortOrder}
+                        sortKey=${effectivekey} currentKey=${sortKey} currentOrder=${sortOrder}
                         onClick=${onSort} i18n=${i18n} />
                     <th scope="col">${cols.trend}</th>
                     <th scope="col">
@@ -165,12 +168,12 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
                                     `}
                             </td>
                             <td class="bft-mono bft-courses-num" data-label=${cols.pending}>
-                                ${Number(row.pending) || 0}
+                                ${formatCount(row.pending)}
                             </td>
                             <td class=${'bft-mono bft-courses-num'
                                 + (Number(row.critical) > 0 ? ' bft-courses-num-alert' : '')}
                                 data-label=${cols.critical}>
-                                ${Number(row.critical) || 0}
+                                ${formatCount(row.critical)}
                             </td>
                             <td class=${'bft-mono bft-courses-num bft-overall-score-tone-' + band}
                                 data-label=${cols.effective}>
@@ -186,7 +189,8 @@ export default function CoursesTable({rows, i18n, sortKey, sortOrder, onSort, th
                                               width=${72}
                                               height=${20}
                                               color=${trendColour}
-                                              zonelabel=${zonelabel} />`
+                                              zonelabel=${zonelabel}
+                                              arialabel=${i18n.sparkline_aria} />`
                                     : html`<span class="bft-courses-dim">—</span>`}
                             </td>
                             <td class="bft-courses-cta">

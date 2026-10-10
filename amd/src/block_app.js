@@ -15,12 +15,12 @@
 
 /**
  * Block entrypoint — mounts BlockView into every [data-bft-block-root] div
- * on the page (a course page can host two block-region instances).
+ * on the page.
  *
  * Each mount-point contains a <script type="application/json"
- * data-bft-init> with the initial payload (groups + i18n + config),
- * which we parse and pass to BlockView so first paint is data-rich and
- * needs no WS round-trip.
+ * data-bft-init> payload built by block_feedback_tracker::get_content():
+ * course id, calendar version, i18n and config bundles, and an empty
+ * groups array. BlockView fetches the group cards after mount.
  *
  * @module    block_feedback_tracker/block_app
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -29,6 +29,7 @@
 
 import {render, html} from 'block_feedback_tracker/lib/preact';
 import BlockView from 'block_feedback_tracker/views/BlockView';
+import {setGroupingSeparator, setDecimalSeparator, setDateContext} from 'block_feedback_tracker/lib/format';
 
 /**
  * Pull the JSON payload embedded inside a mount-point root.
@@ -64,6 +65,10 @@ export const init = () => {
         if (!initial) {
             return;
         }
+        const config = initial.config || {};
+        setGroupingSeparator(config.thousandssep);
+        setDecimalSeparator(config.decsep);
+        setDateContext(config.locale, config.timezone);
         render(html`<${BlockView} initial=${initial} />`, root);
     });
 };

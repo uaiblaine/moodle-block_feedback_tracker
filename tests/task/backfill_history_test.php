@@ -31,20 +31,20 @@ use block_feedback_tracker\local\sla\backfill_cursor;
 use block_feedback_tracker\local\sla\course_access;
 
 /**
- * Per-course-cursor-driven dispatcher (v1.7.0+) that fans out historical
- * ledger upserts to adhoc tasks. Inactive site-wide by default; each
- * course's cursor row auto-flips to active=0 when its own backfill
- * completes.
+ * The dispatcher keeps one cursor per block-enabled course and fans historical
+ * ledger upserts out to backfill_one_submission adhoc tasks. It does nothing
+ * until backfill_active is set, and each course's cursor row flips to
+ * active=0 once that course's backfill completes.
  *
  * @covers \block_feedback_tracker\task\backfill_history
  */
 final class backfill_history_test extends \advanced_testcase {
     /**
-     * Suppress mtrace() output emitted by the dispatcher — PHPUnit 11
-     * (Moodle 5.x) treats unexpected stdout as a "risky" test that
-     * fails the run. The trace lines are operational logging, not test
-     * assertions, so silently swallow them via PHP's output buffer
-     * (setOutputCallback() was removed in PHPUnit 10+).
+     * Buffer and discard the dispatcher's mtrace() output.
+     *
+     * Moodle's phpunit.xml sets beStrictAboutOutputDuringTests, so unexpected
+     * output marks a test risky (setOutputCallback() no longer exists in
+     * PHPUnit 10+).
      *
      * @return void
      */
@@ -130,11 +130,10 @@ final class backfill_history_test extends \advanced_testcase {
     }
 
     /**
-     * When a course has no submissions past its cursor, the dispatcher
-     * flips THAT course's row to active=0. The master backfill_active
-     * setting only auto-disables when no processable courses exist at
-     * all site-wide (e.g. block was removed everywhere) — preserved here
-     * for compatibility with the prior global-cursor semantic.
+     * When a course has no submissions past its cursor, the dispatcher flips
+     * that course's row to active=0 and leaves backfill_active on; the master
+     * setting switches itself off only when no course is processable at all
+     * (see the next test).
      */
     public function test_course_cursor_auto_completes_when_no_more_rows(): void {
         $this->resetAfterTest();
@@ -152,23 +151,20 @@ final class backfill_history_test extends \advanced_testcase {
         global $DB;
         $row = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $courseid]);
         $this->assertSame(0, (int) $row->active, 'Cursor row should flip to active=0 after a no-rows tick.');
-        // Master switch stays on — admins control it explicitly now.
+        // The master switch stays on while some course is processable.
         $this->assertSame('1', get_config('block_feedback_tracker', 'backfill_active'));
     }
 
     /**
-     * When NO processable courses exist site-wide, the master
-     * backfill_active config auto-flips to 0 — same operator-friendly
-     * behaviour as before the per-course refactor.
+     * When no course is processable site-wide, the dispatcher switches
+     * backfill_active off itself.
      */
     public function test_master_auto_disables_when_no_processable_courses(): void {
         $this->resetAfterTest();
         $this->seed_calendar();
-        // Course_access has a static $allmemo that survives resetAfterTest
-        // (PHP statics are out of scope for Moodle's DB rollback). If a
-        // prior test populated it with a non-empty list, this test would
-        // wrongly see "processable courses exist" and skip the
-        // auto-disable branch. Reset explicitly.
+        // The processable-course list is memoised in a static that resetAfterTest()
+        // does not clear; a non-empty list cached by an earlier test would skip
+        // the auto-disable branch.
         course_access::reset_memo();
 
         // No block on any course, so no course is processable.
@@ -195,11 +191,8 @@ final class backfill_history_test extends \advanced_testcase {
     }
 
     /**
-     * Gate regression: only submissions in courses where the block is
-     * present get dispatched. Submissions from a no-block course are
-     * skipped, the cursor still advances past them so they aren't
-     * revisited next tick, and the dispatcher does NOT enqueue an adhoc
-     * task for them.
+     * Only submissions in courses carrying the block are dispatched: a course
+     * without it gets neither a cursor row nor an adhoc task.
      */
     public function test_backfill_skips_courses_without_block(): void {
         $this->resetAfterTest();
@@ -253,12 +246,9 @@ final class backfill_history_test extends \advanced_testcase {
         $row = reset($rows);
         $this->assertSame((int) $studenta->id, (int) $row->userid);
 
-        // V1.7.0+: each course tracks its own cursor. Course A's row
-        // advances to its max subid; course B has NO cursor row at all
-        // (lazily created only for processable courses). If the admin
-        // later adds the block to course B, the next tick lazily creates
-        // course B's cursor at 0 and walks it from the start —
-        // independently of course A's progress.
+        // Course A's cursor advances to its highest submission id; course B has
+        // no cursor row, because cursors are created only for processable
+        // courses. The next test covers course B gaining the block later.
         $rowa = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $coursea->id]);
         $this->assertNotFalse($rowa);
         $courseasubid = (int) $DB->get_field_sql(

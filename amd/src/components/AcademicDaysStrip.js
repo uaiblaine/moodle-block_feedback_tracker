@@ -17,10 +17,11 @@
  * "Last 30 academic days" heatmap strip. One square per calendar day: paused
  * days (weekend / holiday / recess) render hatched; academic days render in
  * their responsiveness-band colour. A summary line beneath spells out how many
- * days were paused and why. Replaces the plain paused-callout on the report.
+ * days were paused and why.
  *
- * Pure presentational — data is loaded asynchronously by PendingReportView via
- * the get_academic_days web service and passed in. Hides when there is no data.
+ * Pure presentational — PendingReportView loads the data from the
+ * get_academic_days web service. Renders nothing when there are no days and no
+ * load error.
  *
  * @module    block_feedback_tracker/components/AcademicDaysStrip
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -28,7 +29,7 @@
  */
 
 import {html} from 'block_feedback_tracker/lib/preact';
-import {usesDays} from 'block_feedback_tracker/lib/format';
+import {usesDays, formatDays} from 'block_feedback_tracker/lib/format';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
 
 /**
@@ -67,8 +68,8 @@ const fmtEvent = (ev) => {
 };
 
 /**
- * BEM modifier for one day cell. Critical daily medians are rare and fold into
- * "regular" so the legend stays the three-band set shown in the design.
+ * BEM modifier for one day cell. Critical days fold into "regular" so the
+ * legend keeps three bands.
  *
  * @param {{paused:boolean, band:string}} day
  * @returns {string}
@@ -121,8 +122,7 @@ const cellTitle = (day, i18n, config) => {
         if (day.eff_days === null || day.eff_days === undefined) {
             return date;
         }
-        const v = Number(day.eff_days);
-        return date + ' · ' + (Number.isInteger(v) ? v : v.toFixed(1)) + ' d';
+        return date + ' · ' + formatDays(day.eff_days);
     }
     if (day.eff_h === null || day.eff_h === undefined) {
         return date;

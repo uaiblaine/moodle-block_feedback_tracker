@@ -27,53 +27,10 @@ declare(strict_types=1);
 namespace block_feedback_tracker\output;
 
 /**
- * Renders via Mustache. All HTML lives in templates/*.mustache; this class
- * only orchestrates which template handles which renderable.
+ * The plugin renderer. It adds no methods: the block and the plugin pages
+ * render their templates with render_from_template(), and the class exists
+ * because get_renderer('block_feedback_tracker') throws when a component has
+ * no renderer.
  */
 class renderer extends \plugin_renderer_base {
-    /**
-     * Render an SVG ring gauge.
-     *
-     * @param score_gauge $gauge
-     * @return string
-     */
-    protected function render_score_gauge(score_gauge $gauge): string {
-        return $this->render_from_template(
-            'block_feedback_tracker/score_gauge',
-            $gauge->export_for_template($this)
-        );
-    }
-
-    /**
-     * Render one responsiveness card.
-     *
-     * @param responsiveness_card $card
-     * @return string
-     */
-    protected function render_responsiveness_card(responsiveness_card $card): string {
-        return $this->render_from_template(
-            'block_feedback_tracker/responsiveness_card',
-            $card->export_for_template($this)
-        );
-    }
-
-    /**
-     * Render every group card for one course (with an empty-state fallback).
-     *
-     * @param int $courseid
-     * @param array $groups The `groups` array from the responsiveness payload.
-     * @return string
-     */
-    public function render_course_responsiveness(int $courseid, array $groups): string {
-        $cards = [];
-        foreach ($groups as $g) {
-            $card = new responsiveness_card($courseid, $g);
-            $cards[] = $card->export_for_template($this);
-        }
-        return $this->render_from_template('block_feedback_tracker/responsiveness_block', [
-            'empty'     => empty($cards),
-            'emptytext' => get_string('card_empty', 'block_feedback_tracker'),
-            'cards'     => $cards,
-        ]);
-    }
 }

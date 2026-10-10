@@ -29,13 +29,19 @@ namespace block_feedback_tracker\local\sla;
 /**
  * Wraps the {block_feedback_tracker_queue} table.
  *
- * Producers (observers, calendar editors) call enqueue() to mark a
- * (courseid, groupid) tuple as needing rollup recompute. Consumers (the
- * drain task in Phase D) call pop_batch() + remove().
+ * Producers (observers, ledger writers, calendar editors) call enqueue() to
+ * mark a (courseid, groupid) tuple as needing rollup recompute.
+ * {@see \block_feedback_tracker\task\drain_queue} reads tuples with pop_batch()
+ * and queues one recompute per tuple, and
+ * {@see \block_feedback_tracker\task\recompute_one} retires the row after a
+ * successful recompute. It deletes by tuple and enqueue time, so a row
+ * re-enqueued during the recompute survives.
  *
  * Uniqueness on (courseid, groupid) collapses bursts of writes for the same
  * tuple into a single queue row; the row's `reason` reflects the most recent
- * cause, and `timeenqueued` is the most recent enqueue time.
+ * cause, and `timeenqueued` is the most recent enqueue time. The reason is
+ * diagnostic only: nothing decides anything on it, and every reason is
+ * recomputed the same way.
  */
 class dirty_queue {
     /** Reason: submission upserted. */
@@ -46,7 +52,7 @@ class dirty_queue {
     public const REASON_CALENDAR = 'calendar';
     /** Reason: manual pause saved. */
     public const REASON_PAUSE = 'pause';
-    /** Reason: bulk import / admin reset. */
+    /** Reason: bulk re-enqueue (settings change, privacy deletion). */
     public const REASON_BULK = 'bulk';
 
     /**
@@ -60,30 +66,71 @@ class dirty_queue {
     public static function enqueue(int $courseid, int $groupid, string $reason): void {
         global $DB;
         $now = time();
-        $existing = $DB->get_record(
-            'block_feedback_tracker_queue',
-            ['courseid' => $courseid, 'groupid' => $groupid],
-            'id'
-        );
+        $key = ['courseid' => $courseid, 'groupid' => $groupid];
+        $existing = $DB->get_record('block_feedback_tracker_queue', $key, 'id');
         if ($existing) {
-            $DB->update_record('block_feedback_tracker_queue', (object) [
-                'id' => $existing->id,
-                'reason' => $reason,
-                'timeenqueued' => $now,
-            ]);
-        } else {
+            self::touch((int) $existing->id, $reason, $now);
+            return;
+        }
+        try {
             $DB->insert_record('block_feedback_tracker_queue', (object) [
                 'courseid' => $courseid,
                 'groupid' => $groupid,
                 'reason' => $reason,
                 'timeenqueued' => $now,
             ]);
+        } catch (\dml_write_exception $e) {
+            /* The read above and this insert are not atomic, so a concurrent
+             * writer for the same tuple can hit `uq_course_group` here, after
+             * the caller's ledger row is already written. Escaping would fail
+             * the surrounding adhoc task; before Moodle 5.1.5 and 5.2.1 a task
+             * that exhausts its attempts still matches the queue-time duplicate
+             * check, so the same payload stays blocked until
+             * task_adhoc_failed_retention purges it. The other writer's row is
+             * the one we wanted; adopt it.
+             *
+             * Inside a transaction the failed statement has already aborted it
+             * on PostgreSQL, so nothing can be read and the exception must travel. */
+            if ($DB->is_transaction_started()) {
+                throw $e;
+            }
+            $row = $DB->get_record('block_feedback_tracker_queue', $key, 'id', IGNORE_MISSING);
+            if (!$row) {
+                throw $e;
+            }
+            self::touch((int) $row->id, $reason, $now);
         }
     }
 
     /**
-     * Read up to $batchsize queued tuples in FIFO order. Does not remove them;
-     * callers should remove() after successful processing.
+     * Refresh an existing queue row's reason and enqueue time.
+     *
+     * The refresh is what keeps fresh dirt from being lost:
+     * {@see \block_feedback_tracker\task\recompute_one} retires the row only
+     * when `timeenqueued` is not later than the moment its recompute started,
+     * so a tuple dirtied again during the recompute keeps its row. The cost is
+     * that under a backlog a tuple dirtied again and again moves to the back of
+     * the FIFO each time; keeping the first enqueue time instead would let the
+     * recompute retire dirt it never read.
+     *
+     * @param int $id Queue row id.
+     * @param string $reason One of self::REASON_*.
+     * @param int $now Epoch seconds to stamp.
+     * @return void
+     */
+    private static function touch(int $id, string $reason, int $now): void {
+        global $DB;
+        $DB->update_record('block_feedback_tracker_queue', (object) [
+            'id' => $id,
+            'reason' => $reason,
+            'timeenqueued' => $now,
+        ]);
+    }
+
+    /**
+     * Read up to $batchsize queued tuples in FIFO order. Does not remove them:
+     * {@see \block_feedback_tracker\task\recompute_one} retires each row once
+     * its recompute succeeds.
      *
      * @param int $batchsize
      * @return array<int, \stdClass>
@@ -98,17 +145,6 @@ class dirty_queue {
             0,
             $batchsize
         );
-    }
-
-    /**
-     * Remove a queue row by id.
-     *
-     * @param int $id
-     * @return void
-     */
-    public static function remove(int $id): void {
-        global $DB;
-        $DB->delete_records('block_feedback_tracker_queue', ['id' => $id]);
     }
 
     /**

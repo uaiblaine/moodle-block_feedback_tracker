@@ -25,17 +25,11 @@
 
 
 /**
- * v1.0.0 baseline — fresh installations only.
+ * Upgrade steps for block_feedback_tracker.
  *
- * `db/install.xml` is the canonical schema; the install hook in
- * `db/install.php` seeds defaults. This plugin supports new
- * installations only — sites running a hypothetical prior version
- * that try to upgrade get an explicit error message asking them
- * to uninstall and reinstall on a clean database.
- *
- * If you ever need to re-add upgrade steps (e.g. a v1.x schema change),
- * the standard pattern returns: `if ($oldversion < <version_code>) {
- * ...; upgrade_block_savepoint(true, <version_code>, 'feedback_tracker'); }`.
+ * Upgrades are supported from 1.0.0 (2026060100) onwards. A site on an
+ * older release gets an explicit error asking it to uninstall and reinstall
+ * on a clean database, because 1.0.0 reset the schema.
  *
  * @param int $oldversion The currently-installed plugin version code.
  * @return bool True on success.
@@ -46,14 +40,10 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
 
     $dbman = $DB->get_manager(); // Loads ddl manager and xmldb classes.
     /*
-     * Fresh installs land here with $oldversion = 0 (the install hook
-     * sets the version *after* this function returns). Returning true
-     * for that case lets the install complete cleanly.
-     *
-     * Any non-zero oldversion below the v1.0.0 baseline means the site
-     * previously had an older release of this plugin and is now trying
-     * to upgrade across the schema reset. Block it with a clear,
-     * actionable message — silent migration could lose data.
+     * Moodle never calls this on a fresh install (install.xml and
+     * db/install.php run instead). A version below the 1.0.0 baseline is an
+     * older release upgrading across the schema reset: refuse it with an
+     * actionable message, because a silent migration could lose data.
      */
     if ($oldversion > 0 && $oldversion < 2026060100) {
         throw new upgrade_exception(
@@ -70,12 +60,9 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         );
     }
 
-    // V1.0.1 — seeds the new score_thresholds_band setting so 1.0.0
-    // installs pick up the design defaults without waiting for an admin
-    // to visit the settings page. The set_config() call deliberately
-    // skips set_updatedcallback (which only fires through
-    // admin_setting_*::write_setting), avoiding the bootstrap-guard
-    // path during upgrade.
+    // Seed the new score_thresholds_band setting so existing installs get the
+    // default before an admin saves the settings page. set_config() fires no
+    // set_updatedcallback, so the rollup invalidation does not run mid-upgrade.
     if ($oldversion < 2026060101) {
         if (get_config('block_feedback_tracker', 'score_thresholds_band') === false) {
             set_config('score_thresholds_band', '90,70,40', 'block_feedback_tracker');
@@ -83,73 +70,52 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026060101, 'feedback_tracker');
     }
 
-    // V1.0.2 — block-view recomposition. No DB changes; the new Preact
-    // components and CSS tokens ship in code only. The savepoint is here so
-    // sites still get a deterministic upgrade marker.
+    // Savepoint only: code-only release.
     if ($oldversion < 2026060102) {
         upgrade_block_savepoint(true, 2026060102, 'feedback_tracker');
     }
 
-    // V1.0.3 — payload extensions (perceived / paused / peer). No schema
-    // changes: perceived_median_hours aliases median_raw_h, paused aggregates
-    // are computed at read time from cday + cpause, peer benchmarks come from
-    // the existing _group rollup. Bump calver so MUC keys roll over and
-    // cached payloads pick up the new keys on first access.
+    // The payload gained perceived / paused / peer fields (no schema change).
+    // Bump calver so the calver-keyed payload caches roll over.
     if ($oldversion < 2026060103) {
         \block_feedback_tracker\local\calendar\calendar::bump_version();
         upgrade_block_savepoint(true, 2026060103, 'feedback_tracker');
     }
 
-    // V1.0.4 — pending report page redesign. No DB changes; new Preact
-    // components + bootstrap shape extension only. Savepoint here for the
-    // upgrade marker, no cache bump (read-side payload shape unchanged).
+    // Savepoint only: code-only release, cached payload shape unchanged.
     if ($oldversion < 2026060104) {
         upgrade_block_savepoint(true, 2026060104, 'feedback_tracker');
     }
 
-    // V1.0.5 — dashboard redesign + new get_insights WS. The WS slots
-    // into the existing dashboard cache; bump calver so per-user cached
-    // dashboards re-fetch and pick up the new score_band / trend_series
-    // / perceived_median_hours fields from get_dashboard.
+    // The get_dashboard payload gained score_band / trend_series /
+    // perceived_median_hours, and get_insights shares its cache: bump calver so
+    // cached dashboards roll over.
     if ($oldversion < 2026060105) {
         \block_feedback_tracker\local\calendar\calendar::bump_version();
         upgrade_block_savepoint(true, 2026060105, 'feedback_tracker');
     }
 
-    // V1.0.6 — web-service completion. Five new JS write wrappers
-    // (savePauseWindow / deletePauseWindow / saveCalendarDay /
-    // bulkImportCalendar / saveBusinessHours), one new read WS
-    // (get_audit_log, gated by the existing viewaudit capability), and a
-    // drift-check phpunit test. No DB changes; no cache bump (read-side
-    // payload shape unchanged).
+    // Savepoint only; the version bump installs the new get_audit_log web service.
     if ($oldversion < 2026060106) {
         upgrade_block_savepoint(true, 2026060106, 'feedback_tracker');
     }
 
-    // V1.0.7 — trend-term refinements (adaptive w_trend + dashboard
-    // momentum). No DB changes. Existing rollup rows still have
-    // comp_trend = 0.5 from prior versions; they'll converge to null on
-    // the natural recompute cycle (event observers / drain queue) and
-    // don't need a forced recompute here.
+    // Savepoint only. Rollup rows holding a comp_trend from the old formula are
+    // rewritten on their next ordinary recompute, so none is forced here.
     if ($oldversion < 2026060107) {
         upgrade_block_savepoint(true, 2026060107, 'feedback_tracker');
     }
 
-    // V1.0.8 — combined hero+insights collapse state persisted via the
-    // core user-preferences API. No schema change; the preference key
-    // (block_feedback_tracker_dashboard_collapsed) is declared in
-    // lib.php::block_feedback_tracker_user_preferences() and gets a
-    // server-side default of '0' so existing users see the expanded
-    // hero on first visit after upgrade.
+    // Savepoint only: the new dashboard_collapsed user preference defaults to
+    // '0' (expanded); see block_feedback_tracker_user_preferences().
     if ($oldversion < 2026060108) {
         upgrade_block_savepoint(true, 2026060108, 'feedback_tracker');
     }
 
-    // V1.0.9 — sub-day optional event windows. Two nullable columns
-    // on {block_feedback_tracker_cday} for minutes-since-midnight
-    // start / end. Both null = legacy full-day rule (existing rows are
-    // unaffected). Calver bump invalidates cached payloads so the new
-    // paused_events_30d sidecar shows up on next read.
+    // Sub-day optional event windows: nullable start / end in minutes since
+    // midnight on {block_feedback_tracker_cday}. Both null keeps the full-day
+    // rule, so existing rows are unaffected. The calver bump rolls over cached
+    // payloads so the new paused_events_30d field appears.
     if ($oldversion < 2026060109) {
         $table = new xmldb_table('block_feedback_tracker_cday');
 
@@ -185,32 +151,20 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026060109, 'feedback_tracker');
     }
 
-    // V1.0.10 — patch the PHP 8.x "implicit float→int" deprecation in
-    // paused_aggregator::ymd_in_pause_span. Code-only fix, no schema or
-    // cache impact — the savepoint exists for the upgrade marker so any
-    // sites that picked up 1.0.9 on PHP 8.1+ converge cleanly to 1.0.10
-    // with the deprecation gone.
+    // Savepoint only: code-only release.
     if ($oldversion < 2026060110) {
         upgrade_block_savepoint(true, 2026060110, 'feedback_tracker');
     }
 
-    // V1.0.11 — UX patch: event time + date in PausedCallout, event
-    // sidecar surfaced in block PausedNote, "Recent event" chip on the
-    // teacher dashboard. JS-only and lang-strings — no DB or cache
-    // impact. Savepoint here for the upgrade marker.
+    // Savepoint only: code-only release.
     if ($oldversion < 2026060111) {
         upgrade_block_savepoint(true, 2026060111, 'feedback_tracker');
     }
 
-    // V1.0.12 — only genuinely "submitted" work counts toward the SLA. Every
-    // rollup / pending / score query now filters submissionstatus = 'submitted'
-    // (draft / new / reopened attempts are awaiting the student, not the
-    // teacher). Existing ledger rows already store the correct status, so no
-    // row migration is needed — but the derived per-(course, group) rollups
-    // were computed under the old "count every ungraded row" rule and must be
-    // rebuilt. Re-enqueue every distinct tuple so the drain_queue task
-    // recomputes each rollup submitted-only on the next cron run. (Daily site
-    // + trend tables self-heal on their own scheduled recompute.)
+    // Only submitted work counts toward the SLA now. Ledger rows already store
+    // their status, but the rollups were computed counting every ungraded row:
+    // re-enqueue every (course, group) so drain_queue rebuilds them. The daily
+    // site and trend tables catch up on their own scheduled recompute.
     if ($oldversion < 2026060112) {
         $tuples = $DB->get_recordset_sql(
             'SELECT DISTINCT courseid, groupid FROM {block_feedback_tracker_sub}'
@@ -226,12 +180,9 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026060112, 'feedback_tracker');
     }
 
-    // V1.0.19 — headline "effective / perceived" times now include currently
-    // pending (ungraded) work so the dashboard reflects the live backlog
-    // instead of reading ~0 when little has been graded. Two new rollup
-    // columns hold the include-pending medians; the score still uses the
-    // graded-only median_eff_h, so it is unaffected. Re-enqueue every tuple so
-    // drain_queue backfills the new columns on the next cron run.
+    // Headline medians that include pending work (cur_median_eff_h / _raw_h);
+    // the score keeps the graded-only median_eff_h. Re-enqueue every
+    // (course, group) so drain_queue fills the new columns.
     if ($oldversion < 2026060119) {
         $table = new xmldb_table('block_feedback_tracker_group');
 
@@ -373,13 +324,11 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
             $dbman->add_field($table, $field);
         }
 
-        // The per-row effectivedays column is filled lazily by the
-        // backfill_effectivedays scheduled task (armed by the 2026060132
-        // step below), not in-line here: a synchronous walk over the entire
-        // ledger made this upgrade pathologically slow on large sites. The
-        // dashboard day-ruler columns don't wait on it — rollup_service
-        // recomputes day counts from timestamps on demand, and the
-        // re-enqueue below refreshes every tuple on the next drain.
+        // The per-row effectivedays column is filled by the
+        // backfill_effectivedays scheduled task (armed by the 2026060132 step
+        // below), not here: walking the whole ledger inside the upgrade is too
+        // slow on a large site. The rollup's day counts do not wait for it;
+        // rollup_service derives them from timestamps.
 
         // Re-enqueue every (course, group) so the new day-ruler counts
         // populate on the next drain.
@@ -398,28 +347,21 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026060131, 'feedback_tracker');
     }
 
-    // V1.0.32 — the per-row effectivedays backfill that previously ran
-    // in-line in the 2026060131 step is replaced by the
-    // backfill_effectivedays scheduled task. This step only "arms" that
-    // task by setting its done flag to 0 and resetting its keyset cursor;
-    // the task then fills the column in time-capped, set-based batches off
-    // the upgrade critical path. Sites that already completed the old
-    // in-line backfill arm here too, but the task finds no NULL rows past
-    // its cursor and marks itself done on the first tick.
+    // Arm the backfill_effectivedays task (done flag 0, keyset cursor 0); it
+    // fills effectivedays in time-capped batches off the upgrade path. Where
+    // the column is already filled, the task finds no NULL rows and marks
+    // itself done on its first tick.
     if ($oldversion < 2026060132) {
         set_config('effectivedays_backfill_done', '0', 'block_feedback_tracker');
         set_config('effectivedays_backfill_lastid', '0', 'block_feedback_tracker');
         upgrade_block_savepoint(true, 2026060132, 'feedback_tracker');
     }
 
-    // V1.0.33 — display-only business-days SLA compliance. The new rollup
-    // column compliance_pct_days holds the share of last-window graded
-    // submissions returned within the business-days SLA goal (the new
-    // sla_goal_days setting). It is the day-ruler twin of compliance_pct and,
-    // like the other day twins, is display-only: the score keeps using the
-    // effective-hours compliance, so switching the display unit never moves
-    // the score. Seed the setting default, add the column, bump calver, and
-    // re-enqueue every tuple so drain_queue backfills the column next cron run.
+    // Display-only business-days compliance: compliance_pct_days is the
+    // day-ruler twin of compliance_pct, measured against the new sla_goal_days
+    // setting; the score keeps the effective-hours compliance. Seed the
+    // setting, add the column, re-enqueue every (course, group) so drain_queue
+    // fills it, and bump calver.
     if ($oldversion < 2026060133) {
         if (get_config('block_feedback_tracker', 'sla_goal_days') === false) {
             set_config('sla_goal_days', '2', 'block_feedback_tracker');
@@ -456,6 +398,369 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
 
         \block_feedback_tracker\local\calendar\calendar::bump_version();
         upgrade_block_savepoint(true, 2026060133, 'feedback_tracker');
+    }
+
+    /* Measurement cycles, latest-attempt gating, the marking-workflow release
+     * clock and marker allocation. Re-saving an already-marked submission opens
+     * a new cycle instead of reopening the closed one, so a recorded response
+     * time is never destroyed. Existing rows are seeded so no displayed number
+     * moves on upgrade. */
+    if ($oldversion < 2026080202) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+
+        $fields = [
+            new xmldb_field('cycle', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'attemptnumber'),
+            new xmldb_field('timemarked', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timegraded'),
+            new xmldb_field('timereleased', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timemarked'),
+            new xmldb_field('timeclosed', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timereleased'),
+            new xmldb_field('islatest', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '1', 'timeclosed'),
+            new xmldb_field('iscurrent', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '1', 'islatest'),
+            new xmldb_field('gradestate', XMLDB_TYPE_CHAR, '20', null, null, null, null, 'iscurrent'),
+            new xmldb_field('teamgroupid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'gradestate'),
+            new xmldb_field('timeallocated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'teamgroupid'),
+            new xmldb_field('timeallocmarker', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'timeallocated'),
+            new xmldb_field('allocmarkerid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'timeallocmarker'),
+            new xmldb_field('allocsource', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocmarkerid'),
+        ];
+        foreach ($fields as $field) {
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        /* Seed timemarked and timeclosed from timegraded. Rows written before
+         * this version set timegraded only for a mark that postdated the
+         * hand-in, which is exactly what timemarked encodes, and none had the
+         * release clock, so timeclosed equals timegraded for all of them. Every
+         * displayed number stays the same and the resubmission detector has a
+         * reference from the start. */
+        $DB->execute(
+            'UPDATE {block_feedback_tracker_sub}
+                SET timemarked = timegraded, timeclosed = timegraded
+              WHERE timegraded IS NOT NULL AND timemarked IS NULL'
+        );
+
+        $dropindexes = [
+            new xmldb_index('uq_cm_user_attempt', XMLDB_INDEX_UNIQUE, ['cmid', 'userid', 'attemptnumber']),
+        ];
+        foreach ($dropindexes as $index) {
+            if ($dbman->index_exists($table, $index)) {
+                $dbman->drop_index($table, $index);
+            }
+        }
+
+        $addindexes = [
+            new xmldb_index('uq_cm_user_att_cycle', XMLDB_INDEX_UNIQUE, ['cmid', 'userid', 'attemptnumber', 'cycle']),
+            new xmldb_index(
+                'idx_status_cur_graded',
+                XMLDB_INDEX_NOTUNIQUE,
+                ['submissionstatus', 'islatest', 'iscurrent', 'timegraded']
+            ),
+            new xmldb_index('idx_item_user', XMLDB_INDEX_NOTUNIQUE, ['iteminstance', 'userid']),
+        ];
+        foreach ($addindexes as $index) {
+            if (!$dbman->index_exists($table, $index)) {
+                $dbman->add_index($table, $index);
+            }
+        }
+
+        /* Drop the userid = 0 rows earlier versions mirrored from team
+         * submissions (mod_assign keeps a team's work in one {assign_submission}
+         * row with userid = 0). The rollup counted them but every list joins
+         * {user} and hid them, so they were pending items nobody could clear. */
+        $tuples = $DB->get_records_sql(
+            'SELECT DISTINCT courseid, groupid FROM {block_feedback_tracker_sub} WHERE userid = 0'
+        );
+        $DB->delete_records_select('block_feedback_tracker_sub', 'userid = 0');
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_SUBMISSION
+            );
+        }
+
+        upgrade_block_savepoint(true, 2026080202, 'feedback_tracker');
+    }
+
+    /* Split the response measurement into the coordination queue (hand-in to
+     * allocation) and the marker turnaround (allocation to grading), so a
+     * marker who inherited a long-queued submission is not measured against a
+     * delay they did not cause. Purely additive: the student-experience clock
+     * that feeds the score is untouched. */
+    if ($oldversion < 2026080300) {
+        $subtable = new xmldb_table('block_feedback_tracker_sub');
+        $subfields = [
+            new xmldb_field('queuehours', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'allocsource'),
+            new xmldb_field('allochours', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'queuehours'),
+            new xmldb_field('allocdays', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'allochours'),
+            new xmldb_field('allocbucket', XMLDB_TYPE_CHAR, '10', null, null, null, null, 'allocdays'),
+        ];
+        foreach ($subfields as $field) {
+            if (!$dbman->field_exists($subtable, $field)) {
+                $dbman->add_field($subtable, $field);
+            }
+        }
+
+        $grouptable = new xmldb_table('block_feedback_tracker_group');
+        $groupfields = [
+            new xmldb_field('unallocated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'lastpause_reason'),
+            new xmldb_field('median_queue_h', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'unallocated'),
+            new xmldb_field('median_alloc_h', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null, 'median_queue_h'),
+            new xmldb_field('alloc_coverage_pct', XMLDB_TYPE_NUMBER, '5, 2', null, null, null, null, 'median_alloc_h'),
+        ];
+        foreach ($groupfields as $field) {
+            if (!$dbman->field_exists($grouptable, $field)) {
+                $dbman->add_field($grouptable, $field);
+            }
+        }
+
+        /* The rollup is materialised, so every new column reads NULL until a
+         * recompute runs. Re-enqueue every tuple rather than leaving the
+         * dashboard showing blanks until something else happens to dirty it. */
+        $tuples = $DB->get_recordset_sql(
+            'SELECT DISTINCT courseid, groupid FROM {block_feedback_tracker_sub}'
+        );
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+            );
+        }
+        $tuples->close();
+
+        upgrade_block_savepoint(true, 2026080300, 'feedback_tracker');
+    }
+
+    /* An index leading with userid. The deletions run by the enrolment and
+     * account-deletion observers filter on userid alone (or courseid + userid),
+     * and no other index leads with it (idx_item_user leads with iteminstance),
+     * so without it both scan the whole table on the bulk paths: an end-of-term
+     * unenrolment and a bulk account deletion. */
+    if ($oldversion < 2026080306) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $index = new xmldb_index('idx_user', XMLDB_INDEX_NOTUNIQUE, ['userid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_block_savepoint(true, 2026080306, 'feedback_tracker');
+    }
+
+    /* The gradebook becomes a second source of the student's response clock.
+     * closedsource records which surface closed a cycle; gradehidden discloses
+     * a grade the gradebook is keeping from the student. Both are additive and
+     * both are backfilled lazily: existing closed rows were all closed from the
+     * activity, so they are stamped accordingly in one statement, and the
+     * gradebook is only consulted when a row is next re-derived. No stored
+     * response time moves: the new source only supplies an instant for a
+     * cycle that had none. */
+    if ($oldversion < 2026080400) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $fields = [
+            new xmldb_field('closedsource', XMLDB_TYPE_CHAR, '10', null, null, null, null, 'timeclosed'),
+            new xmldb_field('gradehidden', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0', 'closedsource'),
+        ];
+        foreach ($fields as $field) {
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
+        }
+
+        $DB->execute(
+            "UPDATE {block_feedback_tracker_sub}
+                SET closedsource = :src
+              WHERE timeclosed IS NOT NULL AND closedsource IS NULL",
+            ['src' => \block_feedback_tracker\local\sla\gradebook_response::SOURCE_ASSIGN]
+        );
+
+        upgrade_block_savepoint(true, 2026080400, 'feedback_tracker');
+    }
+
+    /* Drop gradehidden, added by the previous step. Whether the gradebook hides
+     * a grade is a live fact, not a measurement: core fires no event when a
+     * grade's visibility changes, and a hide-until date expires by time alone,
+     * so a stored copy drifts silently while still being exported to the data
+     * subject as current. The pending report reads visibility at display time. */
+    if ($oldversion < 2026080401) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $field = new xmldb_field('gradehidden');
+        if ($dbman->field_exists($table, $field)) {
+            $dbman->drop_field($table, $field);
+        }
+
+        upgrade_block_savepoint(true, 2026080401, 'feedback_tracker');
+    }
+
+    /* Give reconciliation its own time cap, seeded from the drain cap it used
+     * to share: taking the new setting's default would silently revert a site
+     * that had raised the old one for reconciliation's sake. Untouched sites
+     * read 50 either way. */
+    if ($oldversion < 2026081100) {
+        $inherited = get_config('block_feedback_tracker', 'drain_time_cap_seconds');
+        if ($inherited !== false && $inherited !== null && (string) $inherited !== '') {
+            set_config('reconcile_time_cap_seconds', (string) $inherited, 'block_feedback_tracker');
+        }
+
+        upgrade_block_savepoint(true, 2026081100, 'feedback_tracker');
+    }
+
+    /* Index the reconciler's keyset sweeps. They page on `id > :cursor` while
+     * filtering on courseid; with only the primary key, the course filter is a
+     * residual over the id range scan, which is most of the work when the
+     * tracked courses are a small slice of the ledger.
+     *
+     * It does not help the two row-creating sweeps: they drive from
+     * {assign_submission}, which has no course column, so their keyset is over
+     * a different table. */
+    if ($oldversion < 2026081101) {
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $index = new xmldb_index('idx_course_id', XMLDB_INDEX_NOTUNIQUE, ['courseid', 'id']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        upgrade_block_savepoint(true, 2026081101, 'feedback_tracker');
+    }
+
+    /* The departed-participant sweep's cursor changed from an index into the
+     * sorted list of processable courses to a course id. An old value would read
+     * as "resume after course N" and skip every course with a lower id for the
+     * whole first pass, so it is unset. */
+    if ($oldversion < 2026081102) {
+        unset_config('reconcile_cursor_participant', 'block_feedback_tracker');
+
+        upgrade_block_savepoint(true, 2026081102, 'feedback_tracker');
+    }
+
+    /* Savepoint only: the reconciler pages by window now, and its cursors keep
+     * their meaning, so there is nothing to migrate. */
+    if ($oldversion < 2026090300) {
+        upgrade_block_savepoint(true, 2026090300, 'feedback_tracker');
+    }
+
+    /* Remove two settings that nothing ever read: the wall-clock bucket
+     * thresholds (the hour buckets read bucket_thresholds_eff only) and the
+     * school comparison switch (the viewschoolcomparison capability is the
+     * only gate). The settings page no longer offers them. Then drop five
+     * unread rollup columns and recompute every rollup. */
+    if ($oldversion < 2026092402) {
+        unset_config('bucket_thresholds_raw', 'block_feedback_tracker');
+        unset_config('enable_school_comparison', 'block_feedback_tracker');
+
+        /* The next-pause and last-pause columns of the rollup: written on every
+         * recompute and read by nothing, since the cards take their pause
+         * notice from upcoming_pauses at read time. */
+        $grouptable = new xmldb_table('block_feedback_tracker_group');
+        foreach (['nextpause_ts', 'nextpause_reason', 'nextpause_note', 'lastpause_endts', 'lastpause_reason'] as $name) {
+            $field = new xmldb_field($name);
+            if ($dbman->field_exists($grouptable, $field)) {
+                $dbman->drop_field($grouptable, $field);
+            }
+        }
+
+        /* Several stored rollup figures changed meaning in this version:
+         * unallocated is null unless an activity uses marking allocation, and
+         * overgoal_days is bounded by sla_goal_days. The rollup is
+         * materialised, so re-enqueue every tuple rather than leave the old
+         * values in place until something else dirties it. */
+        $tuples = $DB->get_recordset('block_feedback_tracker_group', null, '', 'id, courseid, groupid');
+        foreach ($tuples as $t) {
+            \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                (int) $t->courseid,
+                (int) $t->groupid,
+                \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+            );
+        }
+        $tuples->close();
+
+        upgrade_block_savepoint(true, 2026092402, 'feedback_tracker');
+    }
+
+    /* Reset a stored cutoff triple that breaks the settings page's rules to its
+     * shipped default. The parsers read a stored triple by position, so one saved
+     * out of order before the settings page validated it keeps every score or
+     * submission of the site in the wrong band, and nothing prompts an admin to
+     * save it again. The rules are the numeric ones of
+     * thresholds_setting::validate() at this version, frozen here: three numbers,
+     * none below 0 and, for the score bands, none above 100, each strictly after
+     * the previous one in the order. A value only validate()'s PARAM_TEXT check
+     * refuses is kept, since the parsers read it as the numbers it holds. */
+    if ($oldversion < 2026092500) {
+        // Name => [shipped default, true for ascending, highest cutoff or null].
+        $rules = [
+            'bucket_thresholds_days' => ['2,5,10', true, null],
+            'bucket_thresholds_eff' => ['24,48,120', true, null],
+            'score_thresholds_band' => ['90,70,40', false, 100.0],
+        ];
+        $reset = false;
+        foreach ($rules as $name => [$default, $ascending, $max]) {
+            $stored = get_config('block_feedback_tracker', $name);
+            if ($stored === false) {
+                // Never saved: the parsers already read the default.
+                continue;
+            }
+            $values = array_map('trim', explode(',', (string) $stored));
+            $valid = count($values) === 3;
+            foreach ($values as $i => $value) {
+                $valid = $valid && is_numeric($value) && (float) $value >= 0.0
+                    && ($max === null || (float) $value <= $max);
+                if ($valid && $i > 0) {
+                    $valid = $ascending
+                        ? (float) $value > (float) $values[$i - 1]
+                        : (float) $value < (float) $values[$i - 1];
+                }
+            }
+            if (!$valid) {
+                set_config($name, $default, 'block_feedback_tracker');
+                $reset = true;
+            }
+        }
+
+        /* What block_feedback_tracker_invalidate_rollups() does when an admin
+         * saves one of these settings; set_config() does not call it, and it
+         * returns early during an upgrade. A new calendar version, so the
+         * pending rows re-derive their band and the calver-keyed caches roll
+         * over, and a recompute of every rollup. */
+        if ($reset) {
+            $calver = get_config('block_feedback_tracker', 'calver');
+            set_config('calver', (string) (($calver === false ? 1 : (int) $calver) + 1), 'block_feedback_tracker');
+
+            $tuples = $DB->get_recordset('block_feedback_tracker_group', null, '', 'id, courseid, groupid');
+            foreach ($tuples as $t) {
+                \block_feedback_tracker\local\sla\dirty_queue::enqueue(
+                    (int) $t->courseid,
+                    (int) $t->groupid,
+                    \block_feedback_tracker\local\sla\dirty_queue::REASON_BULK
+                );
+            }
+            $tuples->close();
+        }
+
+        upgrade_block_savepoint(true, 2026092500, 'feedback_tracker');
+    }
+
+    if ($oldversion < 2026100901) {
+        // The dismissal instant of cli/dismiss_legacy_pending.php.
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $field = new xmldb_field('timedismissed', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null, 'closedsource');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_block_savepoint(true, 2026100901, 'feedback_tracker');
+    }
+
+    if ($oldversion < 2026100902) {
+        /* The reconciliation window default moved from 500 to 1000. A stored
+         * 500 is taken to be the old default and moves; any other value is
+         * kept. An administrator who chose 500 on purpose moves too. */
+        if ((string) get_config('block_feedback_tracker', 'reconcile_batch_size') === '500') {
+            set_config('reconcile_batch_size', '1000', 'block_feedback_tracker');
+        }
+
+        upgrade_block_savepoint(true, 2026100902, 'feedback_tracker');
     }
 
     return true;

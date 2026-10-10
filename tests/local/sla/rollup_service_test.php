@@ -265,9 +265,8 @@ final class rollup_service_test extends \advanced_testcase {
 
     /**
      * Trend pct is clamped to ±TREND_PCT_CAP so a near-zero prior median can't
-     * produce a value that overflows the NUMBER(6,2) trend_pct_30d column.
-     * Regression: prior median 0.05h → recent 200h yields ~399900%, which
-     * triggered a "numeric field overflow" on update_record.
+     * produce a value that overflows the NUMBER(6,2) trend_pct_30d column:
+     * a prior median of 0.05h against a recent 200h is a ~399900% change.
      */
     public function test_trend_pct_is_clamped_to_avoid_overflow(): void {
         $this->resetAfterTest();
@@ -374,18 +373,120 @@ final class rollup_service_test extends \advanced_testcase {
         $this->assertSame(1, (int) $row->numgraded30d);
     }
 
-    // Note (v1.0.0): the prior test_recompute_skips_on_lock_collision
-    // test was removed. The Lock API factory provisioned in Moodle's
-    // PHPUnit environment is per-process and doesn't enforce mutual
-    // exclusion when the same process acquires the lock twice — making
-    // it impossible to simulate a "concurrent worker holds the lock"
-    // scenario without mocking the factory (which is more test
-    // infrastructure than the verification justifies). The lock
-    // semantics themselves are exercised by Moodle core's lock-factory
-    // tests; we rely on \core\lock\lock_config::get_lock_factory()
-    // behaving correctly in production.
+    // The lock-held branch of recompute_group() has no test. The lock is held
+    // per database connection and lock_config::get_lock_factory() returns a new
+    // factory on every call, so a second acquisition from the same process
+    // succeeds; a concurrent holder cannot be simulated without mocking the factory.
+
+    /**
+     * The day-ruler over-goal count is bounded by the SLA goal in days, as the
+     * hour one is by the SLA goal in hours, not by the first bucket threshold.
+     *
+     * "Now" is pinned to Thursday 12 March 2026, noon UTC, so the business-day
+     * counts are fixed: three since the Monday before, eight since the Monday
+     * a week earlier.
+     *
+     * @return void
+     */
+    public function test_overgoal_days_is_bounded_by_the_day_sla_goal(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        set_config('timezone', 'UTC', 'block_feedback_tracker');
+        set_config('excludeweekends', '1', 'block_feedback_tracker');
+        set_config('weekendmask', '96', 'block_feedback_tracker');
+        set_config('bucket_thresholds_days', '2,5,10', 'block_feedback_tracker');
+        set_config('sla_goal_days', '4', 'block_feedback_tracker');
+        \block_feedback_tracker\local\calendar\academic_time::reset_memos();
+
+        $courseid = 150;
+        $groupid = 250;
+        $now = (new \DateTimeImmutable('2026-03-12 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        $this->insert_ledger($courseid, $groupid, [
+            'timesubmitted' => $now - 3 * 86400,
+            'timegraded' => null,
+        ]);
+        $this->insert_ledger($courseid, $groupid, [
+            'timesubmitted' => $now - 10 * 86400,
+            'timegraded' => null,
+        ]);
+
+        rollup_service::recompute_group($courseid, $groupid, $now);
+
+        global $DB;
+        $row = $DB->get_record('block_feedback_tracker_group', ['courseid' => $courseid, 'groupid' => $groupid]);
+        $this->assertSame(2, (int) $row->pending);
+        $this->assertSame(1, (int) $row->overgoal_days, 'Three business days is within a four-day goal; eight is not.');
+        $this->assertSame(0, (int) $row->critical_days, 'Control: eight business days is not past the ten-day cutoff.');
+    }
+
+    /**
+     * Only an activity that allocates markers can leave work unallocated, so
+     * pending work in an activity without marking allocation is not counted.
+     *
+     * @return void
+     */
+    public function test_unallocated_counts_only_activities_that_allocate(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        $course = $this->getDataGenerator()->create_course();
+        $allocating = $this->assign_cmid((int) $course->id, ['markingworkflow' => 1, 'markingallocation' => 1]);
+        $plain = $this->assign_cmid((int) $course->id, []);
+
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $allocating, 'userid' => 11, 'timeallocated' => null]);
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $allocating, 'userid' => 12, 'timeallocated' => time() - 600]);
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $plain, 'userid' => 11, 'timeallocated' => null]);
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $plain, 'userid' => 12, 'timeallocated' => null]);
+
+        rollup_service::recompute_group((int) $course->id, 0);
+
+        global $DB;
+        $row = $DB->get_record('block_feedback_tracker_group', ['courseid' => $course->id, 'groupid' => 0]);
+        $this->assertSame(4, (int) $row->pending, 'Every pending row still counts as pending.');
+        $this->assertSame('1', (string) $row->unallocated);
+    }
+
+    /**
+     * With no pending work in an activity that allocates markers, the figure
+     * does not apply and is stored as null, not as the pending count.
+     *
+     * @return void
+     */
+    public function test_unallocated_is_null_without_an_allocating_activity(): void {
+        $this->resetAfterTest();
+        $this->seed_config();
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        /* Allocation without marking workflow does nothing in mod_assign, which
+         * clears the flag on save; written directly, as a restore could leave it. */
+        $workflowoff = $this->assign_cmid((int) $course->id, ['markingworkflow' => 0]);
+        $DB->set_field('assign', 'markingallocation', 1, [
+            'id' => $DB->get_field('course_modules', 'instance', ['id' => $workflowoff]),
+        ]);
+        $plain = $this->assign_cmid((int) $course->id, []);
+
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $workflowoff, 'timeallocated' => null]);
+        $this->insert_ledger((int) $course->id, 0, ['cmid' => $plain, 'timeallocated' => null]);
+
+        rollup_service::recompute_group((int) $course->id, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_group', ['courseid' => $course->id, 'groupid' => 0]);
+        $this->assertSame(2, (int) $row->pending);
+        $this->assertNull($row->unallocated);
+    }
 
     // Helpers.
+
+    /**
+     * Create an assign in the course and return its course-module id.
+     *
+     * @param int $courseid
+     * @param array $settings Extra {assign} settings.
+     * @return int
+     */
+    private function assign_cmid(int $courseid, array $settings): int {
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $courseid] + $settings);
+        return (int) get_coursemodule_from_instance('assign', $assign->id)->id;
+    }
 
     /**
      * Seed score/SLA config.

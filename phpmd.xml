@@ -24,7 +24,6 @@
           - responsiveness_calculator::compute     — cyclo 10, NPath 256
           - pending_recomputer::recompute_stale    — cyclo 10
           - site_stats_service::recompute_for_day  — cyclo 10, NPath 384
-          - responsiveness_card::export_for_template — NPath 256
           - observer_test                          — coupling 13
           - interval_math_test                     — 20 public methods
           - ts() helpers in three test files       — 2-char method name
@@ -58,11 +57,11 @@
         <exclude name="ShortVariable" />
     </rule>
     <rule ref="rulesets/unusedcode.xml">
-        <!-- Several `\templatable` implementations (score_gauge,
-             sparkline, ...) keep the required \renderer_base $output
-             parameter unused because the renderable computes its own
-             markup. PHPMD's official `@SuppressWarnings` annotation
-             would silence this per-method, but Moodle's PHPCS rejects
+        <!-- Signatures core mandates (event observer callbacks, block
+             and form overrides, formslib validation($data, $files)) carry
+             parameters a given implementation does not read. PHPMD's
+             official `@SuppressWarnings` annotation would silence this
+             per-method, but Moodle's PHPCS rejects
              it as an invalid docblock tag — so the rule is disabled
              plugin-wide instead. The vast majority of unused-param
              issues are caught by IDE static analysis anyway. -->

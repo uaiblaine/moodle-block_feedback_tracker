@@ -35,21 +35,24 @@ use core_external\external_value;
 
 /**
  * Aggregates {block_feedback_tracker_group} rows into a per-course summary
- * for the admin dashboard. One row per course with pending/critical totals,
- * group count, median-of-medians, and an aggregate score band.
+ * for the teacher dashboard. One row per course with pending/critical totals,
+ * group count, the mean of the groups' medians and scores, and a band derived
+ * from that mean score.
+ *
+ * aggregate() in amd/src/lib/aggregate.js reads the per-course shape key by
+ * key; a key it reads that is missing here is silently treated as no data.
  */
 class get_dashboard extends external_api {
     /** Cache TTL in seconds. */
     public const CACHE_TTL = 900;
 
     /**
-     * Cache-key version. Bumped whenever the SQL or filtering logic
-     * changes shape so stale entries from prior plugin versions are
-     * naturally invalidated without a separate purge step. Bump this
-     * before deploying any change to execute()'s WHERE clause or
-     * aggregate columns.
+     * Cache-key version. Bump it with any change to execute()'s WHERE clause,
+     * aggregate columns, returned shape or the formatting of returned values,
+     * so entries cached by an earlier plugin version stop matching without a
+     * purge.
      */
-    public const CACHE_KEY_VERSION = 7;
+    public const CACHE_KEY_VERSION = 10;
 
     /**
      * Parameters.
@@ -77,10 +80,8 @@ class get_dashboard extends external_api {
         $sysctx = \context_system::instance();
         self::validate_context($sysctx);
 
-        // Authorisation + result scope are centralised in dashboard_scope:
-        // active enrolment with a teacher-or-higher role, unless the user is
-        // a site admin with enable_admin_view_all on (then the whole site).
-        // A non-admin with zero visible courses has no dashboard access.
+        // Authorisation and result scope both come from dashboard_scope; a user
+        // with no visible course has no dashboard access.
         $userid = (int) $USER->id;
         $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids($userid);
         if ($scope !== null && empty($scope)) {
@@ -91,16 +92,19 @@ class get_dashboard extends external_api {
                 'error'
             );
         }
-        // Cache key includes the user (so per-user filtering doesn't leak
-        // across teachers), the band, and whether the user is in admin
-        // view-all mode (so flipping enable_admin_view_all re-keys at once).
+        // The key carries the user (so per-user filtering doesn't leak across
+        // teachers), whether the user is in full-site view-all mode (so gaining
+        // or losing that grant re-keys at once), the calendar version, the band
+        // filter, the display unit and the language the course names were
+        // filtered in.
         $cache = \cache::make('block_feedback_tracker', 'dashboard_payload');
         $key = 'v' . self::CACHE_KEY_VERSION
             . '_' . calendar::current_version()
             . '_' . $USER->id
             . '_' . ($scope === null ? 'all' : 'scoped')
             . '_' . $band
-            . (\block_feedback_tracker\local\sla\bucket::use_day_thresholds() ? '_d' : '');
+            . (\block_feedback_tracker\local\sla\bucket::use_day_thresholds() ? '_d' : '')
+            . '_' . current_language();
         $cached = $cache->get($key);
         if (
             $cached !== false && is_array($cached)
@@ -110,11 +114,8 @@ class get_dashboard extends external_api {
             return $cached;
         }
 
-        // Per-course / per-group visibility, centralised in dashboard_scope.
-        // Returns MATCH_ALL (admin view-all), MATCH_NONE (nothing visible),
-        // or an OR-joined clause over the user's courses + allowed groups —
-        // so a SEPARATEGROUPS teacher never sees SUM() across groups they
-        // don't belong to.
+        // Filtering by (course, group) pair, not by course, keeps a teacher in
+        // separate groups mode from seeing SUM() across groups they cannot see.
         [$where, $sqlparams] = \block_feedback_tracker\local\sla\dashboard_scope::sql_visibility(
             $userid,
             'g.courseid',
@@ -157,16 +158,17 @@ class get_dashboard extends external_api {
                   JOIN {course} c ON c.id = g.courseid
                  WHERE $where
               GROUP BY g.courseid, c.fullname
-              ORDER BY pending DESC, c.fullname ASC";
+              ORDER BY pending DESC, g.courseid ASC";
 
         $rows = $DB->get_records_sql($sql, $sqlparams);
 
         $courses = [];
         $courseids = array_map(static fn ($r) => (int) $r->courseid, $rows);
-        $trendseries = self::trend_series_for_courses($courseids);
+        $trendseries = self::trend_series_for_courses($userid, $courseids);
+        self::preload_course_contexts($courseids);
         // Counts follow the banding ruler: business-days mode serves the
-        // day-ruler twins, falling back to the hour counts until the rollup
-        // has been recomputed with the new columns.
+        // day-ruler twins, falling back to the hour counts while the rollup
+        // has not yet filled critical_days for the course.
         $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         foreach ($rows as $r) {
             $avg = $r->avgscore !== null ? (float) $r->avgscore : null;
@@ -182,7 +184,12 @@ class get_dashboard extends external_api {
                 : null;
             $courses[] = [
                 'courseid'  => $cid,
-                'coursename' => (string) $r->coursename,
+                // Filtered but not escaped: PARAM_TEXT and the dashboard's text nodes escape it.
+                'coursename' => format_string(
+                    (string) $r->coursename,
+                    true,
+                    ['context' => \context_course::instance($cid), 'escape' => false]
+                ),
                 'numgroups' => (int) $r->numgroups,
                 'pending'   => (int) $r->pending,
                 'critical'  => $critical,
@@ -211,35 +218,92 @@ class get_dashboard extends external_api {
         $result = [
             'success'    => true,
             'lastsynced' => time(),
-            'courses'    => $courses,
+            'courses'    => self::sorted_by_pending_then_name($courses),
         ];
         $cache->set($key, $result);
         return $result;
     }
 
     /**
-     * Trend-series fetcher for the courses-table sparkline. Sums effective
-     * median across each course's groups per day for the last 30 days,
-     * aligned to a YYYYMMDD window. Cross-DB safe — uses the same
-     * pattern as responsiveness_payload's per-group fetcher.
+     * Order the courses by pending count, most first, then by the name the
+     * caller reads.
      *
+     * The name is sorted after format_string(), not in SQL: a multilang name
+     * sorts by its markup in the database, and by the caller's language here.
+     * Each sort is stable, so equal names keep the course id order of the query.
+     *
+     * @param array $courses Course rows as execute() builds them.
+     * @return array The same rows, reordered and reindexed.
+     */
+    private static function sorted_by_pending_then_name(array $courses): array {
+        \core_collator::asort_array_of_arrays_by_key($courses, 'coursename');
+        usort($courses, static fn(array $a, array $b): int => $b['pending'] <=> $a['pending']);
+        return $courses;
+    }
+
+    /**
+     * Load the course contexts of a result into the context cache in one
+     * query, so formatting each course name does not fetch its context alone.
+     *
+     * @param int[] $courseids
+     * @return void
+     */
+    private static function preload_course_contexts(array $courseids): void {
+        global $DB;
+        if (empty($courseids)) {
+            return;
+        }
+        [$insql, $params] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'ctxc');
+        $params['ctxlevel'] = CONTEXT_COURSE;
+        $contexts = $DB->get_records_select(
+            'context',
+            "contextlevel = :ctxlevel AND instanceid $insql",
+            $params,
+            '',
+            \context_helper::get_preload_record_columns_sql('{context}')
+        );
+        foreach ($contexts as $ctx) {
+            \context_helper::preload_from_record($ctx);
+        }
+    }
+
+    /**
+     * Trend-series fetcher for the courses-table sparkline. Averages the
+     * effective-hours medians of the groups the user can see, per course and
+     * day over the last 14 days, one entry per YYYYMMDD in the window (value
+     * null on days with no data). The (course, group) filter is the one
+     * execute() applies to the aggregates beside it, so a teacher in separate
+     * groups mode sees no trend of a group they cannot see.
+     *
+     * @param int $userid The dashboard viewer.
      * @param int[] $courseids
      * @return array<int, array<int, array{day:int, value:float|null}>>
      */
-    private static function trend_series_for_courses(array $courseids): array {
+    private static function trend_series_for_courses(int $userid, array $courseids): array {
         global $DB;
         if (empty($courseids)) {
+            return [];
+        }
+        [$visibility, $params] = \block_feedback_tracker\local\sla\dashboard_scope::sql_visibility(
+            $userid,
+            'courseid',
+            'groupid',
+            'tv'
+        );
+        if ($visibility === \block_feedback_tracker\local\sla\dashboard_scope::MATCH_NONE) {
             return [];
         }
         // 14-day (two-week) sparkline window — matches the in-course block.
         $window = self::trend_window(14);
 
-        [$insql, $params] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'tc');
+        [$insql, $inparams] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'tc');
+        $params += $inparams;
         $params['oldest'] = (int) $window[0];
         $sql = "SELECT id, courseid, day, medianh_eff
                   FROM {block_feedback_tracker_trend}
                  WHERE courseid $insql
-                   AND day >= :oldest";
+                   AND day >= :oldest
+                   AND $visibility";
         $rows = $DB->get_records_sql($sql, $params);
 
         // Group rows by (courseid, day) — multiple groupids per course

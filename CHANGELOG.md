@@ -5,6 +5,1009 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - Unreleased
+
+### Changed
+- **Reconciliation no longer reads the whole submission table per query.**
+  Measured on 5 million submissions (250 000 students, 6 000 groups):
+  - the missing-row sweep cost 1.6 s per window of 500 on PostgreSQL, because
+    its window filtered by course through joins and read every submission of
+    the tracked courses to keep 500; the window now walks the primary key
+    alone and the tracked submissions are picked out in PHP, which is cheap on
+    both PostgreSQL and MariaDB (filtering by a list of assignment ids instead
+    was fast on PostgreSQL and 1.6 s per window on MariaDB);
+  - its probe started from the activities and scanned their submissions
+    again, 0.9 s, and now starts from the window's ids, 16 ms;
+  - the departed-participant sweep compared every ledger row of a course with
+    every participant, 1.75 s per course; it now looks each row up, about
+    75 ms per course.
+
+  The missing-row and departed-participant sweeps share one definition of an
+  active participant, core's own; the missing-row sweep's start-date test now
+  matches core's (`timestart < now`).
+- **`reconcile_batch_size` defaults to 1000** (was 500). On the same table,
+  1000 to 2000 rows per query is the cheapest per row. Sites still on 500 move
+  to 1000 on upgrade; any other value is kept.
+- **The performance settings say what each one does and when to change it**,
+  in a sentence or two each, and the retention ones say it does not reduce
+  the reconciliation load.
+
+### Added
+- **Pending rows that lost their response before the cycle model can be
+  dismissed.** Before measurement cycles, a student who saved an
+  already-graded submission again erased its response: the row went back to
+  pending with its clock running from that save, and the original hand-in time
+  is gone from Moodle. The new `cli/dismiss_legacy_pending.php` lists those
+  rows (cycle 0, no recorded mark, a live mark older than the hand-in, handed
+  in before this site's cycle-model upgrade, or before `--before`) and, with
+  `--run`, takes them out of the pending lists, the counts and every median
+  without inventing a response time. The ledger keeps the row with the new
+  `timedismissed` column; work the student saves afterwards opens a new cycle
+  and is tracked as usual. Each run is recorded in the recompute audit log
+  (reason `legacy_dismissal`), the column is part of the privacy export, and
+  retention prunes a dismissed row by its dismissal date, since it never gets
+  a response time.
+- **Work handed in again after a mark says so.** When a teacher grades but
+  leaves the submission editable, and the student saves it again in the same
+  attempt, Moodle asks for it to be graded again ("Graded - resubmitted") and
+  the plugin opens a new pending cycle whose clock starts at that save. The
+  pending report, the group drill-down and the dashboard's "Grade now" cards
+  now tag such rows **Resubmitted**, with the date of the earlier mark in the
+  explanation, so a teacher no longer sees work they already graded listed as
+  if it had never been answered. The tag also covers pending rows written
+  before the cycle model, whose post-grading edit had erased the response:
+  there the earlier mark is read from the activity's own grade. Saving the
+  grade again, even unchanged, still answers the row; nothing about the
+  measurement changes. `get_pending_submissions`, `get_graded_submissions` and
+  `get_grader_priority_list` return two new fields, `resubmitted` and
+  `previousmarktime`.
+- **Reconciliation now records what each tick cost.** One audit row per tick
+  (reason `reconcile`), carrying per-sweep rows repaired, milliseconds and
+  cursor position, plus `emptyms` — the time spent proving nothing was wrong —
+  and whether the time cap cut the tick short, with the names of the sweeps it
+  skipped. The row is written on every tick, including the ones that repair
+  nothing: on a converged ledger that *is* the task's cost, and until now
+  nothing anywhere recorded it. Visible on *Tools → Recompute audit*.
+
+  The skipped list is the operational signal worth watching. Sweep order
+  rotates between ticks, so a cap too low for the site shows up as a skipped
+  list that is rarely empty — the deferred repairs spread across the nine
+  sweeps instead of pinning to the same names every tick.
+
+- **Deleting a large group no longer re-attributes every member inside the
+  request.** Up to 50 users are still moved to their current group at once; a
+  larger group is handed to the new adhoc task `reattribute_users` in chunks
+  of 50. The deletion now works from users rather than ledger rows, up to 20
+  000 of them (it used to stop silently at 10 000 rows), and raises a
+  debugging notice when it reaches that ceiling.
+
+- **Site benchmarks on the teacher dashboard.** A collapsible section at the
+  end of the dashboard shows the site-wide daily series for the last 7, 30 or
+  90 days, as an accessible table under a median sparkline: the median, 10th
+  and 90th percentile of business hours to feedback, the share graded within
+  the SLA goal and the number graded. Only users holding
+  `block/feedback_tracker:viewschoolcomparison` at system context (managers by
+  default) receive the section and its strings; the `get_school_comparison`
+  web service still checks the capability on every call. The data loads when
+  the section is opened. The site history is recorded in business hours only,
+  so in business-days mode the section says so rather than converting.
+
+- **A group membership change re-dates the student's submissions at once.**
+  Joining or leaving a group, or losing a deleted group, can change which
+  group override sets a student's open, due and cut-off dates. The group event
+  now rewrites the dates of that student's current rows in the same request
+  instead of waiting for the reconciler's rule-drift sweep, which on a large
+  site could take days to reach a row. Only activities with a group override,
+  or rows storing dates other than the activity's own, are read, so on a
+  course without group overrides the check is one query; beyond 50 rows the
+  work goes to the `reattribute_users` task, which now re-dates the rows it
+  moves. One case stays with the sweep: a former member of a deleted group
+  whose submissions report under another of their groups, because nothing left
+  in the database records the membership.
+
+### Fixed
+- **The reconciler no longer walks the whole ledger to find out it has nothing
+  to do.** Every sweep ran one statement whose `LIMIT` sat over its own repair
+  predicate, so the batch bounded the rows *returned*, not the rows examined.
+  Drift is rare by design — the observers repair the common paths — so on a
+  converged ledger, the normal state, each sweep returned fewer rows than the
+  batch, read that as "pass complete", and reset its cursor to 0 after
+  scanning every row in every tracked course. Every tick, for ever. The
+  latest-drift statement made it worse with an `OR` between the individual and
+  team join conditions, which no index on either PostgreSQL or MariaDB could
+  serve past the `assignment` column: for every ledger row it read every
+  submission of the activity, a cost quadratic in class size. A DBA reported it
+  as a query that never finished.
+
+  Measured on a synthetic 1.07 million-row ledger with 300 tracked courses and
+  nothing to repair: the statement took 24.5 s and returned nothing; the same
+  probe now takes 8 ms per window. Each sweep walks its driving table in
+  windows of `reconcile_batch_size` rows (the setting keeps its name and its
+  default; its meaning is now the window), probes only that window, and moves
+  its cursor to the end of the window whether or not it held anything. The
+  end of a pass is a window shorter than the batch and nothing else — a sweep
+  stopped by the time cap keeps its place and resumes next tick. The `OR` in
+  the latest-drift and orphan sweeps is two equality joins, one per submission
+  mode, each a point lookup on the unique key.
+
+  Behaviour that changes with it: a sweep keeps walking windows until its share
+  of the time cap is spent, so on a large site a full pass now takes a few
+  ticks instead of one unbounded query, and a single tick can no longer run
+  past the cap inside one sweep. Each sweep's share is an equal split of what
+  is left of the tick when its turn comes, so a cheap sweep hands its unused
+  time on. The audit row records rows `examined` and `windows` walked per
+  sweep beside the rows repaired. The window is capped at 10 000 rows whatever
+  the setting says, because it becomes a placeholder list in the probe and
+  PostgreSQL refuses a statement with more than 65 535 of them. The cursors'
+  meaning is unchanged; nothing needs resetting on upgrade.
+
+- **Extensions now reach the stored due date and cut-off.** An extension granted
+  in the assignment replaces that student's due date, as the grading table
+  shows it, whether the date came from the activity or from an override. It
+  also moves an existing cut-off it passes, as mod_assign does when deciding
+  whether submissions are still open; where there is no cut-off it creates
+  none. The `extension_granted` observer already re-resolved the student's
+  rules, but the resolver never read `{assign_user_flags}`, so the ledger kept
+  the activity's dates.
+- **An override that removes a date now removes it.** In an assignment
+  override an empty value means "use the activity's date" and 0 means the date
+  was switched off for that student or group. The plugin read both as "use the
+  activity's date". Stored rule dates and the per-group activity dates on the
+  block now follow mod_assign; on the group card, an override that removed
+  dates counts as the group's own override.
+- **A student in several overridden groups gets one answer, whichever path
+  writes the row.** Each date now comes from the student's own override, then
+  from the group override with the lowest sortorder among all of the student's
+  groups, then from the activity, one date at a time, as the activity's dates
+  on the course page are resolved. Before, the result depended on the group the
+  ledger row was attributed to and on which write path ran last, and deleting a
+  group override fell back to the activity instead of the student's remaining
+  groups.
+- **The rule sweep no longer re-dispatches every overridden or extended
+  submission on every pass.** It compared the stored dates against the
+  activity's own due date and the raw extension, neither of which the writer
+  stored, so each such row was "repaired" to the same value on every tick. It
+  now checks the open date, due date and cut-off of each current cycle with the
+  same query the ledger stores them with, which also catches override edits,
+  reorderings and group-membership changes that fired no event. Rows stored
+  under the old rules are corrected over the sweep's next pass.
+- **The grade-divergence sweep no longer re-dispatches marked submissions on
+  grade type "None".** Core stores -1 for a grading on an activity with no
+  grade. The sweep read that as "no mark", while the writer, like core, only
+  checks that a later grade row exists.
+- **Paused periods no longer count Friday as weekend and Sunday as a working
+  day.** The paused-days aggregator numbered weekdays from Sunday, while the
+  weekend setting numbers them from Monday. With the default Saturday + Sunday
+  weekend, the paused-periods callout, the dashboard events line and the
+  report's academic-days strip marked every Friday as a weekend day and every
+  Sunday as an academic one. Counts over whole weeks looked right, which hid it.
+- **An "&" in a name or a note no longer shows as "&amp;".** Calendar notes on
+  upcoming pauses and sub-day events, course and group names, group titles
+  built from custom fields, the dashboard greeting and the bulk block-removal
+  list were HTML-escaped before reaching surfaces that escape text themselves.
+  They are now sent as plain text, with tags still stripped, and escaped once
+  where they are displayed.
+- **A group title field with a link configured no longer breaks the block.**
+  Titles and subtitles built from group custom fields used the field's display
+  HTML. For a text field with a link that HTML is a link element, which made
+  the web service reject the whole response, so no card loaded. Titles are now
+  plain text for every field type: text, select, textarea, checkbox, date and
+  number.
+- **Names are filtered in the reader's language and people follow the site's
+  full-name format.** The dashboard and its insight cards, the Grade Now list,
+  the report's class filter, its pending and graded tables, the group
+  drilldown and the activity list on the block's group cards sent course,
+  group and activity names exactly as stored, so a multi-language name showed
+  every language's markup and other text filters never ran. Student names were
+  always "first last" whatever *Full name format* said; the report's search
+  now matches the name in that same format. The cached dashboard, insights and
+  block payload are kept per language, so switching language no longer shows
+  the previous language's names for up to fifteen minutes.
+- **Calendar editor messages are shown as text.** An error raised while saving
+  a day, a pause window or business hours was inserted into the page as HTML.
+  It is now escaped. Rejected CSV rows from a bulk import are listed one per
+  line, with a translated line label.
+- **Default-on settings are on before the settings page is first saved.**
+  `exclude_grader_submissions` and `removal_grace_follow_recyclebin` default to
+  on, but a value never saved read as off. After a web upgrade, until an admin
+  saved the new settings, submissions by teachers and role-switched
+  administrators were recorded, and a removed block's history was kept only for
+  the plugin's own grace period even when the recycle bin keeps the course
+  longer.
+
+- **A teacher allocated to mark submissions is covered by privacy requests.**
+  The allocated marker's user id was declared as personal data but never
+  found, exported or erased for that teacher. An export now lists the
+  teacher's current allocations (activity, attempt, allocation time and
+  turnaround, without the student's identity); an erasure clears the teacher's
+  id from those submissions and keeps the students' rows. `timeallocmarker` is
+  declared too.
+
+- **The teacher dashboard's course sparkline no longer shows trends from
+  groups the teacher cannot see.** The courses table was already filtered to
+  the teacher's groups, but the sparkline beside it averaged every group of
+  the course, which in separate groups mode showed other groups' turnaround.
+
+- **Removing the block again inside the grace period restarts the grace
+  period.** If the block was removed, put back and removed again, the pending
+  discard kept the first removal's deadline and could delete the course's
+  history early.
+
+- **The data reset no longer claims to delete the audit log.** It never did,
+  and it should not: the reset records itself there. "Rows removed" no longer
+  lists audit rows, and the warning no longer says pause or audit rows are
+  deleted.
+
+- **A cron process no longer carries one task's decisions into the next.**
+  Moodle's cron runs many tasks in one process, and the plugin's memos
+  (whether a course has the block, a user's group, the calendar lookups) lived
+  as long as the process, so a block added or removed between two tasks could
+  be missed. Every task now starts with fresh memos.
+
+- **The queue drain counts only what it dispatched.** A recompute core refused
+  to queue was reported as dispatched, whether one was already pending or, on
+  4.5, 5.0, 5.1.0 to 5.1.4 and 5.2.0, a retry-exhausted task was still
+  blocking it. Refusals are counted apart (`refused`) and traced.
+
+- **Moving a pause window to another course or group recalculates the one it
+  left.** Only the new scope was recalculated, so the old one kept counting
+  the pause.
+
+- **Re-importing a calendar day by CSV clears an old partial-day window,** as
+  the editor form already did, and **removing a day that has no entry no
+  longer recalculates every course on the site.**
+
+- **Closed days and full-day optional days count as paused whatever the recess
+  setting,** as the time engine counts them, and **the upcoming-pause notice
+  no longer announces holidays or recesses that count as working time.**
+
+- **An optional event with a start and end time is announced at the right time
+  on a daylight-saving day.** Its minutes are read as wall-clock time, as
+  business hours are.
+
+- **Calendar edits are recorded in the recompute audit log and purge the
+  per-day calendar and pause-window caches.** A day save, a CSV import, a
+  business-hours save and a pause-window save or deletion each leave one row
+  (`calendar_save`, `bulk_import`, `business_hours_save` or `pause_save`) with
+  the rollups re-queued and the user; the reasons existed but nothing wrote
+  them. The caches are keyed by the calendar version and have no expiry, so
+  each edit used to leave every entry in the store.
+
+- **A course's ungrouped card is no longer part of its own peer benchmark.**
+  Group id 0 is the ungrouped card of every course, so excluding by group id
+  alone left the course's own row in the "Department" and "Top 10%" pool; the
+  exclusion now uses the (course, group) pair. **The hours benchmarks need
+  their own minimum sample:** a card with pending work and nothing graded has
+  a score but no median wait, so one group's median could be published as the
+  department norm.
+
+- **Pending report, business-days mode.** A submission not yet given its
+  business-day count took its Status badge from a different measure than the
+  distribution bar and the band filter, so the badge could name another band.
+  Both use the same estimate, and sorting by Status follows the day count.
+
+- **The dashboard's "gentle watch" insight counts in business days when the
+  display unit is business days,** and **a tie for the "bright spot" goes to
+  the group with more graded submissions,** as documented.
+
+- **Every trend sparkline has a localised accessible name,** instead of the
+  English "30-day trend" over a 14-day series, and **the score simulator's
+  gauge has one too** (the page never sent the label, and the string held a
+  mistyped placeholder).
+
+- **The score simulator starts from the weights the groups are scored with.**
+  A weight stored as 0 came back as its default in the simulator while the
+  real score dropped that term.
+
+- **Numbers and dates on the JavaScript pages follow the user's language and
+  time zone.** Fractional hours and days use the language's decimal separator,
+  and the block's last-sync stamp, the report's dates and the activity
+  timeline use the language pack's locale and the user's Moodle time zone
+  instead of a fixed DD/MM/YYYY or the browser's zone.
+
+- **The dashboard's Effective column sorts on the figure it shows,** and **the
+  block's Perceived tile no longer changes with the display unit** (an item
+  waiting 0 hours no longer reads "1d").
+
+- **The pending report's loading state reaches screen readers,** and **every
+  form on the calendar editor has unique element ids** (ten forms shared
+  `id_submitbutton`, `id_note` and the business-hours fields). The bulk
+  removal table's checkbox column has its own hidden "Select" header instead
+  of a repeated "Course" in Bootstrap 4's deprecated `sr-only`.
+
+- **Text fixed in English is translatable:** the fallback "Group #N" name, the
+  CSV import format hint, and the day and hour suffixes on the drilldown.
+
+- **Bulk-removal page views in the site log link to that page** instead of the
+  plugin settings, the "No submissions" badge has colours again, and the
+  queue-to-turnaround chip and the bulk-removal count use the plugin's
+  monospace font.
+
+- **Team submission events no longer run one group query per participant,**
+  and **`cli/recompute_one.php` requires `--courseid`;** both recompute
+  scripts report a rollup they could not recompute because another process
+  held its lock, and exit with status 1.
+
+- **Cutoff settings saved out of order are repaired on upgrade.** A
+  `score_thresholds_band`, `bucket_thresholds_eff` or `bucket_thresholds_days`
+  value stored before the settings page validated it (for example score bands
+  saved as `70,90,40`) kept every score or submission in the wrong band. The
+  2026092500 upgrade step resets such a value to its shipped default, starts a
+  new calendar version and queues every rollup for a recompute.
+
+- **The group drill-down's status badge shows the band's name** in the user's
+  language instead of its internal slug.
+
+- **Courses tied on pending count on the teacher dashboard are ordered by the
+  name the user reads,** after multilang filtering, rather than by the stored
+  name.
+
+- **The score simulator's sliders use the language's decimal separator**
+  ("0,40" in Portuguese), matching the total beside them.
+
+- **`js/vendor/README.md` no longer claims the bundle hash is in
+  `thirdpartylibs.xml` when it was not;** both now carry it.
+
+### Changed
+- **The academic-time engine no longer runs inside the reconciler's tick.** The
+  allocation sweep called `stamp_allocation_for_user()` inline, which invokes
+  the engine once per ledger row of each (activity, student) pair — inside a
+  cap shared by every sweep, on the sweep sitting last in the registry. It now
+  dispatches an adhoc `stamp_allocations` task instead.
+
+  The discovery instant travels in the payload rather than being read from the
+  clock in the worker, so what gets recorded is byte-identical to the inline
+  version: `reconciled` already declares the value as accurate only to the sweep
+  period, and reading `time()` on the worker would fold in however far behind
+  cron happens to be running.
+
+  Descriptors are also deduplicated per (activity, student). The stamp already
+  walks every row of that pair, so a student with several unstamped attempts
+  used to cost one full pass per row.
+- **The reconciler's sweeps rotate, so the tail stops starving.** The time cap
+  is tested *between* sweeps and the order was fixed, so on a site whose ticks
+  run out of budget the sweeps at the end of the registry were never reached —
+  the rule and allocation ones, meaning due-date drift and marker turnaround
+  stopped being repaired entirely, with nothing anywhere saying so.
+
+  Each tick now resumes after the last sweep that actually ran. The marker is
+  the sweep's key, never an index: an index re-points on its own the moment the
+  registry changes. Rotation is a no-op on any tick that reaches every sweep,
+  so it only does anything once the cap bites. The order a tick used is recorded
+  in its audit row, and the `skipped` list is sliced from that order rather than
+  from the registry.
+- **Rows for departed participants are cleared in hours, not months.** The sweep
+  that removes ledger rows for people who are no longer active participants
+  visited exactly one course per tick, behind a cursor that was an *index* into
+  the list of tracked courses. A full pass therefore took one tick per course —
+  at the two-hourly schedule, a site with 1,000 tracked courses needed about
+  83 days — and the index was unstable: adding the block to a course with a
+  lower id shifted every later position and silently skipped a course for a
+  whole cycle.
+
+  The cursor is now a course id, which survives the list changing under it, and
+  the sweep visits up to 25 courses per tick within its time budget. A course
+  with a large backlog sheds what fits and the rest on the next pass, rather
+  than holding the cursor and starving the courses behind it.
+
+  The upgrade unsets the old cursor, because reading the old index as a course
+  id would skip every course at or below it for the first pass.
+- **The reconciler's sweeps are indexed.** New `idx_course_id` on
+  `block_feedback_tracker_sub (courseid, id)`. The keyset sweeps page on
+  `id > :cursor` while filtering on `courseid`, and no existing index led with
+  `id` — the primary key does, but the course filter was then a residual over
+  whatever the range scan produced. On a ledger where the tracked courses are a
+  small slice of the table, that residual was most of the work.
+
+  It does not help the two row-creating sweeps: those drive from
+  `{assign_submission}`, which carries no course column on either supported
+  core version.
+- **Reconciliation has its own time cap.** `reconcile_time_cap_seconds` replaces
+  the reconciler's use of `drain_time_cap_seconds`. One number was sizing two
+  very different tasks: the drain inserts a couple of hundred rows into
+  `{task_adhoc}`, while reconciliation runs nine diffs against the assignment
+  tables. The cap is tested between sweeps, so a value too low for the site
+  means some sweeps are deferred on every tick — a loss of repair throughput,
+  not a slowdown. The rotation entry above keeps that loss spread across the
+  nine sweeps rather than pinned to the tail of the order.
+
+  The upgrade seeds the new setting from the old one's stored value, so a site
+  that had raised the drain cap keeps the behaviour it had. Sites that never
+  touched it read the same 50 either way. `drain_time_cap_seconds` continues to
+  govern the drain, pending and backfill tasks.
+
+- **A grade entered straight into the gradebook now counts as a response.**
+  Until now the plugin only ever looked inside the activity, so a teacher who
+  graded in the grader report, the single view or an import was invisible to
+  it: the submission stayed in the pending count for ever, and nothing could
+  clear it. The student, meanwhile, was looking at their mark — mod_assign's
+  own student page reads the gradebook, not `{assign_grades}`.
+
+  The rule is **the earliest response wins, and it is never withdrawn**. A
+  cycle closes on whichever came first, the mark in the activity or the grade
+  in the gradebook, and a later deletion does not re-open it: the feedback did
+  reach the student at that time, and a figure that can be retro-edited by a
+  later administrative act is not a fact. The activity keeps sole authority
+  over re-opening — clearing a mark there still means "not answered yet",
+  unchanged.
+
+  Three boundaries are deliberate. **The instant comes from `overridden`, never
+  from `timemodified`**: core sets `overridden` when a human grades outside the
+  activity and suppresses it for a mass rescale, while a course regrade, a
+  calculated-item recompute and 5.2's penalty manager all move `timemodified`
+  without anybody grading — keying on the wrong column would have dated every
+  response to whenever an admin last touched the gradebook. **A hidden grade is
+  not a response**, which is the same reasoning the marking-workflow branch
+  already applies to an unreleased mark, applied to the gradebook's own gate.
+  And **the allocated marker's own turnaround is not closed by it**: a grade
+  typed into the gradebook is frequently a coordinator's act, and crediting it
+  would measure the wrong person on a figure that carries their name.
+
+  `\core\event\user_graded` is now observed, exiting early when the activity
+  owns the cycle — either it is already answered, or `{assign_grades}` carries a
+  mark that postdates the hand-in, which means `submission_graded` is about to
+  fire. Testing only for an answered cycle would have missed the ordinary path
+  entirely: core writes the grade, pushes to the gradebook, and only then
+  triggers its own event, so the row is still open when this one arrives. Its twin
+  `grade_deleted` is **not** registered: under earliest-wins it has nothing to
+  do, and it fires unreliably besides. A reconciler sweep covers what no event
+  reaches — flipping a grade to overridden fires nothing at all, and neither
+  does a re-grade to the same value.
+
+- **The hidden-grade disclosure is now actionable, documented and tested.** The
+  one case the gradebook work deliberately leaves unrepaired — a mark made
+  inside the assignment stops the clock even while the gradebook hides the
+  grade — is compensated entirely by telling the teacher, so that telling has
+  to land. The tag now says the grade needs releasing and how to release it,
+  rather than explaining the measurement to somebody auditing it; the README
+  gains a "What counts as a response" section, because the plugin's own
+  user-facing documentation said nothing about the gradebook at all; and a test
+  asserts the flag reaches the pending report for exactly that case. Its
+  absence mattered: the row carries no `overridden` stamp, because mod_assign
+  pushes its mark through `grade_update()`, which never sets that column — so a
+  detection keyed on it would have missed precisely the case the tag exists for,
+  with nothing to catch the mistake.
+
+- **Two per-row disclosures on the pending report.** A row answered from the
+  gradebook says so, because the activity's grading screen shows nothing that
+  explains it. And a row whose grade the gradebook is hiding says so too: that
+  one is disclosure rather than repair — a mark made inside the activity still
+  closes the response time even while hidden, which is long-standing behaviour,
+  and the row now states it instead of letting a closed clock imply the student
+  received something they cannot see.
+
+- **Code comments describe the code again.** Every comment was checked against
+  the code it annotates and rewritten to Moodle's comment guidance: claims that
+  had drifted from the code were corrected, notes about the development
+  environment and planning history were removed, and a rationale repeated in
+  several places now lives once, at the code that implements it. No code
+  changed; the AMD build is regenerated because its source maps carry the
+  comment text.
+
+- **The block, the dashboard and the report pages use the theme's colours and
+  follow Moodle's dark mode.** Surfaces, text, borders and focus rings read
+  the theme's Bootstrap tokens (the `--bs-*` set on 5.1 and later, the
+  Bootstrap 4 names on 4.5), so a site's brand colour reaches the focus rings
+  and a dark colour mode no longer shows light slabs. The band, plum and sand
+  colours keep their light values and gain dark ones, and the JavaScript draws
+  gauges, rings, peer bars and sparklines from those tokens instead of fixed
+  light-mode colours. Every text colour keeps at least 4.5:1 on its surface in
+  both modes, which darkened muted text and the "no data" band slightly
+  (`#5f6b7f`), the "watch" insight tone (`#8a6420`) and the retry button
+  (`#c2410c`); draft badges and stat-tile labels no longer fade their text
+  with opacity.
+
+- **The rollup no longer stores a next and last pause, and the upgrade
+  recomputes every rollup.** The five `nextpause_*` and `lastpause_*` columns
+  were written on every recompute and read by nothing; the upgrade drops them.
+  It also queues every (course, group) for recompute, because `unallocated`
+  and `overgoal_days` changed meaning in this version; `drain_queue` rebuilds
+  them with no CLI run needed.
+
+- **`unallocated` counts only activities that allocate markers.** On an
+  activity without marking allocation every pending row read as unallocated,
+  so the figure equalled `pending`. It now counts pending work in activities
+  with marking allocation on, and is null when none of the pending work
+  belongs to one, as the column always documented.
+
+- **The business-days over-goal count uses the SLA goal in days.**
+  `overgoal_days` was bounded by the first business-days bucket threshold
+  while the day compliance figure used `sla_goal_days`; the hour pair has
+  always used `sla_goal_hours` for both. The pending report's business-days
+  bands use the same pair, so the block and the report still agree.
+
+- **The score-band and wait-time bucket thresholds are checked on save.** Each
+  setting must hold exactly three numbers in the order its bands are read:
+  decreasing and within 0-100 for the score bands, increasing and not negative
+  for the effective-hours and business-days buckets, with no two equal. A
+  value typed out of order used to be saved and silently misclassified every
+  score or submission on the site. Stored values are read as before and
+  checked the next time the settings page is saved; the descriptions now state
+  the expected order.
+
+- **Two setting descriptions say what the code does.** The reconciliation
+  batch size is capped at 10000, and the retention window also prunes the
+  daily site and trend tables, which limits how far back the school comparison
+  reaches.
+
+- **The academic calendar web service rejects date ranges longer than 366 days
+  and values that are not real dates.** The limit was declared but not
+  enforced.
+
+- **The dashboard and the pending report compute their hero figures in one
+  shared module** (`amd/src/lib/aggregate.js`), so the two cannot drift apart.
+
+- **CI runs on pushes to `main` and `MOODLE_*_STABLE`, on pull requests and on
+  manual dispatch,** and a newer push supersedes a running pull-request run,
+  never one on `main`.
+
+- **Preact 10.29.8.** The vendored bundle moves from Preact 10.29.2 to 10.29.8
+  (htm stays 3.1.1) and is now `js/vendor/bft-vendor-10.29.8-3.1.1.min.js`.
+  The releases in between are bug and performance fixes; the only ones this
+  plugin reaches are the faster child diff and hooks (preactjs/preact #5115,
+  #5116, #5182). The two Preact files come from the npm release tarballs,
+  checked against the registry's integrity values and their jsDelivr copies,
+  and `js/vendor/README.md` and `thirdpartylibs.xml` record every SHA-384.
+
+- **One class names the vendored bundle.** `local\output\vendor_bundle` holds
+  the file name and loads the bundle for the block and every page, so the next
+  update is a one-line change. A unit test fails when another PHP file spells
+  the name, the named file is missing, a second bundle is left in `js/vendor`,
+  or `thirdpartylibs.xml` or the README disagree; a Behat smoke test opens
+  every page that loads the bundle and fails when one renders no interface.
+
+- **Dimmed and disabled controls keep readable text.** The busy retry and
+  refresh buttons, disabled load-more and pagination buttons, switched-off
+  simulator sliders and terms, and the distribution bar's unselected segments
+  now use a colour pair of their own instead of fading with opacity, which had
+  taken labels below 4.5:1. The drill-down's sort arrow has its own 3:1 pair
+  and background. A stylesheet test now refuses opacity on text and dimmed
+  states without their own colours.
+
+- The `reattribute_users` task is now named "re-attribute and re-date ledger
+  rows after a group change".
+
+### Added
+- **Three lifecycle events are now observed**, closing gaps where a ledger row
+  stops describing reality without any of its own values changing — the shape
+  no reconciler sweep can detect, because it compares values.
+
+  *Unenrolment* and *account deletion* now drop the affected rows in the
+  request that caused them. The reconciler already did this, but it walks one
+  course per tick on a two-hourly task, so on a site with many tracked courses
+  a departed student stayed in pending counts and the grader priority list for
+  days. Whether an unenrolment was the user's last in that course is read from
+  core's own answer in the event payload rather than re-derived: deriving it
+  with `get_enrolled_sql()` materialises the whole enrolled set to settle a
+  one-row question, once per event, and a bulk unenrolment fires one event per
+  student. Deletion across all courses is backed by a new index on `userid` —
+  no existing index led with it, so both deletions would otherwise have been
+  full table scans on exactly the bulk paths that matter.
+
+  *An assign's settings save* re-derives the activity's measured rows.
+  `markingworkflow`, `markingallocation` and `teamsubmission` change what
+  already-stored rows **mean** — with marking workflow on, the response lands
+  when the mark is released rather than when it is entered — and nothing could
+  see that: the divergence sweep keys on the mark, the rule sweep keys on
+  dates, and both find the stored rows perfectly consistent with a definition
+  that no longer applies. Rather than diff against a snapshot the ledger does
+  not keep, every affected row is re-derived from live state, dispatched as
+  background chunks so a cohort-sized recompute never runs inside the
+  teacher's request. Team work is dispatched once per group rather than once
+  per member, because each dispatch already fans out to the whole group.
+
+  Not registered at the time: `\core\event\user_graded` and
+  `\core\event\grade_deleted`, because reading the gradebook as a grading
+  source is a change to the measurement model rather than an observer, and was
+  left as its own decision. **That decision was since taken** — see the
+  gradebook entry under Changed above, which registers `user_graded` (and
+  still refuses `grade_deleted`, for a different reason).
+
+### Fixed
+- **The reconciler no longer resurrects the rows it just deleted.** Two of its
+  sweeps were fighting each other on every tick, indefinitely: the
+  departed-participant sweep deletes ledger rows for anyone who is no longer an
+  active participant, and the missing-row sweep — which runs *first* on each
+  tick and reads `{assign_submission}` directly — had no enrolment or
+  account-status predicate at all, so it rebuilt exactly those rows on the tick
+  that followed. An unenrolled student therefore reappeared in pending counts
+  and in the grader priority list for ever, and each round trip cost a backfill
+  dispatch plus a rollup recompute.
+
+  The missing-row sweep now restricts to active participants with the same
+  definition the departed-participant sweep uses (`get_enrolled_sql($context,
+  '', 0, true)`): a deleted account, a suspended enrolment, a suspended
+  enrolment method, or an enrolment outside its start/end window all
+  disqualify. The predicate is written out inline rather than reusing
+  `get_enrolled_sql()`, which is course-scoped, because this sweep runs across
+  every processable course in one query.
+
+  One tick could never have shown this — within a single run the rebuild
+  happens before the deletion — which is why the existing test passed while the
+  behaviour was wrong. The regression test asserts on the *second* tick.
+
+### Removed
+- **The tools landing page (`manage.php`) is gone**, and the "Tools" heading on
+  the plugin's admin settings page is now the single index of the calendar
+  editor, audit log, bulk-removal and reset pages.
+
+  The landing page had no way in. Nothing registered it as an
+  `admin_externalpage` and nothing added it to the admin tree, so it was
+  reachable only by typing its URL — while the settings page listed the same
+  four tools and was linked from the block settings tree like every other
+  plugin. Two lists with one reader had already drifted: the settings page also
+  offers the score simulator, and the landing page filtered its links by
+  capability where the settings page does not need to, being site-config gated
+  in its entirety.
+
+  The reset page's cancel and continue links now return to the settings page.
+  `tool_page_viewed` keeps accepting the `manage` slug: log rows written before
+  this change still carry it, and they resolve to the settings page rather than
+  to a dead URL.
+
+- **The unused server-rendered group card.** The block has rendered only its
+  JavaScript view since the no-JavaScript fallback became a short message; the
+  card, gauge and sparkline renderables and their four templates had no
+  caller.
+
+- **Unread fields in the block's web service response:** the 30-day paused-day
+  aggregates, the next and last pause fields and `perceived_median_hours`,
+  computed on every load and read by no client. This also removes a 30-day
+  calendar walk from every uncached block load.
+
+- **Unused JavaScript, strings and styles.** Five components nothing loaded
+  (the grade-now panel, hero metric card, pause timeline modal, paused-periods
+  callout and segmented filter), the never-loaded `responsiveness` module,
+  unused formatter and web service wrapper exports, the strings only they
+  used, and the rules for elements that no longer exist. The web services stay
+  registered.
+
+- **Two settings that nothing read:** "Wall-clock bucket thresholds" and
+  "Enable school comparison overlay" (the school comparison is governed by the
+  `viewschoolcomparison` capability alone). The upgrade removes their stored
+  values.
+
+- `dirty_queue::remove()`, which only a test called.
+
+- **Unused strings.** 28 page-bundle entries no JavaScript read, and 27
+  language strings nothing else used (old card, KPI, hero tooltip and report
+  filter labels), are gone from both language packs. The site-benchmarks
+  strings were reworded and are sent only to users who can see the section.
+
+### Added
+- **A tool to remove the block from many courses at once**, for the
+  end-of-period sweep: filter by end date, start date, "no end date set",
+  category (including subcategories) and hidden-only, then pick from the
+  matches. The three date questions are separate and combinable rather than one
+  clever control, because `course.enddate` is optional in Moodle and frequently
+  zero — "ended before" alone misses most of an old archive, while silently
+  falling back to `startdate` would sweep in courses still running.
+
+  It deliberately does **not** go through `is_processable()`, which excludes
+  hidden courses: a hidden course is what an archived one looks like, so the
+  tool would have been blind to exactly the courses it exists to clear.
+
+  The removal runs as a background task rather than in the submitting request,
+  so a several-hundred-course sweep cannot time out halfway with a partial
+  result nobody can see. A course that fails is skipped and counted rather than
+  aborting the batch.
+
+  Friction is a requirement here, not a cost. The list reveals 25 rows at a
+  time up to 100 and states "showing N of M", so a truncated list can never
+  read as a complete one; past 100 it asks for a narrower filter instead of
+  paging, because with paging "select all" acquires two meanings and the
+  difference between them is a few hundred courses cleared by accident.
+  Confirmation is the **number of selected courses**, typed: a number has to be
+  read to be typed, unlike a fixed word, and it goes stale the moment the
+  selection changes. Selections are re-validated server-side against the
+  candidate query, so a hand-edited form cannot reach a course the filter never
+  offered.
+
+  Gated by a new `block/feedback_tracker:bulkmanageblocks` capability (manager
+  archetype, `RISK_DATALOSS`) — separate from `:managecalendar`, so being able
+  to edit term dates never implies being able to clear a semester of courses.
+  Because Moodle records nothing at all when a block is deleted, the batch
+  writes an audit row naming who ran it and what it touched.
+
+## [1.0.40] - Unreleased
+
+### Added
+- **Removing the block from a course now discards that course's history, after
+  a grace period.** Previously the data simply stayed, invisible and
+  unreachable, for ever. Moodle's own convention is to delete a block's data
+  immediately in `instance_delete()`, and that is right for a block that owns
+  its data — `block_html` deleting its own files. This block is a *gate*: the
+  history belongs to the course, the plugin's tables are not in course backups,
+  and removing a block from a course page is a small act with an irreversible
+  consequence. So the discard is deferred and re-checked.
+
+  **The run-time re-check is what makes the delay worth having.** Restoring a
+  backup into an existing course with "delete the current contents" calls
+  `remove_course_contents()`, which runs `blocks_delete_all_for_context()` on
+  the course context and takes this block with it before the restore puts it
+  back; importing from another course does the same. Without the re-check a
+  routine restore would destroy a year of measurement a week later, with
+  nothing in any log connecting the two — Moodle triggers **no event at all**
+  when a block is deleted, on any supported version.
+
+  The check asks about block presence directly rather than through
+  `is_processable()`, which also requires the course to be visible: hiding a
+  course is what archiving one looks like, and it must never read as "the block
+  is gone".
+
+  Off by default (`removal_cleanup_active`). The grace period defaults to a
+  week and optionally follows the site's own recycle-bin retention — the
+  longest enabled window wins, so this plugin is never quicker to discard a
+  course's history than the site is to discard the course. A recycle bin set to
+  never expire is ignored rather than treated as an infinite grace, which would
+  silently disable the cleanup altogether. Floor of one hour.
+
+  Because Moodle records nothing when a block is removed, the discard writes an
+  audit row naming the course and the number of rows dropped.
+
+## [1.0.39] - Unreleased
+
+### Added
+- **A retention policy, so the ledger has a ceiling.** The table had none: a
+  closed measurement is never rewritten, a resubmission after grading opens
+  another one, and a team submission is carried by every member — so it grew
+  for the life of the site with no pruning of any kind. The new
+  `prune_ledger` scheduled task discards closed measurements older than
+  `retention_days` (default 365, floor 30), plus the daily trend and site-stat
+  rows that outlived every surface reading them.
+
+  Two rules make it safe to run unattended:
+
+  - **Only closed measurements are deleted.** A submission still awaiting
+    feedback is outstanding work, and its age is precisely the signal this
+    plugin exists to surface, so no age threshold can reach it. Pending rows
+    leave only when their submission, course or enrolment does.
+  - **The reconciler agrees on the boundary.** Its first sweep recreates a
+    ledger row for any submission lacking one, so without a shared cutoff it
+    would resurrect everything the pruner deleted on the next tick, for ever.
+    Both read `retention::cutoff()`, and a mutation test proves the guard is
+    load-bearing.
+
+  **Off by default** (`retention_active`), matching `backfill_active`: an
+  upgrade must never start deleting a site's history because a new version
+  shipped a policy. Turning it on bounds the report's all-time Graded tab —
+  an audit surface — to the window, which the setting says in its own
+  description.
+
+  A window below 30 days is ignored and falls back to the default: it would
+  delete work still inside the 30-day statistical window the score and the
+  medians are built from, so the rollup would disagree with its own inputs.
+
+## [1.0.38] - Unreleased
+
+### Fixed
+- **The pending count now matches Moodle's own at the boundary.** A grade saved
+  in the same clock second as the submission's last change read as *graded*
+  here and as *needs grading* in core's counter, whose clause is
+  `s.timemodified >= g.timemodified`. Core needs that direction because it
+  auto-creates placeholder grade rows carrying the submission's own timestamp;
+  the plugin rejects those by grade value instead, but the boundary is now
+  identical anyway — a disagreement at the tie would have shown two different
+  pending counts for one activity and had the reconciler chasing the gap for
+  ever.
+- **Group overrides re-resolved the wrong students.** The rule refresh selected
+  ledger rows by the ledger's own `groupid`, which is the *reporting*
+  attribution — the group a student was last added to, used to bucket the
+  dashboard — and has no reason to match the group an override targets. It now
+  selects by real membership of the overridden group, and enqueues every
+  reporting tuple actually touched rather than one built from the override
+  group.
+- **`marker_updated` no longer breaks on Moodle 5.2 or later.** 5.2 dropped
+  `assign_user_flags.allocatedmarker` in favour of the new
+  `assign_allocated_marker` table, and it does fire the event, so reading the
+  old column took the observer down with it. 5.02 is a supported branch, so
+  this was a live defect, not a forward-compatibility note.
+
+### Added
+- **The response interval is split by who owns each part.** A submission that
+  waited ten days to be allocated and was then marked in two hours used to
+  report a ten-day turnaround against the marker. The ledger now records
+  `queuehours` (hand-in to the first allocation — the coordination queue, which
+  belongs to whoever runs the allocation) beside `allochours` / `allocdays` /
+  `allocbucket` (the current marker's allocation to the grading — the only part
+  that is theirs). The student-experience clock that feeds the responsiveness
+  score is deliberately unchanged: the student really did wait the whole time,
+  and that remains the institution's SLA.
+- The marker turnaround is measured from the **current** marker's allocation,
+  not the first, so someone who inherits a long-queued submission on day 8 and
+  grades it on day 9 is measured at one day rather than nine. mod_assign fires
+  no de-allocation event in any supported version, so the reassignment is only
+  detectable from the next allocation.
+- **A non-measurable interval reports null, never zero.** An allocation stamp
+  that lands at or after the grading — which the reconciler produces whenever
+  it discovers an allocation after the fact — would otherwise band as
+  `excellent`, reading as a flawless turnaround. Those rows are marked
+  `allocsource = 'late'` and excluded from the medians.
+- Rollup columns `unallocated` (pending work nobody is responsible for yet),
+  `median_queue_h`, `median_alloc_h` and `alloc_coverage_pct`, plus the split
+  on `get_responsiveness` and on every listed submission row
+  (`get_pending_submissions` / `get_graded_submissions`). The report shows the
+  per-row split with an explanatory tooltip.
+- **User-level overrides and extensions reach the ledger.**
+  `user_override_created` / `_updated` / `_deleted` and `extension_granted` are
+  now observed: all four move the dates one student is judged against, and none
+  is visible in any other signal — the reconciler's rule-drift sweep compares
+  against the activity's own dates and `assign_user_flags`, so an
+  `assign_overrides` row was invisible to it.
+- **An eighth reconciliation sweep discovers silent allocations.** Before
+  Moodle 5.2 only the batch "Set allocated marker" operation fires an event;
+  quick grading and the grading form write the allocation with no signal at
+  all. Those are now found by a periodic diff and stamped
+  `allocsource = 'reconciled'` — the moment of *discovery*, not of allocation,
+  which is why it stays separable from `observed`: a median built from a mix
+  without saying so would understate every turnaround.
+- Behat coverage for the three outcomes only a browser can prove: the reported
+  resubmission defect (the grading survives in the history *and* a new pending
+  item appears), the awaiting-release chip, and a group submission appearing
+  against every member. The scenarios pin core's grading form via
+  `local_unifiedgrader/enable_assign`, so a sibling plugin that replaces the
+  assign grading UI cannot move the field labels underneath them.
+- `alloc_coverage_pct` is published **beside** `median_alloc_h`, never alone:
+  before Moodle 5.2 only one of mod_assign's three allocation paths fires an
+  event, so the sample is partial by construction and the median must not be
+  read as if it covered everyone.
+
+## [1.0.37] - Unreleased
+
+### Fixed
+- **A student who re-saves an already-graded submission no longer un-grades
+  it.** The ledger compared the live `assign_submission.timemodified` against
+  the grade time on a single mutable row, so any later save — even one that
+  changed nothing — pushed the hand-in time past the grading time, reset
+  `timegraded` to null and restarted the clock. The recorded response time was
+  destroyed and the submission reappeared as awaiting feedback, while Moodle
+  itself kept reporting it as graded. The ledger now keys on a **measurement
+  cycle**: work resubmitted after it already carried a mark opens a new cycle
+  instead of rewriting the closed one, so the completed turnaround survives in
+  the history and the re-look becomes a correctly-pending item whose clock
+  starts at the re-save. Removing the timestamp comparison outright was
+  considered and rejected — it makes a reopened cycle inherit the old mark and
+  be born graded with a fabricated zero-hour turnaround.
+- **Group assignments are tracked per member instead of not at all.**
+  mod_assign stores a team's work in one `assign_submission` row with
+  `userid = 0`; the observer mirrored it verbatim, producing a ledger row the
+  rollup counted (it does not join `user`) but every list hid (they all do) —
+  a pending item nobody could clear — while the actual group members got no row
+  at all. The container row is now refused at the write path (and the existing
+  ones removed on upgrade), and team submissions are fanned out to one ledger
+  row per member: timing and status from the shared group row, the mark from
+  each member's own grade row, tagged with the originating `teamgroupid`.
+  A member who never personally saved has no submission row of their own when
+  `requireallteammemberssubmit` is on, which is precisely why the per-user
+  lookup dropped them; the fan-out reads the group row instead. Members of the
+  default group (in none, or more than one, group of the activity's grouping)
+  follow the same rule core applies, and are skipped entirely when
+  `preventsubmissionnotingroup` bars them from submitting. Both the observers
+  and the historical backfill route through it.
+- **Superseded attempts stop counting as pending.** The ledger now mirrors
+  `assign_submission.latest`, which is the gate core applies to every one of
+  its own needs-grading reads, and every pending predicate is filtered on it
+  plus `iscurrent` — the rollup's pending set, the stale-row recomputer, the
+  report's pending and draft tabs, and the grade-now priority list. Granting
+  another attempt fires no event at all, so an ungraded earlier attempt
+  previously stayed pending indefinitely with a clock that grew without bound.
+  The graded populations deliberately keep **every** cycle: a teacher who
+  responded twice generated two genuine response events, so `numgraded30d`
+  counts responses rather than distinct students.
+- **The dashboard's "current" medians no longer count one attempt twice.**
+  `cur_median_eff_h` / `cur_median_raw_h` / `cur_median_eff_days` /
+  `cur_median_perc_days` merged the 30-day graded set with the pending set, so
+  an attempt whose earlier cycle was graded inside the window while its current
+  cycle awaits feedback appeared in both. They are now built from a dedicated
+  current-state population, one live observation per attempt.
+- **Elapsed-day fallbacks can no longer go negative.** A row written before the
+  cycle model could hold `timegraded` earlier than `timesubmitted`, and the
+  un-backfilled-day fallback turned that into a negative count that sorted
+  straight to the top of the priority list. Clamped at zero, expressed as
+  `CASE` rather than `GREATEST` (which core uses nowhere and which SQL Server
+  lacks before 2022).
+- **Activities with grade type "None" are no longer permanently pending.** They
+  can never carry a numeric mark, so the grade-value test never passed. They
+  now follow core's needs-grading counter, which clears them on a grade row
+  later than the hand-in.
+- **Submission events from the online-text and file subplugins no longer read
+  the wrong row.** Those events override `objecttable`, so their `objectid` is
+  the subplugin row id and the real `assign_submission.id` lives in
+  `other['submissionid']`. The observer looked the former up in the latter's
+  table: it either found nothing, or found an unrelated row and wrote a ledger
+  entry against the wrong student.
+
+### Added
+- **Scheduled ledger reconciliation** (`reconcile_ledger`, every two hours,
+  `reconcile_active` on by default). Six classes of mod_assign mutation emit
+  no usable event and can only be repaired by diffing against the source
+  tables: `add_attempt()` inserts a new attempt and flips the previous row's
+  `latest` flag in total silence; blind marking makes `gradebook_item_update()`
+  return false before doing anything, suppressing the grading event for the
+  entire activity until identities are revealed; grading a non-latest attempt
+  returns early, before the trigger; a gradebook-side override or lock silences
+  it too; `reset_userdata()` bulk-deletes submissions with
+  `delete_records_select()`, leaving orphans; and due dates, cut-offs,
+  overrides and extensions change with no per-row signal. Seven keyset-paged
+  sweeps, each behind its own cursor and bounded per tick, dispatch repairs as
+  adhoc tasks — except the two cleanup sweeps (orphaned rows, departed
+  participants), which act directly because the repair task re-gates on course
+  processability and would skip exactly the courses whose rows most need
+  removing. The divergence sweep mirrors the writer's predicate exactly and is
+  cycle-scoped, so it converges instead of re-dispatching the same repair every
+  tick; both properties are pinned by tests.
+- **Event coverage for the mod_assign actions the observer used to miss.**
+  `workflow_state_updated` (the marking-workflow release — the only signal
+  that a grade became visible to the student, and one core keeps no timestamp
+  for), `identities_revealed` (blind marking suppresses `submission_graded`
+  outright, so until identities are revealed every grading on the activity is
+  invisible and every submission reads as awaiting feedback), `marker_updated`,
+  `submission_removed`, `submission_duplicated`, and the
+  `assignsubmission_onlinetext` / `assignsubmission_file` `submission_updated`
+  twins — without which a student editing an existing submission is invisible
+  whenever `submissiondrafts` is on.
+- **Allocation timestamps.** `timeallocated` (first allocation, sticky, closes
+  the coordination-queue measurement), `timeallocmarker` (the current marker's
+  own start, so someone inheriting a long-queued submission is not charged for
+  a queue they did not cause), `allocmarkerid` and `allocsource`. mod_assign
+  stores no allocation timestamp on any supported version, so the moment is
+  only ever knowable when observed — and on 4.5 and 5.1 only the batch "Set
+  allocated marker" operation fires an event at all, which is what
+  `allocsource` records.
+- **"Awaiting release" chip on marked-but-unreleased submissions.** Under
+  marking workflow a saved grade is invisible to the student until the state
+  reaches *Released*, and releasing needs a capability the marker frequently
+  does not hold. The report now flags those rows with an explanatory tooltip so
+  the marker can see that an outstanding step exists and that it may not be
+  theirs. Reaches the payload as the new `awaitingrelease` field on
+  `get_pending_submissions` / `get_graded_submissions` rows.
+- New setting **`release_stops_clock`** (default off). When on, the response
+  clock for a marking-workflow activity stops at release rather than at
+  marking, which is when the feedback actually reaches the student. Default off
+  so the upgrade moves no displayed number; turning it on changes historical
+  figures on courses that use marking workflow and should be followed by
+  `cli/recompute_all.php` and `cli/backfill_trends.php`.
+- Ledger columns `cycle`, `timemarked`, `timereleased`, `timeclosed`,
+  `islatest`, `iscurrent`, `gradestate` and `teamgroupid`. `timereleased` and
+  `timeclosed` are maintained regardless of the setting above, so enabling it
+  later needs no re-derivation of what the student actually saw — mod_assign
+  persists no release timestamp of its own (`assign_user_flags` has no time
+  columns on any supported version), so the moment is only ever knowable when
+  observed.
+- `docs/moodle-52-multimarking.md`: what Moodle 5.2 changed about marker
+  allocation and multi-marking, and why it was a live defect rather than
+  future work.
+- `docs/assign-scenario-map.md` and `docs/assign-marking-allocation.md`: the
+  full audit of mod_assign's submission and grading lifecycle against this
+  plugin, covering the scenarios not yet addressed here (team fan-out, blind
+  marking, gradebook-side changes, course reset, the marking-allocation clock)
+  and the design for each.
+
+## [1.0.36] - Unreleased
+
+### Fixed
+- **Sortable tables are reachable by keyboard.** The group drill-down's column
+  headers attached their click listener to the `<th>` itself, so sorting could
+  only be triggered with a mouse and the active column was never announced —
+  a WCAG 2.1.1 failure. Headers now carry a real `<button>`, and `aria-sort`
+  moves onto the `<th>` where it is valid. The pending report had the same
+  `aria-sort` misplacement (on the button rather than the header) and is
+  corrected to match.
+- **Assistive technology is no longer read English on a pt_br site.** The score
+  gauge and the sparkline hard-coded their `aria-label`; both now come from
+  lang strings. The sparkline's label also said "30-day trend" while the card
+  renders 14 days, so screen-reader users were told the wrong window.
+- **The hero info dot is focusable.** It was a bare `<span>`, so its
+  explanatory tooltip could not be reached without a mouse and its
+  `aria-label` was ignored on a generic element. It is a `<button>` now.
+- **Draft badges are visible.** `.badge-draft` had no rule at all, so under
+  Bootstrap 5 a bare `.badge` set white text with no background and the label
+  rendered white-on-white.
+- **Sorting no longer inverts after a double init.** `pending_table.js` gained
+  the idempotency guard every other entrypoint already had; without it a
+  second init bound a second listener per header, so one click sorted
+  ascending then immediately re-sorted descending.
+
 ## [1.0.31] - Unreleased
 
 ### Added

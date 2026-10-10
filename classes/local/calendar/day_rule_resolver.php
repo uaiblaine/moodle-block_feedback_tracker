@@ -45,12 +45,11 @@ class day_rule_resolver {
     /**
      * Resolve the rule for one date.
      *
-     * v1.0.9 — when the row is a sub-day optional event (daytype=optional
-     * AND both starttime + endtime set), the day is considered active for
-     * the weekly schedule and the event window surfaces in the rule under
-     * `optional_window`. academic_time subtracts that window from active
-     * intervals later. Full-day optional (both columns null) keeps the
-     * pre-1.0.9 behaviour — `is_active = false`.
+     * An optional row with both starttime and endtime set is a sub-day event:
+     * the day stays active per the weekly schedule and the window is returned
+     * as `optional_window`, which {@see academic_time} subtracts from the
+     * active intervals. An optional row without a window makes the whole day
+     * inactive.
      *
      * @param int $daydate YYYYMMDD as int.
      * @param int $dayofweek 0=Mon..6=Sun (ISO 8601).
@@ -94,10 +93,9 @@ class day_rule_resolver {
             && $starttime !== null && $endtime !== null
             && $endtime > $starttime
         ) {
-            // Sub-day event: the day is otherwise active per the weekly
-            // rule (treat weekend exclusion identically to a normal
-            // implicit day); the event window itself is subtracted later
-            // by academic_time::effective_hours_between().
+            // Sub-day event: the day is active exactly as an implicit day
+            // would be, weekend exclusion included; academic_time's day walk
+            // subtracts the event window.
             $optionalwindow = [
                 'startmin' => $starttime,
                 'endmin'   => $endtime,
@@ -122,7 +120,7 @@ class day_rule_resolver {
     }
 
     /**
-     * Drop the per-request memo (test helper).
+     * Drop the per-request memo. {@see academic_time::reset_memos()}
      *
      * @return void
      */

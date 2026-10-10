@@ -31,13 +31,21 @@ namespace block_feedback_tracker\external;
  *   - the class exists,
  *   - it extends \core_external\external_api,
  *   - execute_parameters() / execute() / execute_returns() are defined,
- *   - the listed capability exists in db/access.php (or is a core capability).
+ *   - the listed capability exists: in db/access.php for the plugin's own
+ *     namespace, in the installed capabilities table for any other,
+ *   - a test file exists for it and claims coverage of the class,
+ *   - and, when the function is capability-gated, that test file exercises a
+ *     refusal.
  *
- * Catches the common drift modes — renaming a class without updating
- * services.php, deleting a capability someone still references — at
- * the cost of one cheap PHPUnit pass per CI run.
+ * It also asserts that every scheduled task in db/tasks.php is claimed by a
+ * test under tests/task/.
  *
- * @covers ::__construct
+ * Registering a web service without a test, or without a test of its
+ * capability refusal, therefore fails the build. The checks also catch a
+ * class renamed without updating services.php and a capability deleted while
+ * still referenced.
+ *
+ * @coversNothing
  */
 final class services_coverage_test extends \advanced_testcase {
     public function test_every_declared_service_has_a_valid_class(): void {
@@ -89,10 +97,109 @@ final class services_coverage_test extends \advanced_testcase {
                     continue;
                 }
                 $this->assertTrue(
-                    isset($declaredcaps[$cap]) || self::is_core_capability($cap),
+                    self::capability_exists($cap, $declaredcaps),
                     "WS function `{$name}` references unknown capability `{$cap}`"
                 );
             }
+        }
+    }
+
+    /**
+     * The existence check tells real capabilities from misspelt ones on both
+     * sides of the plugin namespace. db/services.php lists no capability from
+     * outside the plugin today, so this is what shows that branch works.
+     *
+     * @return void
+     */
+    public function test_capability_check_rejects_unknown_names(): void {
+        $declaredcaps = self::load_capabilities();
+
+        $this->assertTrue(self::capability_exists('block/feedback_tracker:viewresponsiveness', $declaredcaps));
+        $this->assertFalse(self::capability_exists('block/feedback_tracker:nosuchcapability', $declaredcaps));
+        $this->assertTrue(self::capability_exists('moodle/site:config', $declaredcaps));
+        $this->assertFalse(self::capability_exists('moodle/site:nosuchcapability', $declaredcaps));
+    }
+
+    /**
+     * Every declared web service has a test file that claims coverage of it.
+     *
+     * @return void
+     */
+    public function test_every_declared_service_has_a_test_file(): void {
+        foreach (self::load_functions() as $name => $def) {
+            $classname = (string) $def['classname'];
+            $short = substr($classname, (int) strrpos($classname, '\\') + 1);
+            $path = __DIR__ . '/' . $short . '_test.php';
+
+            $this->assertFileExists(
+                $path,
+                "WS function `{$name}` has no test file — expected tests/external/{$short}_test.php"
+            );
+            $this->assertStringContainsString(
+                '@covers \\' . $classname,
+                (string) file_get_contents($path),
+                "tests/external/{$short}_test.php must declare @covers \\{$classname}"
+            );
+        }
+    }
+
+    /**
+     * Every capability-gated web service has a test that exercises the
+     * refusal, not just the happy path.
+     *
+     * The check is textual: the test file must mention
+     * required_capability_exception. Without it a gate could be deleted with
+     * every test still green.
+     *
+     * @return void
+     */
+    public function test_every_gated_service_has_a_refusal_test(): void {
+        foreach (self::load_functions() as $name => $def) {
+            if (!isset($def['capabilities']) || $def['capabilities'] === '') {
+                continue;
+            }
+            $classname = (string) $def['classname'];
+            $short = substr($classname, (int) strrpos($classname, '\\') + 1);
+            $path = __DIR__ . '/' . $short . '_test.php';
+            if (!file_exists($path)) {
+                // The previous test already reports this; do not double-fail.
+                continue;
+            }
+            $this->assertStringContainsString(
+                'required_capability_exception',
+                (string) file_get_contents($path),
+                "WS function `{$name}` is capability-gated but tests/external/{$short}_test.php "
+                    . 'never asserts a refusal'
+            );
+        }
+    }
+
+    /**
+     * Every scheduled task declared in db/tasks.php is claimed by a test file.
+     *
+     * Several tasks share one file (scheduled_tasks_test covers the service
+     * wrappers and two retention tasks), so the check is that some test in
+     * tests/task/ names the class, not that a file exists per task.
+     *
+     * @return void
+     */
+    public function test_every_scheduled_task_is_claimed_by_a_test(): void {
+        $tasks = [];
+        require(__DIR__ . '/../../db/tasks.php');
+        $this->assertNotEmpty($tasks, 'db/tasks.php should declare at least one task.');
+
+        $claimed = '';
+        foreach (glob(__DIR__ . '/../task/*_test.php') ?: [] as $file) {
+            $claimed .= (string) file_get_contents($file);
+        }
+
+        foreach ($tasks as $def) {
+            $classname = (string) $def['classname'];
+            $this->assertStringContainsString(
+                $classname,
+                $claimed,
+                "Scheduled task {$classname} is not named by any test in tests/task/"
+            );
         }
     }
 
@@ -132,17 +239,18 @@ final class services_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Heuristic for whether a capability lives outside the plugin's
-     * own access.php (a core capability or one from another plugin).
-     * The plugin only references its own capabilities today, but the
-     * check is here so this test doesn't fail when a future WS
-     * legitimately requires a core capability.
+     * Whether a capability a web service lists exists. The plugin's own
+     * block/feedback_tracker:* names must be declared in db/access.php; any
+     * other name (core or another plugin) must be installed on the site.
      *
      * @param string $cap
+     * @param array $declaredcaps The plugin's db/access.php capabilities, keyed by name.
      * @return bool
      */
-    private static function is_core_capability(string $cap): bool {
-        // The plugin owns the block/feedback_tracker:* namespace.
-        return strpos($cap, 'block/feedback_tracker:') !== 0;
+    private static function capability_exists(string $cap, array $declaredcaps): bool {
+        if (strpos($cap, 'block/feedback_tracker:') === 0) {
+            return isset($declaredcaps[$cap]);
+        }
+        return get_capability_info($cap) !== null;
     }
 }

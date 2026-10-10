@@ -44,14 +44,17 @@ if ($unrecognized) {
     cli_error(get_string('cliunknowoption', 'admin', implode("\n  ", $unrecognized)));
 }
 
-if ($options['help'] || ($options['courseid'] <= 0 && $options['groupid'] <= 0)) {
+if ($options['help'] || (int) $options['courseid'] <= 0 || (int) $options['groupid'] < 0) {
     echo <<<HELP
 Recompute the rollup row for one (courseid, groupid).
 
 Options:
   -h, --help          Show this help.
   -c, --courseid=ID   Course id (required).
-  -g, --groupid=ID    Group id (required, 0 = no-group rollup).
+  -g, --groupid=ID    Group id (0 or omitted = no-group rollup).
+
+Exits with status 1 when another process holds the tuple's lock and nothing
+was recomputed.
 
 Example:
   php blocks/feedback_tracker/cli/recompute_one.php --courseid=2 --groupid=5
@@ -64,5 +67,7 @@ $courseid = (int) $options['courseid'];
 $groupid = (int) $options['groupid'];
 
 mtrace("Recomputing rollup for courseid=$courseid groupid=$groupid ...");
-\block_feedback_tracker\local\sla\rollup_service::recompute_group($courseid, $groupid);
+if (!\block_feedback_tracker\local\sla\rollup_service::recompute_group($courseid, $groupid)) {
+    cli_error('Not recomputed: another process holds the lock for this rollup. Try again later.');
+}
 mtrace('Done.');

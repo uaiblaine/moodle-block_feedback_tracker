@@ -36,8 +36,8 @@ use block_feedback_tracker\local\calendar\calendar;
  */
 final class pending_recomputer_test extends \advanced_testcase {
     /**
-     * A pending row with effectiveasof in the past gets its hours and bucket
-     * updated.
+     * A pending row whose effectiveasof is more than an hour old gets its hours
+     * recomputed and its (course, group) tuple queued.
      */
     public function test_stale_pending_row_is_updated(): void {
         $this->resetAfterTest();
@@ -53,7 +53,8 @@ final class pending_recomputer_test extends \advanced_testcase {
             'userid'           => 1,
             'attemptnumber'    => 0,
             'submissionstatus' => 'submitted',
-            // Submitted 4 days ago = 96 raw hours; ~48 effective (Mon-Fri 08:00-18:00).
+            // 96 raw hours always include business hours: the longest stretch
+            // without any is the 62 hours from Friday 18:00 to Monday 08:00.
             'timesubmitted'    => $now - 4 * 86400,
             'timegraded'       => null,
             'hasrule'          => 0,
@@ -83,8 +84,8 @@ final class pending_recomputer_test extends \advanced_testcase {
     }
 
     /**
-     * Already-fresh rows (effectiveasof within the last hour AND calver
-     * current) are skipped.
+     * Fresh rows (effectiveasof within the last hour and calver current) are
+     * skipped.
      */
     public function test_fresh_row_is_skipped(): void {
         $this->resetAfterTest();

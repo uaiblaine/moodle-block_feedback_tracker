@@ -35,13 +35,12 @@ use core_external\external_api;
  */
 final class get_dashboard_test extends \advanced_testcase {
     /**
-     * Reset the per-request dashboard_scope AND group_access memos before
-     * each test. Both static caches survive resetAfterTest (PHP statics
-     * aren't rolled back with the DB); on MariaDB course / user IDs recycle
-     * across tests, so a stale entry could otherwise serve the wrong course
-     * scope (dashboard_scope, keyed by userid) or a stale group filter
-     * (group_access, keyed "courseid:userid") that excludes the seeded
-     * groupid=0 rollups and makes an enrolled course vanish from the result.
+     * Reset the per-request dashboard_scope and group_access memos.
+     *
+     * Both are PHP statics, which resetAfterTest does not clear, while course
+     * and user ids are reused across tests. A stale entry would serve another
+     * test's course scope (keyed by userid) or group filter (keyed
+     * "courseid:userid") and make an enrolled course vanish from the result.
      *
      * @return void
      */
@@ -103,9 +102,9 @@ final class get_dashboard_test extends \advanced_testcase {
 
     /**
      * Editing teacher in one course sees only that course's row, even though
-     * rollup rows exist for two others. The `viewdashboard` cap is granted by
-     * the editingteacher archetype at course context, and the WS's
-     * get_user_capability_course filter narrows the result accordingly.
+     * rollup rows exist for two others. The editingteacher archetype grants
+     * `viewdashboard` at course context, and dashboard_scope limits the
+     * result to enrolled courses where the user holds it.
      */
     public function test_teacher_sees_only_enrolled_course(): void {
         $this->resetAfterTest();
@@ -179,10 +178,10 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
-     * SEPARATEGROUPS regression: a teacher in only group A of a multi-group
-     * course must see numgroups=1 + only group-A's aggregates (not the
-     * unrestricted SUM across the whole course). Locks in the
-     * group_access::visible_group_ids() filter inside execute().
+     * Under SEPARATEGROUPS a teacher in only group A of a multi-group course
+     * sees numgroups=1 and only group A's aggregates, not the SUM across the
+     * whole course. Pins the group_access::visible_group_ids() filter that
+     * dashboard_scope::sql_visibility() applies.
      */
     public function test_separategroups_filters_numgroups_and_aggregates(): void {
         global $DB;
@@ -196,21 +195,15 @@ final class get_dashboard_test extends \advanced_testcase {
         $groupa = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
         $groupb = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
 
-        // Two rollup rows — one per group — plus the admin-only
-        // groupid=0 ("Ungrouped") row that SEPARATEGROUPS hides.
+        // One rollup row per group, plus the groupid=0 ("Ungrouped") row that
+        // only unrestricted users see.
         $this->seed_rollup($course, 3, 1, 1, 75, 'good', (int) $groupa->id);
         $this->seed_rollup($course, 10, 5, 4, 30, 'critical', (int) $groupb->id);
         $this->seed_rollup($course, 0, 0, 0, 95, 'excellent', 0);
 
-        // Use a CUSTOM role rather than the built-in editingteacher.
-        // The editingteacher archetype grants moodle/site:accessallgroups
-        // by default, which would short-circuit the SEPARATEGROUPS rule.
-        // Modifying its capabilities mid-test (assign_capability with
-        // CAP_PREVENT) pollutes accesslib's static role-capability cache
-        // and breaks later tests in this class (e.g.
-        // test_band_filter_narrows_courses) — the cache survives
-        // resetAfterTest because PHP statics aren't in scope for Moodle's
-        // DB rollback. Touching a fresh custom role isolates the change.
+        // A custom role holding viewdashboard but not accessallgroups: the
+        // editingteacher archetype grants moodle/site:accessallgroups, which
+        // would lift the SEPARATEGROUPS restriction.
         $coursectx = \context_course::instance($course->id);
         $roleid = create_role(
             'Test teacher (no allgroups)',
@@ -243,6 +236,70 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
+     * The courses-table sparkline follows the same (course, group) filter as
+     * the aggregates: a separate-groups teacher in group A sees group A's
+     * trend, not the mean over groups they cannot see. An admin with the
+     * view-all setting is the control that the other groups' rows are there
+     * and do enter the mean when visible.
+     *
+     * @return void
+     */
+    public function test_separategroups_trend_series_excludes_hidden_groups(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_config();
+
+        $course = $this->getDataGenerator()->create_course([
+            'groupmode' => SEPARATEGROUPS,
+            'groupmodeforce' => 1,
+        ]);
+        $groupa = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $groupb = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
+        $this->seed_rollup($course, 3, 1, 1, 75, 'good', (int) $groupa->id);
+        $this->seed_rollup($course, 10, 5, 4, 30, 'critical', (int) $groupb->id);
+        $this->seed_rollup($course, 0, 0, 0, 95, 'excellent', 0);
+
+        $today = (int) (new \DateTimeImmutable('@' . time()))
+            ->setTimezone(\block_feedback_tracker\local\calendar\calendar::timezone())
+            ->format('Ymd');
+        foreach ([(int) $groupa->id => 10.0, (int) $groupb->id => 50.0, 0 => 90.0] as $groupid => $hours) {
+            $DB->insert_record('block_feedback_tracker_trend', (object) [
+                'courseid' => (int) $course->id,
+                'groupid' => $groupid,
+                'day' => $today,
+                'medianh_eff' => $hours,
+                'numgraded' => 1,
+                'timemodified' => time(),
+            ]);
+        }
+
+        $coursectx = \context_course::instance($course->id);
+        $roleid = create_role('Test teacher (no allgroups)', 'tnoallgroups_trend', 'Test role without accessallgroups');
+        assign_capability('block/feedback_tracker:viewdashboard', CAP_ALLOW, $roleid, $coursectx->id);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'tnoallgroups_trend');
+        $this->getDataGenerator()->create_group_member(['groupid' => $groupa->id, 'userid' => $teacher->id]);
+        $this->setUser($teacher);
+
+        $result = external_api::clean_returnvalue(get_dashboard::execute_returns(), get_dashboard::execute(''));
+
+        $this->assertCount(1, $result['courses']);
+        $series = $result['courses'][0]['trend_series'];
+        $this->assertCount(14, $series);
+        $this->assertSame($today, $series[13]['day']);
+        $this->assertEqualsWithDelta(10.0, $series[13]['value'], 0.001, 'Only group A enters the teacher\'s trend.');
+
+        set_config('enable_admin_view_all', 1, 'block_feedback_tracker');
+        $this->setAdminUser();
+        \block_feedback_tracker\local\sla\dashboard_scope::reset_memo();
+        \block_feedback_tracker\local\sla\group_access::reset_memo();
+
+        $result = external_api::clean_returnvalue(get_dashboard::execute_returns(), get_dashboard::execute(''));
+
+        $this->assertCount(1, $result['courses']);
+        $this->assertEqualsWithDelta(50.0, $result['courses'][0]['trend_series'][13]['value'], 0.001);
+    }
+
+    /**
      * Band filter narrows the result. Teacher in two courses; only one of
      * them has a "good" band.
      */
@@ -269,9 +326,9 @@ final class get_dashboard_test extends \advanced_testcase {
 
     /**
      * The per-course row carries the include-pending headline medians
-     * (cur_median_eff_h / cur_median_raw_h) plus the aggregate trend and
-     * compliance the hero needs — previously these were missing, leaving the
-     * dashboard's global trend and SLA permanently blank.
+     * (cur_median_eff_h / cur_median_raw_h) plus the trend and compliance
+     * figures aggregate() (amd/src/lib/aggregate.js) reads for the hero; a key the WS
+     * omits leaves the hero's trend and SLA blank without any error.
      */
     public function test_returns_headline_trend_and_compliance(): void {
         $this->resetAfterTest();
@@ -303,7 +360,103 @@ final class get_dashboard_test extends \advanced_testcase {
         $this->assertEqualsWithDelta(88.0, (float) $row['compliance_pct_days'], 0.01);
     }
 
+    /**
+     * The course name reaches the caller filtered in the caller's language,
+     * in the plain spelling, and the cached payload is keyed by that language:
+     * a second call in another language within the cache lifetime must not
+     * serve the first language's name.
+     *
+     * @return void
+     */
+    public function test_course_name_is_filtered_per_language(): void {
+        global $SESSION;
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $course = $this->getDataGenerator()->create_course([
+            'fullname' => '<span lang="en" class="multilang">A & B</span><span lang="es" class="multilang">C & D</span>',
+        ]);
+        $this->seed_rollup($course, 3, 1, 1, 70);
+        $teacher = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+
+        $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('A & B', $response['data']['courses'][0]['coursename']);
+
+        /* Set directly rather than through force_current_language(), which
+         * refuses a language whose pack is not installed on the test site. */
+        $SESSION->forcelang = 'es';
+        $this->assertSame('es', current_language());
+        try {
+            $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        } finally {
+            unset($SESSION->forcelang);
+        }
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        $this->assertSame('C & D', $response['data']['courses'][0]['coursename']);
+    }
+
+    /**
+     * Courses tied on pending count are ordered by the name the caller reads,
+     * in the caller's language. One multilang name sorts before the other
+     * course in Spanish and after it in English, which no ordering on the
+     * stored name can give for both.
+     *
+     * @return void
+     */
+    public function test_tied_courses_are_ordered_by_the_name_the_caller_reads(): void {
+        global $SESSION;
+        $this->resetAfterTest();
+        $this->seed_config();
+        filter_set_global_state('multilang', TEXTFILTER_ON);
+        filter_set_applies_to_strings('multilang', true);
+        \filter_manager::reset_caches();
+
+        $multilang = $this->getDataGenerator()->create_course([
+            'fullname' => '<span lang="en" class="multilang">Zulu</span><span lang="es" class="multilang">Alpha</span>',
+        ]);
+        $plain = $this->getDataGenerator()->create_course(['fullname' => 'Mike']);
+        $busiest = $this->getDataGenerator()->create_course(['fullname' => 'Yankee']);
+        $this->seed_rollup($multilang, 3, 0, 0, 70);
+        $this->seed_rollup($plain, 3, 0, 0, 70);
+        $this->seed_rollup($busiest, 9, 0, 0, 70);
+        $teacher = $this->getDataGenerator()->create_user();
+        foreach ([$multilang, $plain, $busiest] as $course) {
+            $this->getDataGenerator()->enrol_user($teacher->id, $course->id, 'editingteacher');
+        }
+        $this->setUser($teacher);
+        $_POST['sesskey'] = sesskey();
+
+        $this->assertSame(['Yankee', 'Mike', 'Zulu'], $this->course_names(), 'English: pending first, then Mike before Zulu.');
+
+        /* Set directly rather than through force_current_language(), which
+         * refuses a language whose pack is not installed on the test site. */
+        $SESSION->forcelang = 'es';
+        try {
+            $names = $this->course_names();
+        } finally {
+            unset($SESSION->forcelang);
+        }
+        $this->assertSame(['Yankee', 'Alpha', 'Mike'], $names, 'Spanish: Alpha before Mike.');
+    }
+
     // Helpers.
+
+    /**
+     * The course names the dashboard returns to the current user, in order.
+     *
+     * @return string[]
+     */
+    private function course_names(): array {
+        $response = external_api::call_external_function('block_feedback_tracker_get_dashboard', ['band' => '']);
+        $this->assertFalse($response['error'], json_encode($response['exception'] ?? null));
+        return array_column($response['data']['courses'], 'coursename');
+    }
 
     /**
      * Build three throwaway courses.
@@ -319,8 +472,9 @@ final class get_dashboard_test extends \advanced_testcase {
     }
 
     /**
-     * Insert one rollup row for (courseid, groupid=0). One row is enough to
-     * exercise the aggregate path since the SQL groups by courseid.
+     * Insert one rollup row for (courseid, groupid), groupid 0 by default.
+     * One row per course is enough to exercise the aggregate path since the
+     * SQL groups by courseid.
      *
      * @param \stdClass $course
      * @param int $pending

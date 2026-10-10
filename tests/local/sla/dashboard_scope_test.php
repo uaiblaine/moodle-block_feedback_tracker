@@ -106,4 +106,48 @@ final class dashboard_scope_test extends \advanced_testcase {
 
         $this->assertSame([], dashboard_scope::visible_course_ids((int) $USER->id));
     }
+
+    /**
+     * A non-admin granted block/feedback_tracker:viewalldata at system context
+     * sees every course (null = unrestricted) — with no teaching enrolment and
+     * without the enable_admin_view_all admin setting. This is the role-based
+     * "see everything" grant teachers/coordinators can be assigned.
+     *
+     * @return void
+     */
+    public function test_viewalldata_capability_is_unrestricted(): void {
+        $this->resetAfterTest();
+        $generator = $this->getDataGenerator();
+        $user = $generator->create_user();
+
+        $syscontext = \context_system::instance();
+        $roleid = $generator->create_role();
+        assign_capability('block/feedback_tracker:viewalldata', CAP_ALLOW, $roleid, $syscontext->id);
+        role_assign($roleid, $user->id, $syscontext->id);
+        accesslib_clear_all_caches_for_unit_testing();
+
+        $this->setUser($user);
+        dashboard_scope::reset_memo();
+
+        $this->assertNull(dashboard_scope::visible_course_ids((int) $user->id));
+    }
+
+    /**
+     * A normal site admin (doanything) does NOT auto-pass viewalldata: the
+     * capability is checked with doanything suppressed, so the legacy
+     * enable_admin_view_all setting remains the only admin escape hatch. With
+     * the setting off and no role grant, an unenrolled admin still sees nothing.
+     *
+     * @return void
+     */
+    public function test_viewalldata_not_auto_granted_to_admin_doanything(): void {
+        $this->resetAfterTest();
+        // Default: enable_admin_view_all is off, no viewalldata role assignment.
+
+        $this->setAdminUser();
+        global $USER;
+        dashboard_scope::reset_memo();
+
+        $this->assertSame([], dashboard_scope::visible_course_ids((int) $USER->id));
+    }
 }

@@ -33,19 +33,19 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Paginated read of {block_feedback_tracker_log} — the recompute audit
- * trail that pages/audit_log.php renders server-side today. Reuses the
- * existing `viewaudit` capability so role assignments don't change.
+ * Paginated read of {block_feedback_tracker_log}, the recompute audit trail
+ * that pages/audit_log.php renders server-side. Gated by the same `viewaudit`
+ * capability as that page.
  *
- * Returns the same fields the Mustache template consumes, with
- * triggeredby resolved to a display name via \core_user. The optional
- * courseid / actor filters narrow the result set without changing
- * shape.
+ * Rows carry the same data the page shows, unformatted, with triggeredby
+ * resolved to a full name and `details` flattened to "key=value, ..." text.
+ * The optional courseid / actor filters narrow the result set without
+ * changing its shape.
  */
 class get_audit_log extends external_api {
     /** Default page size. */
     public const DEFAULT_PAGE_SIZE = 50;
-    /** Maximum page size — keeps a single fetch under ~200KB even with verbose details. */
+    /** Maximum page size; larger requests are clamped to it to bound one response. */
     public const MAX_PAGE_SIZE = 200;
 
     /**
@@ -98,10 +98,23 @@ class get_audit_log extends external_api {
             $where .= ' AND triggeredby = :actor';
             $sqlparams['actor'] = $actor;
         }
-        // The log table doesn't carry courseid directly; filter is applied
-        // post-decode against the JSON `details` field. SQL-side filtering
-        // would require schema and isn't worth it for a <90-day audit
-        // window that's rarely queried with a course filter.
+        /* The log table carries no courseid column, so the filter matches the
+         * fragment inside the JSON `details` field. It has to happen in SQL:
+         * filtering after the LIMIT would leave the count and the page
+         * describing different sets.
+         *
+         * Two fragments because a JSON value is terminated by either a comma
+         * or the closing brace, and matching the bare number would also match
+         * courseid 880 when asked for 88. */
+        if ($courseid > 0) {
+            $fragment = '"courseid":' . $courseid;
+            $likemid = $DB->sql_like('details', ':needlemid', true, true);
+            $likeend = $DB->sql_like('details', ':needleend', true, true);
+            $where .= " AND ($likemid OR $likeend)";
+            $sqlparams['needlemid'] = '%' . $DB->sql_like_escape($fragment . ',') . '%';
+            $sqlparams['needleend'] = '%' . $DB->sql_like_escape($fragment . '}') . '%';
+        }
+
         $total = (int) $DB->count_records_select(
             'block_feedback_tracker_log',
             $where,
@@ -139,10 +152,7 @@ class get_audit_log extends external_api {
                     $details = implode(', ', $parts);
                 }
             }
-            // Apply the post-decode courseid filter.
-            if ($courseid > 0 && $detailscourseid !== $courseid) {
-                continue;
-            }
+            // The decoded courseid only populates details_courseid; the filter is in SQL.
             $entries[] = [
                 'id'              => (int) $r->id,
                 'reason'          => (string) $r->reason,

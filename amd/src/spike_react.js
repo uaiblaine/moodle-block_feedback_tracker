@@ -14,16 +14,16 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Phase 2A spike — mounts every shared component into one or more
- * [data-bft-spike-root] divs on pages/spike_react.php. Lets a site admin
- * smoke-test that the Preact + htm pipeline survived `grunt amd` + ESLint +
- * Moodle's AMD loader after every code change.
+ * Component smoke test — mounts a demo card built from the shared components
+ * into every [data-bft-spike-root] div on pages/spike_react.php, so a site
+ * admin can check that the built Preact + htm pipeline works under Moodle's
+ * AMD loader.
  *
- * Render verifies:
- *  - The vendored bootstrap exposed window.bftPreact / bftPreactHooks / bftHtm.
+ * A successful render shows that:
+ *  - The vendored bundle exposed window.bftPreact / bftPreactHooks / bftHtm.
  *  - The lib/preact shim re-exports them as ES named exports.
  *  - h() + render() + htm tagged templates produce real DOM.
- *  - useState wired through ScoreGauge → re-render on click.
+ *  - useState works: the re-roll button re-renders ScoreGauge.
  *  - Multi-root mount: every [data-bft-spike-root] is initialised.
  *
  * @module    block_feedback_tracker/spike_react
@@ -46,7 +46,7 @@ const TREND = [
     8, 6, 7, 6, 5, 7, 6, 4, 5, 6,
 ];
 
-/** Slug → display label. Mirrors what Phase 2B will load via get_string(). */
+/** Slug → display label; hard-coded because this demo loads no lang strings. */
 const BAND_LABEL = {
     excellent: 'Excellent',
     good: 'Good',
@@ -55,7 +55,7 @@ const BAND_LABEL = {
     pending: 'Pending',
 };
 
-/** Demo breakdown rows (same shape as classes/output/responsiveness_card.php). */
+/** Demo breakdown rows in the BreakdownPanel row shape. */
 const BREAKDOWN_ROWS = [
     {label: 'Compliance', valuestr: '0.78', weightstr: '0.40', ptsstr: '31.2 / 40.0'},
     {label: 'Median', valuestr: '0.66', weightstr: '0.25', ptsstr: '16.5 / 25.0'},

@@ -27,14 +27,18 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\participation;
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
- * Queued by `backfill_history` once per sub-chunk of ~N submissions. Each
- * adhoc task is independent and parallelises across cron workers — a cluster
- * of M workers gets ~Mx the throughput of the previous serialised scheduled
- * task. Idempotent: `submission_ledger::upsert_for_cm_user_attempt()` re-runs
- * cleanly against existing ledger rows.
+ * Upserts the ledger rows for a batch of submissions.
+ *
+ * Queued by `backfill_history` (one task per sub-chunk), by
+ * `reconcile_ledger`'s repair sweeps and by the observer's bulk
+ * re-derivations. Tasks are independent, so the work spreads across cron
+ * workers, and idempotent: `submission_ledger::upsert_for_cm_user_attempt()`
+ * re-runs cleanly against existing ledger rows.
  *
  * Re-checks `course_access::is_processable()` at execute time so a block
  * removed between dispatch and execute doesn't get a stray ledger row.
@@ -54,20 +58,45 @@ class backfill_one_submission extends \core\task\adhoc_task {
      *
      * Custom data shape:
      *   ['rows' => [
-     *       ['cmid' => int, 'userid' => int,
-     *        'attemptnumber' => int, 'courseid' => int],
+     *       ['cmid' => int, 'userid' => int, 'attemptnumber' => int,
+     *        'courseid' => int, 'groupid' => int],
      *       ...
      *   ]]
+     *
+     * `userid` 0 marks a team submission's container row, in which case
+     * `groupid` identifies the team and the row is fanned out per member.
      *
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $data = (array) $this->get_custom_data();
         $rows = isset($data['rows']) && is_array($data['rows']) ? $data['rows'] : [];
         foreach ($rows as $row) {
             $row = (array) $row;
             $courseid = (int) ($row['courseid'] ?? 0);
             if (!course_access::is_processable($courseid)) {
+                continue;
+            }
+            if ((int) ($row['userid'] ?? 0) === 0) {
+                /* A team submission's container row: the work is shared by the
+                 * group, so it is fanned out to the members rather than
+                 * mirrored as a userless ledger entry. */
+                submission_ledger::upsert_for_team_attempt(
+                    (int) ($row['cmid'] ?? 0),
+                    (int) ($row['groupid'] ?? 0),
+                    (int) ($row['attemptnumber'] ?? 0)
+                );
+                continue;
+            }
+            /* Re-check participation here, not only when the row was selected:
+             * this task may run long after it was queued (a failing adhoc task
+             * backs off up to a day), by which time
+             * reconcile_ledger::sweep_departed_participants() may have deleted
+             * this user's rows, and the upsert would recreate them. The team
+             * branch above needs no check: upsert_for_team_attempt() resolves
+             * its members through get_enrolled_sql() with onlyactive. */
+            if (!participation::is_active_participant($courseid, (int) ($row['userid'] ?? 0))) {
                 continue;
             }
             submission_ledger::upsert_for_cm_user_attempt(

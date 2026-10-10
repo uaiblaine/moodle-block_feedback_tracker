@@ -39,8 +39,9 @@ use core_external\external_value;
  * SLA bucket / pending band, and a free-text name search, sorted by any
  * column. Returns student names, activity names, group, submission timestamp,
  * current effective/wall-clock waits, plus the pending-band distribution
- * counts for the whole filtered set. Delegates the query to
- * {@see submission_browser}.
+ * counts for the whole filtered set. With status 'draft' it lists saved but
+ * unsubmitted work instead, which never counts toward the SLA. Delegates the
+ * query to {@see submission_browser}.
  */
 class get_pending_submissions extends external_api {
     /** Default page size. */
@@ -204,10 +205,10 @@ class get_pending_submissions extends external_api {
             'submissionid'   => new external_value(PARAM_INT, ''),
             'cmid'           => new external_value(PARAM_INT, ''),
             'userid'         => new external_value(PARAM_INT, ''),
-            'studentname'    => new external_value(PARAM_TEXT, ''),
-            'activityname'   => new external_value(PARAM_TEXT, ''),
+            'studentname'    => new external_value(PARAM_TEXT, 'Student full name as plain text, not HTML-escaped'),
+            'activityname'   => new external_value(PARAM_TEXT, 'Activity name as plain text, not HTML-escaped'),
             'groupid'        => new external_value(PARAM_INT, ''),
-            'groupname'      => new external_value(PARAM_TEXT, ''),
+            'groupname'      => new external_value(PARAM_TEXT, 'Group name as plain text, not HTML-escaped; empty when ungrouped'),
             'timesubmitted'  => new external_value(PARAM_INT, ''),
             'timegraded'     => new external_value(PARAM_INT, '0 while pending'),
             'waitinghours'   => new external_value(PARAM_FLOAT, ''),
@@ -217,6 +218,40 @@ class get_pending_submissions extends external_api {
             'slabucket'      => new external_value(PARAM_ALPHA, ''),
             'pendingband'    => new external_value(PARAM_ALPHA, 'aguardando | atencao | prioridade'),
             'submissionstatus' => new external_value(PARAM_ALPHA, ''),
+            'awaitingrelease' => new external_value(
+                PARAM_INT,
+                '1 when a mark exists but the marking workflow has not released it to the student'
+            ),
+            'closedsource' => new external_value(
+                PARAM_ALPHA,
+                'Which surface answered this submission: assign, gradebook, or empty while it is open'
+            ),
+            'gradehidden' => new external_value(
+                PARAM_INT,
+                '1 when a grade exists but the gradebook is hiding it from the student'
+            ),
+            'resubmitted' => new external_value(
+                PARAM_INT,
+                '1 when the attempt already carried a mark when this work was handed in (core\'s Graded - resubmitted)'
+            ),
+            'previousmarktime' => new external_value(
+                PARAM_INT,
+                'When the attempt was marked before this hand-in; 0 when not resubmitted or the time is no longer known'
+            ),
+            'queuehours' => new external_value(
+                PARAM_FLOAT,
+                'Effective hours from hand-in to first marker allocation; null when never allocated',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
+            'allochours' => new external_value(
+                PARAM_FLOAT,
+                'Effective hours from the current marker\'s allocation to grading; null when unmeasurable',
+                VALUE_DEFAULT,
+                null,
+                NULL_ALLOWED
+            ),
         ]);
     }
 }

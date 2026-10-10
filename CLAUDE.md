@@ -13,76 +13,125 @@ per supported Moodle branch in `.github/workflows/ci.yml` (5.02 full
 PHP × DB matrix; 5.01/5.00/4.05 PostgreSQL-only) — **update those calls
 when `supported` changes**. Development happens on 5.1.
 
+## Agent orchestration budget (fleet rule, repeated here on purpose)
+
+Section 6 of `~/dev/CLAUDE.md` (`moodle-dev/CLAUDE.fleet.md`) is the authority and says why.
+This short copy reaches sessions that do not load that file: cloud sessions and checkouts
+outside `~/dev`. Every subagent gets the model and effort of its role from its agent
+definition, and none runs on the session model.
+
+| Role | model | effort | agent |
+|---|---|---|---|
+| Mechanical sweeps, greps, renames, counts, log reading | `haiku` | `medium` | `fleet-sweeper` |
+| Checklists against evidence (handoff counts, spec lines against a sweep log, lang lockstep) | `haiku` | `high` | `fleet-checker` |
+| Readers, measurers, graders | `sonnet` | `medium` | `fleet-reader` |
+| Refuters and verifiers of a blocking finding | `sonnet` | `high` | `fleet-verifier` |
+| Well-scoped implementation (established cause, settled design, written recipe) | `sonnet` | `medium` | `fleet-fixer` |
+| Non-trivial implementation (open design, several files, long tasks) | `opus` | `high` | `fleet-implementer` |
+| Consolidators, critics, estimators, ADR and documentation drafters | `opus` | `high` | `fleet-synthesist` |
+
+- Launch the `Agent` tool with `subagent_type: "fleet-*"`; it has no `effort` parameter, so
+  the role's effort comes from that definition (`mdl claude-setup` installs them). Where they
+  are not installed, pass `model`. Aliases only; never `fable`; `xhigh` only for a long-horizon
+  implementer whose prompt says why; never `xhigh`/`max` on Sonnet or Haiku.
+- No long command inside a subagent: `mdl ci --matrix`, `mdl mutate` and Behat run from the
+  main session in a background Bash command; a subagent runs the fast gate its prompt names and
+  reports the command with its counts.
+- Workflows only on the user's opt-in, every `agent()` with `agentType: 'fleet-*'`, under 10
+  agents. Advisor off by default.
+
 ## Commands
 
-Run from the Moodle root (`/Volumes/N1TB/dev/github/moodle`; this plugin
-lives at `public/blocks/feedback_tracker`):
+Run from the plugin repo (`~/dev/moodle-block_feedback_tracker`). It is
+bind-mounted at `blocks/feedback_tracker` into every stack whose branch
+`$plugin->supported = [405, 502]` covers (`m405`, `m501`, `m502` and its twin
+`m502b`; not `m53`), and that mount only exists **inside the container** — on
+the host, `~/dev/moodle-501/public/blocks/feedback_tracker` is an empty
+directory.
+A linter pointed at the stack checkout therefore scans nothing and passes
+vacuously; target the repo itself, or go through `mdl`.
 
-Repo layout (Moodle 5.x split): the webroot is `public/` (plugin code +
-`public/config.php`), but **core CLI scripts live in `admin/cli/` at the
-repo root, outside `public/`** — e.g. `php admin/cli/purge_caches.php`.
-Plugin CLIs resolve `public/config.php` via `__DIR__/../../../config.php`.
+This plugin's own CLIs sit at `cli/*.php`, three levels below the webroot,
+so they resolve core through `__DIR__ . '/../../../config.php'` — which
+lands on `public/config.php` under the 5.x split layout and on the webroot's
+`config.php` on 4.5. That relative depth is what keeps them runnable on both
+mounted stacks.
 
 | Command | What it does |
 |---------|--------------|
-| `npx grunt amd --root=public/blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Required before committing JS. |
-| `xmllint --noout --schema public/lib/xmldb/xmldb.xsd public/blocks/feedback_tracker/db/install.xml` | Validate the XMLDB schema. (Core libs live under `public/` in this 5.x split layout; the bare `lib/xmldb/...` path does not exist.) |
+| `mdl grunt m501 blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Core's `amd` task is `eslint:amd` + `rollup`, so this lints the JS on the way. Required before committing JS. |
+| `mdl ci moodle-block_feedback_tracker --only grunt` | The CI JS/CSS gate itself: `grunt --max-lint-warnings 0` (ESLint + Stylelint). |
+| `xmllint --noout --schema ~/dev/moodle-501/public/lib/xmldb/xmldb.xsd db/install.xml` | Validate the XMLDB schema. Core libs sit under `public/` on the 5.x split layout; against `~/dev/moodle-405` drop that segment. |
 
-CI (moodle-an-hochschulen/moodle-workflows, full `moodle-plugin-ci install`
-per job) gates on: a static leg (`phplint`, `phpmd` informational,
-`phpcs --max-warnings 0` — **warnings fail**, `phpdoc --max-warnings 0`, a
-development-leftover checker that fails on stray to-do markers, test-me
-annotations, or merge-conflict markers in ANY file — docs included, never
-write those tokens literally, `validate`, `savepoints`, `mustache`,
-`grunt --max-lint-warnings 0` incl. stylelint) plus runtime legs running
-**PHPUnit (`--fail-on-warning`) and Behat (`--profile chrome`) on every
-PHP × DB combination**, with Behat faildumps uploaded as artifacts on
-failure. `.moodle-plugin-ci.yml` filters `node_modules`/`vendor` because
-the install step npm-installs inside the plugin and phpcs would scan the
-result. There is no committed local wrapper — run checks through your own
-`moodle-plugin-ci` checkout before pushing.
+CI runs the fleet-standard gate set (static leg, then PHPUnit and Behat per
+runtime leg), with Behat faildumps uploaded as artifacts on failure. One
+detail is local to this repo: `.moodle-plugin-ci.yml` filters
+`node_modules`/`vendor`, because the install step npm-installs **inside**
+the plugin and phpcs would otherwise scan the result. Reproduce the whole
+pipeline locally with `mdl ci moodle-block_feedback_tracker` before pushing
+— see *Debugging CI failures* for this plugin's invocations.
 
-Local raw PHPUnit (if wired up) reads `phpunit.xml` at the **repo root**
-(`$CFG->root`, above `public/`), generated by
-`php public/admin/tool/phpunit/cli/init.php` — not `public/phpunit.xml`.
+PHPUnit runs as `mdl phpunit m501 block_feedback_tracker`. Its `phpunit.xml`
+is generated at the **stack checkout root** (`$CFG->root`, above `public/`),
+never `public/phpunit.xml`; `mdl phpunit-init <stack>` regenerates it, which
+is required after the mounted plugin set changes.
 
 ## Code layout
 
 ```
 block_feedback_tracker.php   Block class (get_content / instance config)
 lib.php                      Procedural hooks + bootstrapping guard
-settings.php                 Admin settings tree
-manage.php                   Management landing page (viewdashboard-gated)
+settings.php                 Admin settings tree — its "Tools" heading is the
+                             only index of the pages/ admin UIs
 classes/
   event/                     Custom plugin events (cal_*_updated)
   external/                  Web-service functions (one class each)
-  form/                      moodleform subclasses
-  output/                    Renderer + renderables (score_gauge, responsiveness_card, sparkline)
+  form/                      moodleform subclasses (+ calendar_editor_forms, the
+                             calendar editor page's set of forms)
+  output/                    Empty plugin renderer: the block asks for one
+                             (get_renderer), and it renders nothing itself
   privacy/                   GDPR provider
   task/                      Scheduled + adhoc tasks (drain, backfill, recompute, prune)
   local/
+    admin/                   Custom admin setting (ordered threshold triples)
     audit/                   Recompute audit log
     calendar/                Academic-time engine (business/effective hours)
-    output/                  JS bootstrap helper
+    output/                  JS bootstrap payloads (bootstrap), the vendor
+                             bundle's name and loader (vendor_bundle), the
+                             drill-down's cell text (drilldown_cells), count
+                             formatting (numfmt), bulk-removal rows
     payload/                 responsiveness_payload (block + WS share this)
     score/                   responsiveness_calculator (5-term formula) + peer_stats
     sla/                     Ledger, rollup, observer, course_access gate
-cli/                         reset / recompute_all / recompute_one / backfill_* maintenance scripts
+cli/                         reset / recompute_all / recompute_one / backfill_* /
+                             dismiss_legacy_pending maintenance scripts
 pages/                       Admin + teacher UIs (dashboard, calendar editor, drilldown)
 templates/                   Mustache (server-rendered UI)
-amd/src/                     Preact UI (Phase 2A) — see "React conventions"
+amd/src/                     Preact UI — see "React conventions"
   *_app.js                   Per-surface entrypoints (block_app, dashboard_app,
-                             pending_report_app, simulator_app, spike_react)
+                             pending_report_app, simulator_app); spike_react
+                             mounts the smoke-test page
+  bulk_remove.js,            Plain AMD modules for the bulk-removal page and
+  pending_table.js           the drilldown's sortable table (no Preact)
   views/                     Entrypoint orchestrators (BlockView, DashboardView,
                              PendingReportView, SimulatorView)
   components/                Leaf components (one per file, PascalCase)
-  lib/                       preact shim + helpers (api, bands, format, score, trend)
+  lib/                       preact shim + helpers (aggregate, api, bands,
+                             format, score, trend)
 db/                          install.xml, upgrade.php, events, tasks, caches, access
-tests/                       PHPUnit (local/ external/ task/ privacy/) + behat/
+tests/                       PHPUnit (local/ external/ task/ privacy/ db/ event/
+                             form/ lockstep/, plus lib_test and ci_matrix_test
+                             at the root) + behat/ + generator/ (lib.php for
+                             PHPUnit, behat_*_generator.php for Behat)
 ```
 
-The runtime **data model** (ledger → pause audit → rollup → queue →
-calendar config) is described in [`README.md`](README.md).
+The runtime **data model**: the ledger (`_sub`, one row per submission
+cycle) feeds the materialised rollup (`_group`, one row per course and
+group) through the dirty queue (`_queue`); `_trend` and `_site` hold daily
+series; the calendar configuration is `_cday`, `_chours` and `_cpause`;
+`_log` is the recompute audit log and `_bfcursor` the per-course backfill
+cursor. Pause windows are not stored: the calendar engine derives them on
+demand.
 
 ## Coding style
 
@@ -108,12 +157,12 @@ Every PHP file starts with:
 declare(strict_types=1);   // for namespaced classes
 
 namespace block_feedback_tracker\<sub>;
-
-defined('MOODLE_INTERNAL') || die();
 ```
 
 Procedural files (settings.php, lib.php, db/*.php) skip `declare(strict_types=1)`
-and `namespace`. `defined('MOODLE_INTERNAL') || die()` is required everywhere.
+and `namespace`. `defined('MOODLE_INTERNAL') || die()` goes only in files with
+top-level code that runs on include (`require_once`, globals, procedural code);
+a file holding nothing but one class must omit it (rule 9 below).
 
 ### PHPDoc
 
@@ -147,9 +196,10 @@ Moodle's `phpdoc --max-warnings 0` enforces:
 ### Table prefix
 
 Database tables use the **full frankenstyle**: `block_feedback_tracker_*`.
-The longest table name is `block_feedback_tracker_chours` at 29 chars,
-inside the 30-char limit. The four calendar tables use a `c` prefix
-(`_cday`, `_chours`, `_cpause`, `_cscope`) to stay within the limit.
+Core allows 53 characters (`xmldb_table::NAME_MAX_LENGTH`, 63 minus the
+10-character maximum prefix, on 4.5 and 5.2); the longest name here is
+`block_feedback_tracker_bfcursor` at 31. The three calendar tables carry a
+`c` prefix (`_cday`, `_chours`, `_cpause`).
 
 ### Lang strings
 
@@ -243,10 +293,10 @@ backfill_cursor::get_or_create(3);
 Sniff: `moodle.Commenting.VariableComment.MissingVar`.
 
 ```php
-// ✘ /** Per-request memo keyed by "courseid:userid". */
+// ✘ /** Memo keyed by "courseid:userid". */
 //   private static array $memo = [];
 
-/** @var array<string, int[]|null> Per-request memo keyed by "courseid:userid". */
+/** @var array<string, int[]|null> Memo keyed by "courseid:userid". */
 private static array $memo = [];
 ```
 
@@ -358,8 +408,8 @@ standalone lowercase comment.
 
 - Every `<FIELD>` element needs `SEQUENCE="true"` or `SEQUENCE="false"`
   explicitly. Missing → XSD validation fails.
-- Validate locally:
-  `xmllint --noout --schema lib/xmldb/xmldb.xsd db/install.xml`
+- Validate locally with the `xmllint` invocation in *Commands* (the schema
+  lives in a stack checkout, not in this repo).
 - `db/install.php`'s `xmldb_<plugin>_install()` function uses raw
   `set_config()` and direct `$DB->insert_record()` — these **don't fire
   setting update callbacks**, so they're safe for default seeding.
@@ -374,6 +424,32 @@ Each upgrade step ends with:
 upgrade_block_savepoint(true, <version>, 'feedback_tracker');
 ```
 Match `<version>` to the version.php bump.
+
+- **Write the step and the `version.php` bump in the same edit, before running
+  anything.** This tree is mounted live on every stack, so a savepoint above
+  `version.php` is recorded by the next `mdl upgrade` any session runs, and
+  that stack then reads `version.php` as a downgrade and stops.
+  `upgrade_test::test_no_savepoint_is_ahead_of_version_php` fails on that
+  state. A code-only bump needs no step.
+- **`dirty_queue::enqueue()` is called by name from several steps**
+  (2026060112 onwards: every step that re-queues rollups), so its signature,
+  the `REASON_SUBMISSION` / `REASON_BULK` constants those steps pass, and its
+  semantics (an already queued tuple is refreshed, and outside a transaction a
+  duplicate-key collision adopts the other writer's row instead of throwing)
+  are frozen. Change them only with a new function beside it. The same holds, for the same reason, for
+  `calendar::bump_version()` (four steps) and
+  `gradebook_response::SOURCE_ASSIGN` (2026080400).
+- Anything else a new step needs is written out inside it, as the rules stand
+  at that version, rather than read from a class that may change later: the
+  2026092500 step repeats the numeric rules of `thresholds_setting::validate()`
+  and the calver bump instead of calling into `thresholds_setting` or
+  `calendar::bump_version()`, and `upgrade_test` pins its verdicts as literals.
+- A step that writes a setting with `set_config()` fires no
+  `set_updatedcallback`, and `block_feedback_tracker_invalidate_rollups()`
+  returns early while `$CFG->upgraderunning` anyway (see *Install / upgrade
+  guards*). A step that changes a setting the rollups depend on does the
+  callback's work itself, as the 2026092500 step does: a new calver, and every
+  rollup re-queued with `REASON_BULK`.
 
 ### Cross-DB SQL
 
@@ -425,7 +501,12 @@ Conventions:
   the element name `submitbutton`, duplicating `id_submitbutton` in the DOM.
   Use named submit elements instead
   (`$mform->addElement('submit', 'mysavebutton', ...)` +
-  `$mform->closeHeaderBefore('mysavebutton')`).
+  `$mform->closeHeaderBefore('mysavebutton')`). Named submits still leave
+  every other element id repeated when the same form class renders twice, or
+  two classes share an element name; build such forms with core's
+  `data-random-ids` attribute, as `classes/form/calendar_editor_forms.php`
+  does for the calendar editor's ten forms. Element names, and so what the
+  forms post, stay the same.
 - For float fields where users may type non-canonical strings (e.g.
   `"0.40"`), **don't use `PARAM_FLOAT`** — its validator strict-string-
   compares against the `clean_param` result, which normalises `"0.40"` to
@@ -452,6 +533,34 @@ Pair: `objectid` + `objecttable` must both be present or both absent in
 `::create()` data. If you set one without the other, Moodle throws a
 `coding_exception`.
 
+### View / access-logging events
+
+User access to the pages is logged with two read events (`crud = 'r'`):
+`event\report_viewed` (`LEVEL_PARTICIPATING`, the teacher-facing data
+surfaces — `other['report']` = `dashboard`/`pending`/`drilldown`) and
+`event\tool_page_viewed` (`LEVEL_OTHER`, the admin tool pages —
+`other['page']` = `calendar`/`audit`/`reset`/`bulkremove`; `manage` is a legacy
+slug kept only so historic log rows still resolve to a URL). They exist as two
+classes only because `edulevel` is fixed in `init()` and can't vary per
+instance. Conventions when adding/extending view logging:
+
+- **Fire server-side at page render, immediately before
+  `$OUTPUT->header()`** — once per navigation. Placing it after any
+  POST-process `redirect()` means form submits/cancels don't double-log.
+- **Never fire from a web service `execute()`.** The full-page surfaces ship
+  a null bootstrap and fetch via WS on mount + on every refresh / filter /
+  sort / page — logging there would multiply rows per view and grow the log
+  table non-linearly. The page-view event is the single access signal.
+- **No `db/events.php` observer is needed.** `logstore_standard` subscribes
+  to every event, so `->trigger()` is all that's required for the access to
+  appear in *Reports → Logs*. (The `cal_*` events have observers only because
+  they drive plugin side-effects — calver bump + rollup recompute — not for
+  logging.) Origin (userid/IP/origin/timecreated) is captured automatically;
+  we only supply `context`, `courseid` and `other`.
+- **No plugin privacy-provider change.** The rows live in
+  `logstore_standard_log`, whose own privacy provider handles GDPR
+  export/delete; the plugin that *fires* the event declares nothing extra.
+
 ## Processing scope (course_access gate)
 
 Since v1.0.0 the plugin is **strict opt-in**: nothing happens for a
@@ -468,15 +577,30 @@ writes ledger / rollup data. Don't reimplement the check.
 
 The gate is applied at every **write-path entry**:
 - Event observers in `classes/local/sla/observer.php`
-  (submission_changed / submission_graded / override_changed /
+  (submission_changed / submission_graded / workflow_state_changed /
+  identities_revealed / course_module_updated / marker_changed /
+  override_changed / user_rule_changed / gradebook_changed /
   group_membership_changed / group_deleted).
-- `classes/task/backfill_history.php` per-row filter.
+- Batch jobs through `course_access::processable_course_ids()`:
+  `backfill_history` and `reconcile_ledger` restrict their scans to those
+  courses.
+- Adhoc workers re-check `is_processable()` when they run, since the block
+  may have gone since they were queued: `backfill_one_submission`,
+  `stamp_allocations`, `reattribute_users`.
 
-Cleanup paths (`course_deleted`, `course_module_deleted`) skip the gate
-so previously-tracked data still gets garbage-collected when its course
-goes away. `rollup_service::recompute_group()` deliberately does NOT
+Cleanup paths (`course_deleted`, `course_module_deleted`,
+`enrolment_changed`, `user_deleted`) skip the gate so previously-tracked
+data still gets garbage-collected when its course, its participant or its
+account goes away. `rollup_service::recompute_group()` deliberately does NOT
 gate — it's downstream of the observer + queue and gating there would
 force a wide test-fixture rewrite without closing any leak.
+
+The gate's memos, like every static memo in the plugin (`course_access`,
+`dashboard_scope`, `group_access`, `group_resolver`, `submission_ledger`, the
+calendar lookups, `peer_stats`), live as long as the PHP process: one request
+on the web, but many tasks in one cron process. Every scheduled and adhoc task
+therefore starts with `local\sla\process_memos::reset()`; a new memo belongs
+in that method, and a new task calls it first.
 
 When adding a PHPUnit test that fires assign events or invokes
 backfill, add a block instance to the course in your setup helper:
@@ -487,6 +611,131 @@ $this->getDataGenerator()->create_block('feedback_tracker', [
 ]);
 course_access::reset_memo();  // flush memo for recycled courseids
 ```
+
+## Reconciliation sweeps (`classes/task/reconcile_ledger.php`)
+
+Every sweep goes through `walk()`: a cheap **window** query fetches up to
+`reconcile_batch_size` driving ids after the cursor, a **probe** runs only
+over those ids, and the cursor moves to the end of the window whether or not
+the probe returned anything. Three rules follow, each of which was a live
+defect once:
+
+- **The batch bounds the rows examined, never the rows returned.** A `LIMIT`
+  over a predicate that is false for almost every row (drift, orphans, missing
+  rows — all rare by design) does not page: the engine walks to the end of the
+  driving set to prove there are fewer than `$batch` matches, and
+  `count($rows) < $batch` then reads as "pass complete". Measured before the
+  window: 24.5 s and 66.7 M rows discarded to return nothing, every tick. Put
+  every predicate on the *driving* row into the window query and only the
+  expensive half into the probe.
+- **Exhaustion is a claim about the window** — shorter than the batch, or
+  empty — and only `walk()` makes it. A sweep stopped by its time share keeps
+  its cursor; deriving the claim from the probe result wraps the cursor to 0
+  on every drift-free window and the sweep rescans the head of the table for
+  ever, indistinguishable from a converged ledger in every log.
+- **Never join `{assign_submission}` with an `OR` between the individual and
+  team conditions.** Each arm mixes columns of three tables, so neither
+  PostgreSQL nor MariaDB can use more than `assignment` of the unique key
+  `(assignment, userid, groupid, attemptnumber)` and reads every submission of
+  the activity per ledger row; no index fixes it. Two `LEFT JOIN`s, one per
+  mode, gated on the live `teamsubmission` flag and read through `COALESCE`,
+  are each a point lookup. The individual arm leaves `groupid` unconstrained
+  because the writer's lookup in `submission_ledger` does; selector and writer
+  must agree row for row or a repair is dispatched on every pass.
+
+Resolve the activity through `{course_modules}` → `{modules}` → `{assign}` in
+the ledger probes, as the writer does. Joining `{assign}` straight from
+`l.iteminstance` is faster and selects rows the writer cannot repair (module
+row gone, activity row alive).
+
+The two sweeps that drive on `{assign_submission}` (`missing`, `team`) follow
+three rules measured on 5 million submissions, on PostgreSQL and MariaDB:
+
+- **The window is a bare primary-key range** (`submission_window()`), and the
+  rows a sweep is about are kept in PHP (`tracked_submissions()`). Every
+  filter tried in SQL made one engine read every submission of the tracked
+  courses per window: by course through joins on PostgreSQL (1.3 s per
+  window), by a list of assignment ids on MariaDB (1.6 s).
+- **The probe drives from the window's primary keys**: `{course_modules}` by
+  instance and module id, no `{assign}` join. With `{assign}` joined,
+  PostgreSQL drove from the activity and scanned every submission of each one.
+- **"Active participant" is one predicate**, `active_participant_sql()`, shared
+  with the departed-participant sweep, written as a correlated EXISTS on the user
+  and course columns. Core's `get_enrolled_sql()` fixes the course as a constant,
+  and PostgreSQL then compared every ledger row of the course with every
+  participant. Keep it in step with `get_enrolled_join()`.
+
+`idx_course_id (courseid, id)` serves a
+single-course equality only; with the processable-course `IN` list the planner
+walks the primary key and filters, which is fine at the window size but is
+why a per-course cursor (the `bfcursor` table `backfill_history` already
+uses) is the structural next step, not a bigger window.
+
+Testing a sweep's paging: call the private sweep through `ReflectionMethod`
+with `sweepdeadline` set to 0 (one window per call) and a batch smaller than
+the fixture, and read `reconcile_cursor_<key>` between calls. A fixture
+smaller than the batch pages nothing, so a test that only runs `execute()`
+cannot see a paging regression; the paging tests lower
+`reconcile_batch_size` (to 2) instead.
+
+## Dismissed cycles (`local/sla/legacy_dismissal.php`)
+
+`cli/dismiss_legacy_pending.php` takes out of every population the cycle-0
+rows that lost their response before the cycle model (2026080202): it sets
+`timedismissed` and `iscurrent = 0`, never `timegraded`. No reader names the
+column. Pending reads require `iscurrent = 1` and graded reads require
+`timegraded`, so the row falls out of both; the reconciler sweeps that
+re-derive rows window on `iscurrent = 1` and skip it too. Two rules keep it
+that way:
+
+- **A new pending or graded read keeps one of those two predicates.** A read
+  over `timegraded IS NULL` alone would list dismissed rows again.
+- **The writer never rewrites a dismissed cycle.** `build_and_store()` returns
+  early for one, and opens a new cycle only when the live hand-in postdates
+  `timedismissed`. A mark made after the dismissal measures nothing.
+
+Retention (`prune_ledger`) deletes closed rows by `timegraded`, which a
+dismissed row never gets, so it prunes dismissed rows by `timedismissed` in a
+query of its own.
+
+## Group changes re-date rows (`local/sla/observer.php`)
+
+A student's groups decide their dates through the governing group override
+(`rule_resolver`), and core fires no override event when membership changes.
+So `group_member_added` / `group_member_removed` run
+`observer::group_membership_changed()`, which moves the user's rows to the
+group they report under (`submission_ledger::reattribute_user()`) and then
+re-dates them with `submission_ledger::re_resolve_rules_for_group_change()`.
+
+The cost is bounded on purpose, because this runs inside whatever request
+edits the group:
+
+- **One query over that user's current rows in the course**, limited to
+  activities that still carry a group override, or to rows storing dates
+  other than the activity's own (a deleted group's overrides may already be
+  gone when this runs). On a course with no group override, whose rows store
+  the dates they resolve to, that one query returns nothing and nothing is
+  written; `group_change_dates_test` counts the reads.
+- **Only rows whose dates drift are written**, selected with
+  `rule_resolver::drift_sql()`, the predicate `reconcile_ledger`'s rule-drift
+  sweep uses; the writer, this path and that sweep all read the dates through
+  `rule_resolver::joins_sql()` / `select_sql()`, so they cannot disagree.
+  Only the current cycle (`iscurrent = 1`) is written, as the writer and the
+  sweep do. Each written row's tuple is re-queued with `REASON_PAUSE`.
+- **At most `observer::BULK_CHUNK` (50) rows inline.** When more would move,
+  nothing is written in the request and a `reattribute_users` adhoc task is
+  queued for that one user; it re-attributes again (moving nothing the second
+  time) and re-dates without a limit.
+
+`group_deleted` re-dates the users whose rows reported under the deleted
+group, in the request up to `BULK_CHUNK` users and in `reattribute_users`
+chunks above that. A former member whose rows report under another of their
+groups is not found (nothing left in the database says they were a member) and
+keeps the deleted group's dates until the rule-drift sweep reaches the row.
+The older override-event paths, `re_resolve_rules_for_assign_group()` and
+`re_resolve_rules_for_assign_user()`, still rewrite closed cycles as well;
+which rule is right is an open decision, so don't copy either into new code
+without choosing.
 
 ## Submission-status scope (submitted-only)
 
@@ -504,20 +753,67 @@ mod_assign's `ASSIGN_SUBMISSION_STATUS_*`). Every SLA read binds
 `block_feedback_tracker_sub`, add that filter — the existing sites are
 `rollup_service` (pending / graded / trend), `pending_recomputer`,
 `responsiveness_calculator` (momentum), `site_stats_service`, `trend_service`,
-`get_grader_priority_list`, and `get_pending_submissions`. The
-`idx_status_graded (submissionstatus, timegraded)` index covers them.
+`submission_browser` (behind `get_pending_submissions` and
+`get_graded_submissions`), `get_grader_priority_list` and
+`get_academic_days`. The `idx_status_graded (submissionstatus, timegraded)`
+and `idx_status_cur_graded` indexes cover them.
 
 Drafts are surfaced read-only and de-emphasised (report + drilldown only) via
 `get_pending_submissions`' optional `status` param (`submitted` default |
 `draft`); they never reach the block/dashboard counts.
 
+## Calendar engine conventions
+
+- **Day of the week is ISO, counted from Monday as 0**, everywhere the plugin
+  stores or tests it (`{block_feedback_tracker_chours}.dayofweek`,
+  `calendar::is_weekend()`, the weekend mask). Derive it with
+  `(int) $date->format('N') - 1`, never `format('w')`, whose 0 is Sunday:
+  that mistake shifted the whole weekend by a day in `paused_aggregator` once,
+  and a test over whole weeks cannot see it.
+- **Stored minutes since midnight are wall-clock time** (business hours and
+  the window of a sub-day optional day). Build an instant from the day's local
+  midnight with `modify('+N minutes')`, never `midnight + N * 60`: on a DST
+  day the second is an hour off. Pinned by
+  `academic_time_test::test_business_hours_are_wall_clock_on_dst_days()` and
+  `upcoming_pauses_test::test_subday_event_is_wall_clock_on_a_dst_day()`.
+- A manual pause's reason slug comes from its scope through
+  `pause_lookup::reason_for_scope()`, the one mapping; each slug has a
+  `pause_reason_*` string.
+- The setting `show_paused_today_indicator` switches the upcoming
+  scheduled-pause notice on the block, dashboard and report. The key keeps an
+  older name for what it controls; its strings describe the notice.
+
+## Data reset and privacy
+
+- The data reset (`block_feedback_tracker_reset_data()` in `lib.php`,
+  behind `pages/reset.php` and `cli/reset.php`) deletes the ledger, rollup,
+  trend, site and queue rows and bumps `calver`. It keeps the calendar
+  configuration and the recompute audit log, where it records itself.
+- The allocated marker (`allocmarkerid` on the ledger) is a data subject of
+  its own: the privacy provider finds, exports and, on an erasure request,
+  clears it while the student's row stays. `submission_ledger::delete_for_user()`
+  (account deletion) keeps it, as core keeps
+  `assign_user_flags.allocatedmarker`.
+
+## Files `moodle-plugin-ci validate` parses
+
+`validate` bootstraps core in its own process and, on 5.2, dies with a PHP
+fatal over any member declared with two or more modifiers (`private static`,
+`public static`) in the files it parses itself: for this block,
+`block_feedback_tracker.php`, `db/upgrade.php` and
+`lang/en/block_feedback_tracker.php`. Keep single-modifier members there, and
+put static state in a `classes/local/` helper.
+
 ## MUC caches
 
 Keys must avoid characters that are unsafe in file paths (no `:`).
 Convention used in this plugin: `"{calver}_{<id>}"`. The `calver` site
-setting is bumped on every calendar-affecting save so old cache keys
-naturally fall out of routing — no explicit purge call is needed for
-calver-keyed caches.
+setting is bumped on every calendar-affecting save, so a stale entry is never
+read again. It is not removed either: `calendar_effective_day` and
+`pause_windows_by_course` have no `ttl`, so every calendar change also purges
+both definitions (the calendar observer, and `lib.php`'s invalidate and reset
+functions); a new calver-keyed application cache needs the same purge at the
+same three places.
 
 ## Mustache templates
 
@@ -572,6 +868,12 @@ protected function render_my_renderable(my_renderable $r): string {
 **Zero `html_writer` calls** in plugin code. The only exceptions are
 moodleform's own internal markup (which Moodle controls).
 
+`classes/output/renderer.php` has no render methods today: the block's card
+UI is the Preact app, and `pages/` render their templates through
+`$OUTPUT->render_from_template()`. The class stays because
+`block_feedback_tracker.php` calls `$this->page->get_renderer()`, which throws
+without one.
+
 ## Web services
 
 - All function classes under `classes/external/` extend
@@ -579,15 +881,20 @@ moodleform's own internal markup (which Moodle controls).
 - Function parameters: `execute_parameters()` returns an
   `external_function_parameters`
 - Return shape: `execute_returns()` returns an `external_single_structure`
-- Every read function checks `validate_context()` + `require_capability()`;
-  every write function does the same + fires an event
-- Don't call WS classes from within `block_base::get_content()` — the WS's
-  `validate_context()` calls `$PAGE->set_context()` which adds body
-  classes, and the header has already started by then. Use a separate
-  data-loading helper (e.g. `responsiveness_payload::for_course()`) that
-  both the WS and the block call directly.
+- Every read function calls `validate_context()` and authorises the caller:
+  with `require_capability()` for a course-scoped read, and through
+  `local\sla\dashboard_scope` for the cross-course ones (`get_dashboard`,
+  `get_grader_priority_list`, `get_insights`), which filter to the courses the
+  user teaches. Every write function checks a capability and fires an event.
+- Don't call WS classes from within `block_base::get_content()`: the WS's
+  `validate_context()` runs `$PAGE->reset_theme_and_output()` (which puts
+  `$COURSE` back to the site course and clears the page's course and
+  context), `require_login()` and `$PAGE->set_context()`, rewriting the state
+  of the page being rendered. Use a separate data-loading helper (e.g.
+  `responsiveness_payload::for_course()`) that both the WS and the block call
+  directly.
 - `get_dashboard`'s per-course return shape is read key-by-key by
-  `amd/src/views/DashboardView.js::aggregate()`; a field `aggregate()` reads but
+  `aggregate()` in `amd/src/lib/aggregate.js`; a field `aggregate()` reads but
   the WS omits silently becomes `null` (no error). Keep them in sync and bump
   the WS `CACHE_KEY_VERSION` on any shape change. A WS that emits localised
   strings (e.g. `get_insights`) must also include `current_language()` in its key.
@@ -656,6 +963,79 @@ The canonical guard is in [`lib.php`](lib.php):
 - `assertContains` is strict (`===`) by default. When asserting against
   DB-derived arrays (which carry string ids), normalise the haystack:
   `array_map('intval', $contextlist->get_contextids())`.
+- **A race between two writers is testable with one connection.**
+  `tests/local/sla/concurrent_insert_test.php` replaces `$DB` with a PHPUnit
+  mock of the live driver class carrying the real instance's state (the open
+  connection included), which answers the chosen calls of one read method with
+  nothing and runs everything else for real, so the insert that follows
+  collides with a row the test wrote first. It needs
+  `preventResetByRollback()` (on PostgreSQL a collision aborts the test's
+  wrapping transaction) and a stubbed `dispose()`. Reuse it for any other
+  read-then-insert writer rather than calling a race untestable.
+- **Suite-level guards** — each fails on a change no single-feature test sees:
+  `process_memos_test` (a static memo added in `classes/` must also be reset by
+  `process_memos::reset()`), `ci_matrix_test` (the branches of
+  `$plugin->supported` and the jobs of `.github/workflows/ci.yml` are the same
+  set; skipped in a release archive, which has no `.github`),
+  `upgrade_test::test_no_savepoint_is_ahead_of_version_php`,
+  `vendor_bundle_test` (see *Vendor layout*) and `stylesheet_contract_test`
+  (see *Component conventions*).
+
+### Clock-dependent tests — the width rule
+
+This defect class has shipped twice in `gradebook_response_test.php` alone
+(`0026f08`, then the marker-clock test on 2026-08-27), and push-triggered CI
+structurally cannot catch a window that only opens on a Sunday night. The rules
+below are what stops a third.
+
+- **A fixture anchored to `time()` must span a whole number of weeks.** The
+  academic-time engine counts only business hours, so what an interval is worth
+  depends on which weekday the suite runs — and the longest business-hour-free
+  stretch is Friday 18:00 to Monday 08:00 UTC, **62 hours**. Any window shorter
+  than that collapses to zero effective hours somewhere in the weekend, and an
+  assertion resting on it flips. A width of exactly `7 * 86400` is immune: the
+  partial head day and the partial tail day are the same weekday and their two
+  fragments sum to one whole day of it, so the window covers every weekday once
+  whatever the hour, and is worth a constant **50.0 hours** — five ten-hour
+  days under the Mon-Fri 08:00-18:00 that `db/install.php` seeds. Measured over
+  2688 phases spanning four weeks: a 2-day window fails 14.25 h every week, a
+  7-day window never, with min and max both exactly 50.00. **8 days is not
+  safe** — its minimum is also 50.00 but its maximum is 60.00, so it is not
+  invariant, and 1 day is dead for 38.25 h a week.
+- **Two techniques exist and only one fits any given test.** When BOTH ends of
+  the interval are fixture-controlled, pin an absolute instant:
+  `recent_weekday_at($hour)` in `grading_cycle_test.php` returns last Tuesday at
+  a given hour UTC. When the far end is `time()` — anything measured against
+  "now", such as `allochours` on a row the activity has not graded — pinning an
+  instant settles nothing, and only the width rule works. Freezing the clock is
+  not on the table: the plugin calls bare `time()` in over a hundred places and never goes
+  through `\core\clock`, so `mock_clock_with_frozen()` would leave every plugin
+  computation reading the real one.
+- **A test that asserts an hours figure must set the working hours itself.**
+  In `gradebook_response_test.php`, `seed_calendar()` switches
+  `enablebusinesshours` on but leaves the `{block_feedback_tracker_chours}` rows
+  `db/install.php` seeded, so the width of a working day would arrive silently
+  from the install defaults; call `seed_business_hours()`, which deletes those
+  rows and inserts the test's own. `grading_cycle_test.php`'s `seed_calendar()`
+  does both. Delete before inserting: `business_hours_lookup` unions every row
+  of a weekday, so a test's own hours added beside the installed ones only
+  ever widen the day. (Several other suites insert the installed hours again
+  beside them, which changes nothing.) Tests asserting only on closure instants
+  do not need any of this.
+- **Assert the figure, not only the band or the direction.** An
+  `assertNotEquals` between two business-hours measures passes for free whenever
+  the calendar makes them coincide — precisely the weekend case the width rule
+  exists to prevent — and a bare inequality survives any regression that stops a
+  clock somewhere short of now. Name the expected number beside it
+  (`assertEqualsWithDelta(50.0, ...)`) so a future drift in the window shows up
+  as a wrong figure instead of silently re-banding.
+- **Read the closed value through the same entry point production uses.**
+  `elapsed_effective_hours()` takes a fast path that `elapsed_with_audit()` does
+  not; comparing one against the other puts the two sides of an assertion on
+  different code paths for no benefit, since the audit trail is discarded.
+- **A green local run proves nothing here.** Verify by construction — sweep the
+  phases of a full week and check the invariant holds at every one — not by
+  re-running once and seeing green on a Wednesday.
 
 ## Behat scenarios
 
@@ -671,6 +1051,18 @@ had `disable_behat`); a failing scenario uploads a faildump artifact.
   locator like "Language" also matches "Preferred language". Scope lookups
   to a container — `I set the field "X" in the "Section name" "fieldset"
   to "Y"` — whenever the page may carry similar labels.
+- `tests/generator/behat_block_feedback_tracker_generator.php` gives scenarios
+  one entity, `the following "block_feedback_tracker > site days" exist`: rows
+  of `{block_feedback_tracker_site}` with a required `daysago`, counted back
+  from today in `calendar::timezone()`, the zone `get_school_comparison`
+  measures its window in. Add further entities there rather than a custom step.
+- `vendor_bundle_smoke.feature` opens every surface that loads the Preact
+  bundle (the block, the teacher dashboard, the pending report, the score
+  simulator and `spike_react.php`) and fails when one renders no Preact tree:
+  run it after any change to the bundle or to `vendor_bundle`.
+- A **new** `.feature` file is invisible to a stack until its behat config is
+  refreshed (`admin/tool/behat/cli/util.php --enable`, or `mdl behat-init`);
+  editing an existing one needs nothing.
 
 ## Settings (settings.php) reset pattern
 
@@ -685,24 +1077,38 @@ had `disable_behat`); a failing scenario uploads a faildump artifact.
   never turn off. Treat unset (`false`/`null`) as the default and only an
   explicit `'0'` as off (pattern: `bootstrap::config_bundle()`'s
   `show_peer_context` read).
+- The three cutoff triples (`bucket_thresholds_days`, `bucket_thresholds_eff`,
+  `score_thresholds_band`) are `local\admin\thresholds_setting`s: three
+  numbers, none below 0 (and none above 100 for the score bands), strictly
+  ascending (buckets) or descending (score bands). `settings.php` builds each
+  from its entry in `thresholds_setting::SETTINGS` (default, order, range), and
+  `thresholds_setting_test` fails if the page builds one any other way. The parsers
+  (`bucket::parse_thresholds_eff()` / `parse_thresholds_days()`,
+  `responsiveness_calculator::parse_thresholds_band()`) stay tolerant of any
+  stored value; the 2026092500 upgrade step reset the ones saved before the
+  setting validated them. A change to these rules does not reach that step,
+  which keeps its own copy (see *Upgrade savepoints*).
 
 ## Score formula
 
-Normalisation is **read-time only**. `load_weights()` rescales values
-to sum 1.0 if the stored sum is outside `[0.95, 1.05]`. Stored values
-are kept as the admin typed them.
+Normalisation is **read-time only**, in two steps. `load_weights()`
+rescales the stored values to sum 1.0 only when their sum is outside
+`[0.95, 1.05]`; `effective_weights()` then drops the terms with no data and
+rescales the rest to sum exactly 1.0, whatever the sum was. Stored values are
+kept as the admin typed them. The simulator starts from `load_weights()`
+(through `bootstrap::config_bundle()`), so it shows the weights the rollup
+uses.
 
 ## Dashboard display conventions (trend, medians, sparkline)
 
 `trend_pct_30d` (% change in median effective hours, **negative = faster**) is
 shown as **speed** on every surface: faster = `▲` green, slower = `▼` red,
 `|pct| < 2` = `→` muted; magnitude is **unsigned** (direction = arrow + colour
-+ word, never `+/−`). Classifier: [`amd/src/lib/trend.js`](amd/src/lib/trend.js)
-(`classifySpeed` / `speedLabel`), used by `TrendRow` / `ResponsivenessHero` /
-`ResponsivenessHeroSlim`. When touching trend direction, mirror the sign in the
-copies that each keep their own: `classes/output/responsiveness_card.php` (the
-server no-JS card) and `amd/src/lib/format.js::formatTrend` — both were easy to
-leave **inverted**.
++ word, never `+/−`). The only classifier is
+[`amd/src/lib/trend.js`](amd/src/lib/trend.js) (`classifySpeed` /
+`speedLabel`), used by `TrendRow` / `ResponsivenessHero` /
+`ResponsivenessHeroSlim` / the simulator; route any new trend display through
+it rather than deriving the sign again.
 
 **Median families — never conflate:** `median_eff_h` is graded-only and feeds
 the **score** (don't repurpose it for display). `cur_median_eff_h` /
@@ -717,12 +1123,11 @@ business days skip weekend/holiday/recess) — **never** derive days by dividing
 hours. Per-submission rows get `effective_days`/`perceived_days` at read time
 (`submission_browser`, `get_grader_priority_list`).
 
-The block renders **twice** — a server card (`responsiveness_card.php` +
-`responsiveness_card.mustache`, the no-JS first paint) **and** a Preact app
-(`block_app.js` → `GroupCard` → `TrendRow`); display changes land in both. The
-sparkline has three lockstep copies (`amd/src/components/Sparkline.js`,
-`classes/output/sparkline.php`, `templates/sparkline.mustache`) on a **speed**
-Y axis: fewer hours = higher, green "desired-speed" zone anchored at the top.
+The block renders once, as a Preact app (`block_app.js` → `BlockView` →
+`GroupCard` → `TrendRow`); without JavaScript its `<noscript>` shows only the
+empty-state hint. The sparkline is `amd/src/components/Sparkline.js` alone, on
+a **speed** Y axis: fewer hours = higher, green "desired-speed" zone anchored
+at the top.
 
 **Band slug ≠ visible label:** the slugs `excellent/good/regular/critical/pending/nodata`
 and the `bft-*-tone-<slug>` CSS classes are frozen identifiers; relabel a band by editing
@@ -736,22 +1141,74 @@ Two vocabularies share these slugs: the **score** gauge shows the `band_*` strin
 to a `card_*` string in that component (e.g. `PriorityCard::priorityLabel`) — never
 relabel `band_*` globally, which would change the score gauge too.
 
-## React conventions (Phase 2A foundation)
+**Count formatting (thousands separator):** every integer submission count is
+grouped with the active language's separator — `numfmt::count()`
+([`classes/local/output/numfmt.php`](classes/local/output/numfmt.php)) in PHP,
+`formatCount()` in [`amd/src/lib/format.js`](amd/src/lib/format.js) in JS. The
+separator is `langconfig`'s `thousandssep` (comma in en, dot in pt_br): the PHP
+helper reads it directly; the JS helper is fed it via
+`bootstrap::config_bundle()` → `config.thousandssep`. Each `*_app.js`
+entrypoint pins the page's number and date context once, before it renders:
+`setGroupingSeparator(config.thousandssep)`, `setDecimalSeparator(config.decsep)`
+and `setDateContext(config.locale, config.timezone)` (never read these inside a
+component). Both count helpers coerce non-numeric input to `0`, so they take
+**integer counts only**: never feed them an already-formatted string or an
+hours/%/score value (hours and fractions go through `formatHours` /
+`formatDecimal`, which use the decimal separator). `Counts.js` stays
+**generic** (its `value` may be a pre-formatted metric string like `"8.4 h"`),
+so the caller formats, not the component. Hours/percent/score/dates are
+deliberately left ungrouped.
 
-Moodle 5.1 doesn't ship React. The plugin vendors **Preact + htm**
+**Site benchmarks (school comparison).** The teacher dashboard ends with
+`amd/src/components/SchoolComparison.js`: the site-wide daily series of
+`get_school_comparison` as a table (newest day first) under a compact median
+sparkline, for a 7, 30 or 90-day window. Its gate is one helper,
+`bootstrap::can_view_school_comparison()`
+(`block/feedback_tracker:viewschoolcomparison` at system context, the check the
+web service makes on every call). It feeds `config.school_comparison` in
+`config_bundle()`, which is the only thing `DashboardView` reads to render the
+section, and it decides whether `dashboard_i18n()` ships the
+`dashboard_comparison_*` strings at all; don't add another check of the
+capability on the page side. The section is collapsed on load and fetches only
+when opened, then keeps each window's rows for the page load; a request counter
+stops a slow answer for an abandoned window from changing the loading or error
+state. The site table stores hours only, so the section stays in business hours
+when `display_time_unit` is business days and says so in a note (days are never
+derived from hours). Its day column comes from `formatYmd()` in `lib/format.js`,
+which formats the YYYYMMDD key in UTC in the user's locale: the key is a
+calendar day the server already resolved, and passing it through the user's time
+zone would move it by a day far from UTC.
+
+## React conventions
+
+Moodle 4.5 and 5.1 don't ship React. The plugin vendors **Preact + htm**
 (API-compatible with React, no JSX build step) and exposes them through
-a single AMD shim. Moodle 5.2's native React subsystem will replace this
-with a one-file change to the shim.
+a single AMD shim, so moving to Moodle 5.2's native React subsystem touches
+the shim, the vendor bundle and its loading, not the components (see
+*Forward migration*).
 
 ### Vendor layout
 
 - Vendored UMD code lives in [`js/vendor/`](js/vendor/), **never** under
   `amd/`. Moodle's grunt only globs `amd/src/**/*.js`, so anything in
   `js/vendor/` is left alone by ESLint and Babel.
+- The bundle is Preact **10.29.8** + htm **3.1.1**,
+  `js/vendor/bft-vendor-10.29.8-3.1.1.min.js`. Its file name is spelt in one
+  PHP place only, `local\output\vendor_bundle::FILENAME`; the block and every
+  page that mounts a Preact root call `vendor_bundle::load($PAGE)`, which adds
+  it to `<head>` (`$PAGE->requires->js(..., $inhead = true)`) so its globals
+  are set before the AMD loader resolves any module. Never write the file name
+  or a hand-rolled `requires->js()` for it anywhere else.
 - Declared in [`thirdpartylibs.xml`](thirdpartylibs.xml) (three library
-  entries, all pointing to the single concatenated bundle).
-- Loaded into `<head>` via `$PAGE->requires->js(..., $inhead = true)` so
-  the bundle's globals are set before the AMD loader resolves any module.
+  entries, all pointing to the single concatenated bundle, with the SHA-384
+  values as XML comments). [`js/vendor/README.md`](js/vendor/README.md) holds
+  the hashes and the script that rebuilds the bundle for a new version.
+- `tests/local/output/vendor_bundle_test.php` fails when the named file is
+  missing, when another bundle ships beside it, when any other PHP file outside
+  `tests/` spells a bundle name, when `thirdpartylibs.xml` names another file
+  or version, or when the file's hash differs from the README's. So an update
+  touches `FILENAME`, the README tables and `thirdpartylibs.xml` together, and
+  `vendor_bundle_smoke.feature` then proves every surface still renders.
 - The bundle is wrapped in an outer IIFE that shadows `define`, forcing
   the upstream UMDs to take their global-script branch instead of
   registering as anonymous AMD modules.
@@ -797,8 +1254,9 @@ note rather than a silent disable), `camelcase` (WS payload keys like
 `overall_score`/`total_pending` must be quoted string literals, not bare
 identifiers), and `promise/always-return` (every `.then()` returns a value;
 non-critical fetches use `.catch(() => null)`). Run
-`npx eslint public/blocks/feedback_tracker/amd/src` from the Moodle root
-before pushing; `--fix` clears the mechanical ones (spacing, `async()`).
+`mdl ci moodle-block_feedback_tracker --only grunt` before pushing — it is
+the CI gate verbatim, and unlike a bare `eslint --fix` it corrects nothing,
+so the mechanical offenders (spacing, `async()`) are fixed by hand here.
 
 ### Component conventions
 
@@ -809,20 +1267,49 @@ before pushing; `--fix` clears the mechanical ones (spacing, `async()`).
   Where state is required, use hooks from the shim
   (`useState`, `useEffect`, `useReducer`, etc.).
 - Props match the **existing** payload shape from
-  `responsiveness_payload::group_payload()` / `responsiveness_card.php`
-  so Phase 2B can feed them without transforms. Don't invent new keys.
+  `responsiveness_payload::group_payload()`, so a component takes a card
+  straight from the web service without transforms. Don't invent new keys.
 - CSS classes are `bft-*` BEM from [`styles.css`](styles.css). No
   inline styles except SVG geometry attributes (cx, r, viewBox, etc.).
-- Band colours and slugs are defined once in
-  [`amd/src/lib/bands.js`](amd/src/lib/bands.js) and mirror the PHP
-  constants in `classes/output/score_gauge.php::BAND_COLOURS`. Keep
-  them in lockstep.
+- Band slugs and their light-mode colours are defined in
+  [`amd/src/lib/bands.js`](amd/src/lib/bands.js) (`BAND_COLOURS`).
+  `colourFor(band)` returns the band's `--bft-band-<slug>-fg` token from
+  `styles.css`, with the `BAND_COLOURS` value as the fallback, so inline
+  colours follow the theme into dark mode. The light `-fg` tokens equal
+  `BAND_COLOURS` except `nodata` (darker, to pass as text);
+  `tests/lockstep/stylesheet_contract_test.php` pins that, the per-band
+  classes the JS builds (`bft-badge-`, `bft-rh-tone-`,
+  `bft-overall-score-tone-`, `bft-sim-tone-`) and that every `--bft-*` token
+  read is declared.
+- Colour tokens in `styles.css` are declared on `body` (so core's modals and
+  anything else appended to `document.body` see them, and body sees the
+  `--bs-*` set wherever the theme puts `data-bs-theme`), with a dark-mode
+  rule anchored at body (`body[data-bs-theme="dark"], [data-bs-theme="dark"] body`),
+  so a dark navbar deeper in the page does not match. Colours that sit under white
+  text use the `-fill` tokens, which keep their value in both modes. Every
+  text colour keeps at least 4.5:1 against the surfaces it is painted on, in
+  both modes.
+- **Don't dim text with `opacity`:** it fades a label and its background
+  together, which is how three labels fell under 4.5:1. A dimmed or disabled
+  state (`:disabled`, or a class ending in `-dim`, `-off`, `-busy`,
+  `-disabled` or `-muted`) declares its own text colour instead, and a glyph
+  that is the only sign of what a control does (the drill-down's sort arrow)
+  sets its own colour and background for 3:1, since plugin CSS cannot rely on
+  beating the theme's rules around it. `tests/lockstep/stylesheet_contract_test.php`
+  enforces all three: an opacity below 1 is allowed only on the selectors
+  listed in `DECORATIVE_OPACITY` (non-text decoration) and on keyframe steps; a
+  dimmed or disabled state must declare a colour keeping 4.5:1 on its
+  background; and each glyph in `INDICATORS` (add new ones there) must own a
+  colour and background pair of 3:1. Both ratios are measured on the
+  light-mode literal fallbacks. Dark mode rests on the theme's `--bs-*` values,
+  which no static test can resolve; check it in the browser.
 
 ### Mount-point convention
 
 Entrypoints find their roots via a `data-bft-<role>-root` attribute and
-mount each one — never assume a single root, course pages can host
-multiple block instances:
+mount each one found. The block itself allows one instance per page
+(`block_base::instance_allow_multiple()` is false), but mounting every root
+costs nothing and keeps each entrypoint free of that assumption:
 
 ```js
 document.querySelectorAll('[data-bft-spike-root]').forEach((el) => {
@@ -833,7 +1320,7 @@ document.querySelectorAll('[data-bft-spike-root]').forEach((el) => {
 ### Idempotent init
 
 Mirror the existing pattern from
-[`amd/src/responsiveness.js`](amd/src/responsiveness.js):
+[`amd/src/block_app.js`](amd/src/block_app.js):
 
 ```js
 export const init = () => {
@@ -846,9 +1333,12 @@ export const init = () => {
 ### Web-service calls
 
 Always through [`amd/src/lib/api.js`](amd/src/lib/api.js) — one named
-export per WS. Errors flow through `core/notification.exception()` then
-re-throw so the caller's UI can react. Don't call `Ajax.call([...])`
-inline in a component.
+export per WS a view calls (a service no view calls has no wrapper). An
+application error goes through `core/notification.exception()` and is
+re-thrown; a connectivity failure (no Moodle `errorcode`, or the browser
+offline) is tagged `bftNetwork` and re-thrown **without** a toast, so the view
+can show its inline retry notice. Don't call `Ajax.call([...])` inline in a
+component.
 
 `Ajax.call([...])[0]` resolves a **jQuery promise** — it has `.then()` /
 `.catch()` but **no native `.finally()`**. `api.js::call()` wraps the
@@ -859,7 +1349,7 @@ a mount-time loader) without `TypeError: finally is not a function`.
 
 Every new `amd/src/**/*.js` file must have its `amd/build/**/*.min.js`
 counterpart committed in the same PR. Build with
-`npx grunt amd --root=public/blocks/feedback_tracker` from Moodle root.
+`mdl grunt m501 blocks/feedback_tracker`.
 
 `amd/build/**` is **tracked** in git (not gitignored) — Moodle serves the
 compiled bundle, not `amd/src`. When resolving a cherry-pick conflict,
@@ -869,23 +1359,28 @@ amd/build/...` is a valid way to restore it.
 
 ### Dev loop
 
-- *Site admin → Development → Debug messages = DEVELOPER* and
-  *cachejs = off* — Moodle loads `amd/src/*.js` directly (no rebuild
-  needed on save).
+- The stacks serve `amd/build/*.min.js`, not `amd/src`, even with
+  `cachejs = false`: Moodle reads `amd/src` only when the `.map` beside the build
+  is missing. An edit is therefore live only after
+  `mdl grunt m501 blocks/feedback_tracker`, and a mutation test that skips the
+  rebuild silently tests the old build.
 - Visit `/blocks/feedback_tracker/pages/spike_react.php` as site admin
-  for the canonical smoke test (mounts every shared component).
+  (e.g. http://localhost:8501/…) for a quick smoke test of the Preact
+  vendoring: it mounts six of the components (`ScoreGauge`, `Sparkline`,
+  `Badge`, `Counts`, `MetricsRow`, `BreakdownPanel`), not the views.
 
 ### Forward migration (Moodle 5.2+)
 
 When the plugin's required Moodle version bumps to 5.2+ (which ships
 React natively via `react`/`react-dom` import-map specifiers), the
-migration is mechanical:
+migration is mechanical but touches more than the shim:
 
 - `js/vendor/bft-vendor-*.min.js` → delete.
 - `amd/src/lib/preact.js` → re-export from `react` / `react/jsx-runtime`.
 - Move `amd/src/components/*.js` → `js/esm/src/components/*.tsx`,
   optionally rename `html\`...\`` to JSX (htm still works in 5.2).
-- `$PAGE->requires->js(..., true)` of the bundle → remove.
+- `local\output\vendor_bundle` and its `load()` calls (the block and four
+  pages) → remove, with `vendor_bundle_test` and `vendor_bundle_smoke.feature`.
 - Spike page's raw mount-point divs → `{{#react}}` Mustache helper.
 
 Component logic, hook usage, props shapes, and CSS classes stay the same.
@@ -895,19 +1390,22 @@ Component logic, hook usage, props shapes, and CSS classes stay the same.
 The plugin uses **moodle-an-hochschulen/moodle-workflows** as a reusable
 workflow. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) calls it
 once per supported Moodle branch (see the Commands section for what it
-gates on). It runs on every push/PR with no protected-ref gate — unlike the
-previous catalyst workflow, whose gate silently **skipped every job** on
-pushes to unprotected refs (historical "passing" runs on unprotected
-branches were skip-successes), and whose snapshot images could not run
-plugin Behat at all (no chrome behat profile in the snapshot config, no
-`MOODLE_START_BEHAT_SERVERS`, `behat.yml` generated before the plugin was
-copied in — the reason `disable_behat` was set here for a while).
+gates on). It runs on pushes to `main` and `MOODLE_*_STABLE`, on every pull
+request and on `workflow_dispatch`, with the fleet's `concurrency` block (a
+newer push supersedes a running pull-request run, never one on `main`), and
+has no protected-ref gate — unlike the previous catalyst workflow, whose gate
+silently **skipped every job** on pushes to unprotected refs (historical
+"passing" runs on unprotected branches were skip-successes), and whose
+snapshot images could not run plugin Behat at all (no chrome behat profile in
+the snapshot config, no `MOODLE_START_BEHAT_SERVERS`, `behat.yml` generated
+before the plugin was copied in — the reason `disable_behat` was set here for
+a while).
 
-The plugin is its **own git repo** (branch `main`) nested inside the Moodle
-checkout (branch `MOODLE_501_STABLE`): run git from the plugin dir or use
-`git -C public/blocks/feedback_tracker ...` — git from the Moodle root won't
-see plugin changes. Note `cd` inside a compound Bash command doesn't persist
-(cwd resets between calls); prefer absolute paths or `git -C`.
+The plugin is its **own git repo** (branch `main`) at
+`~/dev/moodle-block_feedback_tracker`, a sibling of the stack checkouts
+rather than a directory inside one. The stacks' branches
+(`MOODLE_405_STABLE` / `MOODLE_501_STABLE`) are core's, unrelated to this
+repo's; git run from a stack checkout never sees plugin changes.
 
 `version.php` **diverges by branch on purpose**: `main` carries
 `$plugin->supported = [405, 502]`, `MOODLE_501_STABLE` carries `[501, 501]`.
@@ -921,17 +1419,68 @@ name) — keep each branch's own when resolving cherry-picks.
 ### Debugging CI failures
 
 - Read a failed job's raw log with
-  `gh api repos/uaiblaine/feedback_tracker/actions/jobs/<jobid>/logs`
+  `gh api repos/uaiblaine/moodle-block_feedback_tracker/actions/jobs/<jobid>/logs`
   (get `<jobid>` from `gh run view <runid> --json jobs`). For the MAH
   reusable-workflow jobs `gh run view --log-failed` often returns empty —
   use the API endpoint. Failures cluster in the "Static checks" job
   (phplint/phpcs/phpdoc/grunt/leftover) since runtime legs rarely break.
-- Pre-push, only the grunt gate runs locally (from the Moodle root):
-  `npx eslint public/blocks/feedback_tracker/amd/src` and
-  `npx stylelint public/blocks/feedback_tracker/styles.css`. phpcs, phpdoc,
-  PHPUnit and Behat have **no local runner** here (no moodle-plugin-ci
-  checkout, no local DB) — they are only verifiable by pushing, so eyeball
-  those at write time against the rules above.
+- **The whole gate runs locally — don't push to find out whether phpcs
+  passes.** The repo dir is `moodle-block_feedback_tracker`; it mounts at
+  `blocks/feedback_tracker` on `m405`, `m501`, `m502` and `m502b`
+  (`$plugin->supported = [405, 502]` keeps it off `m53`). This plugin's
+  invocations:
+
+  ```sh
+  mdl ci moodle-block_feedback_tracker --only phpcs,phpdoc   # fast static pass
+  mdl ci moodle-block_feedback_tracker --only grunt          # ESLint + Stylelint
+  mdl ci moodle-block_feedback_tracker                       # full static + PHPUnit
+  mdl ci moodle-block_feedback_tracker --behat               # add the Behat leg
+  mdl phpunit m501 block_feedback_tracker                    # this plugin's testsuite
+  mdl behat m501 @block_feedback_tracker                     # this plugin's scenarios
+  mdl grunt m501 blocks/feedback_tracker                     # rebuild amd/build
+  ```
+
+- `mdl ci` defaults to the 5.1 leg (`--branch MOODLE_501_STABLE --php 8.3
+  --db pgsql`) and skips Behat unless asked. Because `supported` starts at
+  405, anything version-conditional needs the 4.5 leg run too:
+  `mdl ci moodle-block_feedback_tracker --branch MOODLE_405_STABLE`. The
+  MariaDB leg (`--db mariadb`) is worth a run whenever the change touches
+  SQL — CI runs it only on the highest branch.
+
+## MDL Shield reviews
+
+Pull request reviews by MDL Shield are **manual only**. Comment `!mdlshield review` (what is
+new since the last review) or `!mdlshield review full` (the whole pull request) on a pull
+request; the commands work for the repository owner and the `trusted_users` of
+`.mdlshield/config.yml`, and a forced command ignores the filters and a draft's silence.
+Nothing runs on its own because `include.branches` names a branch no pull request targets
+(a non-empty include list is a requirement; an empty one was measured NOT to stop automatic
+reviews).
+
+- **A review is a counted resource, so ask for one on purpose.** The monthly quota is shared by every
+  repository, and only a completed review uses one. The owner posts the command; a session never
+  does without being told to for that pull request. Keep a pull request at or under **3,000 effective
+  changed lines** (additions plus deletions after `exclude.paths`; the limit is MDL Shield's own
+  and 12,000 is the hard one, forced reviews included): `mdl mdlshield size <repo-dir>` estimates it.
+  One `review full` per pull request, after the local matrix is green. The rule and its reasons are
+  in the fleet CLAUDE.md (section 4, "MDL Shield review budget").
+
+- `.mdlshield/config.yml` and `.mdlshield/context.md` are read **from the default branch
+  only** (`main`), so a pull request cannot change the rules that judge it, and the pull
+  request that first adds them is judged by the website settings instead. Both are
+  `export-ignore`d and never reach the release zip. The file overrides the website for each
+  key it names; an invalid file stops reviews for the repository until it is fixed, and an
+  unknown key only raises a warning on the summary comment.
+- **One Moodle version per repository.** There is no per-branch mapping, so the file pins
+  `moodle.versions: ["5.2"]`. The plugin also runs on older cores, so read a finding about a core API with that in mind.
+- `fail_on.severity` is `high`: the check fails on an open finding at or above it. Code
+  quality findings never block, only security findings do.
+- The context file is project knowledge that **influences** the reviewer and is not a
+  filter. Keep it in step with the code it states: capabilities, the web service list and
+  the facts it calls deliberate. The website's own review context is replaced entirely by
+  this file, not merged.
+- On the website the repository still needs *Enable pull request reviews* and a granted
+  preview access; the file cannot do either.
 
 ## When in doubt
 

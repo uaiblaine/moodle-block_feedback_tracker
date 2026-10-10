@@ -14,20 +14,23 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Teacher dashboard view (Phase 3E redesign) — warm, supportive
- * cross-course overview.
+ * Teacher dashboard view — cross-course overview.
  *
  * Composition (top → bottom):
- *   1. Brand-tag eyebrow ("FEEDBACK TRACKER")
+ *   1. Brand-tag eyebrow
  *   2. Greeting H1 (time-of-day aware) + WaveMark
- *   3. Subline (pending count · critical count · business-time chip)
+ *   3. Subline (pending count · critical count · business-time chip · latest event)
  *   4. ResponsivenessModule — full hero ↔ slim strip (collapsible)
- *   5. Insights row (Bright spot / Most improved / Gentle watch)
- *   6. "Grade now · picked for you" — 3 priority cards
- *   7. "Your courses" table with inline ScoreRing + sparkline + Open link
+ *   5. Scheduled-pause notice
+ *   6. Insights row (Bright spot / Most improved / Gentle watch)
+ *   7. "Grade now · picked for you" — 3 priority cards
+ *   8. "Your courses" table with inline ScoreRing + sparkline + Open link
+ *   9. Site benchmarks (SchoolComparison), for viewers the config bundle
+ *      flags with `school_comparison`
  *
- * Initial payload comes from the mount-point JSON so the first paint is
- * data-rich. Insights lazy-load on mount.
+ * The mount-point JSON carries strings, config, the collapse preference and
+ * the pause / event sidecars only; course rows, the grade-now list and the
+ * insights load through web services after mount.
  *
  * @module    block_feedback_tracker/views/DashboardView
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>
@@ -41,103 +44,18 @@ import PriorityCard from 'block_feedback_tracker/components/PriorityCard';
 import CoursesTable from 'block_feedback_tracker/components/CoursesTable';
 import WaveMark from 'block_feedback_tracker/components/WaveMark';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
+import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
+import SchoolComparison from 'block_feedback_tracker/components/SchoolComparison';
 import {getDashboard, getGraderPriorityList, getInsights}
     from 'block_feedback_tracker/lib/api';
 import {bandForScore} from 'block_feedback_tracker/lib/bands';
-import {usesDays, formatDays} from 'block_feedback_tracker/lib/format';
+import {aggregate, perceivedLabel} from 'block_feedback_tracker/lib/aggregate';
+import {usesDays, formatDays, formatCount} from 'block_feedback_tracker/lib/format';
 import {setUserPreference} from 'core_user/repository';
 import Notification from 'core/notification';
 
 /** Moodle user-preference name persisting the hero+insights collapse state. */
 const PREF_DASHBOARD_COLLAPSED = 'block_feedback_tracker_dashboard_collapsed';
-
-/**
- * Aggregate per-course rows into a single hero score + total counters.
- *
- * @param {Array<object>} courses
- * @returns {{pending: number, critical: number, overgoal: number,
- *            avgscore: number|null, effective: number|null,
- *            perceived: number|null, compliance: number|null,
- *            trendpct: number|null}}
- */
-const aggregate = (courses) => {
-    let pending = 0;
-    let critical = 0;
-    let overgoal = 0;
-    let scoreSum = 0;
-    let scoreWeight = 0;
-    let effSum = 0;
-    let effCount = 0;
-    let percSum = 0;
-    let percCount = 0;
-    let effDaysSum = 0;
-    let effDaysCount = 0;
-    let percDaysSum = 0;
-    let percDaysCount = 0;
-    let compSum = 0;
-    let compCount = 0;
-    let compDaysSum = 0;
-    let compDaysCount = 0;
-    let trendSum = 0;
-    let trendCount = 0;
-    // Branch count over the lint cap is acknowledged debt (refactor pass pending).
-    // eslint-disable-next-line complexity
-    (courses || []).forEach((c) => {
-        pending += Number(c.pending) || 0;
-        critical += Number(c.critical) || 0;
-        overgoal += Number(c.overgoal) || 0;
-        if (c.avgscore !== null && c.avgscore !== undefined) {
-            const weight = Math.max(1, Number(c.pending) || 0);
-            scoreSum += Number(c.avgscore) * weight;
-            scoreWeight += weight;
-        }
-        // Headline "effective / perceived" use the include-pending medians
-        // (cur_median_*) so the backlog shows through instead of reading ~0.
-        if (c.cur_median_eff_h !== null && c.cur_median_eff_h !== undefined) {
-            effSum += Number(c.cur_median_eff_h);
-            effCount += 1;
-        }
-        if (c.cur_median_raw_h !== null && c.cur_median_raw_h !== undefined) {
-            percSum += Number(c.cur_median_raw_h);
-            percCount += 1;
-        }
-        // Date-based day medians — the headline pair for the business-days unit.
-        if (c.cur_median_eff_days !== null && c.cur_median_eff_days !== undefined) {
-            effDaysSum += Number(c.cur_median_eff_days);
-            effDaysCount += 1;
-        }
-        if (c.cur_median_perc_days !== null && c.cur_median_perc_days !== undefined) {
-            percDaysSum += Number(c.cur_median_perc_days);
-            percDaysCount += 1;
-        }
-        if (c.compliance_pct !== null && c.compliance_pct !== undefined) {
-            compSum += Number(c.compliance_pct);
-            compCount += 1;
-        }
-        // Day-ruler compliance twin — chosen at display when the unit is days.
-        if (c.compliance_pct_days !== null && c.compliance_pct_days !== undefined) {
-            compDaysSum += Number(c.compliance_pct_days);
-            compDaysCount += 1;
-        }
-        if (c.trend_pct_30d !== null && c.trend_pct_30d !== undefined) {
-            trendSum += Number(c.trend_pct_30d);
-            trendCount += 1;
-        }
-    });
-    return {
-        pending,
-        critical,
-        overgoal,
-        avgscore:   scoreWeight > 0 ? scoreSum / scoreWeight : null,
-        effective:  effCount > 0 ? effSum / effCount : null,
-        perceived:  percCount > 0 ? percSum / percCount : null,
-        effectivedays: effDaysCount > 0 ? effDaysSum / effDaysCount : null,
-        perceiveddays: percDaysCount > 0 ? percDaysSum / percDaysCount : null,
-        compliance: compCount > 0 ? compSum / compCount : null,
-        compliancedays: compDaysCount > 0 ? compDaysSum / compDaysCount : null,
-        trendpct:   trendCount > 0 ? trendSum / trendCount : null,
-    };
-};
 
 /**
  * Pure client-side sort for the courses table.
@@ -152,7 +70,7 @@ const sortCourses = (rows, sortKey, sortOrder) => {
         return rows;
     }
     const dir = sortOrder === 'asc' ? 1 : -1;
-    const numeric = ['pending', 'critical', 'overgoal', 'avgscore', 'cur_median_eff_h'];
+    const numeric = ['pending', 'critical', 'overgoal', 'avgscore', 'cur_median_eff_h', 'cur_median_eff_days'];
     const numkey = numeric.indexOf(sortKey) !== -1;
     const copy = rows.slice();
     copy.sort((a, b) => {
@@ -180,23 +98,6 @@ const greetingKey = () => {
         return 'dashboard_greeting_afternoon';
     }
     return 'dashboard_greeting_evening';
-};
-
-/**
- * Perceived calendar-days from the raw (wall-clock) median wait. The raw
- * median already includes weekends and holidays, so it converts straight to
- * calendar days with no inflation factor. Returns a string suffix like "4d"
- * or "—" when there is nothing to show.
- *
- * @param {number|null|undefined} rawhours  Median raw (wall-clock) hours.
- * @returns {string}
- */
-const perceivedLabel = (rawhours) => {
-    const n = Number(rawhours);
-    if (!Number.isFinite(n) || n <= 0) {
-        return '—';
-    }
-    return Math.max(1, Math.round(n / 24)) + 'd';
 };
 
 /**
@@ -244,13 +145,15 @@ const groupLabel = (insight, i18n) => {
 };
 
 /**
+ * Top-level dashboard view.
+ *
  * @param {object} props
- * @param {object} props.initial   Mount-point payload: {greeting, dashboard,
- *                                 gradenow, cancompare, i18n, config}.
+ * @param {object} props.initial   Mount-point payload: {greeting_firstname,
+ *                                 dashboard, gradenow, insights, events, upcoming,
+ *                                 dashboard_collapsed, i18n, config}.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function DashboardView({initial}) {
     const i18n = initial.i18n || {};
@@ -268,18 +171,21 @@ export default function DashboardView({initial}) {
     const [gradenow, setGradenow] = useState(initial.gradenow || null);
     const [gradenowError, setGradenowError] = useState(null);
     const [insights, setInsights] = useState(initial.insights || null);
-    // True until the first course-rows fetch resolves. The page ships an
-    // empty shell now, so unless the server happened to inline rows (it no
-    // longer does) we start in the loading state.
+    // True until the first course-rows fetch settles. The page ships no rows,
+    // so this starts true unless the payload inlined some.
     const [loadingcourses, setLoadingCourses] = useState(
         !(Array.isArray(dashboard.courses) && dashboard.courses.length > 0)
     );
-    // V1.0.11 — site-scope paused events sidecar, preloaded by
-    // teacher_dashboard.php so the dashboard subline can show the most
-    // recent named optional event (e.g. "⚽ Brasil vs França · 21/05 16:00-18:00").
+    // Site-scope sub-day optional events of the last 30 days, preloaded by
+    // teacher_dashboard.php so the subline can show the most recent named
+    // one (e.g. "Recent event: Match day · 21/05 16:00-18:00").
     const [events] = useState(Array.isArray(initial.events) ? initial.events : []);
+    // Scheduled-pause notice — preloaded site-scope by teacher_dashboard.php,
+    // already decorated + visibility-filtered server-side. Gated by the admin
+    // toggle (default ON).
+    const [upcoming] = useState(Array.isArray(initial.upcoming) ? initial.upcoming : []);
     /*
-     * V1.0.8 — collapsed state for the combined Responsiveness hero +
+     * Collapsed state for the combined Responsiveness hero +
      * Insights block. Initial value comes from the user preference
      * preloaded by teacher_dashboard.php so the first paint already
      * matches the user's saved choice; toggling writes back through
@@ -288,8 +194,8 @@ export default function DashboardView({initial}) {
     const [collapsed, setCollapsed] = useState(Boolean(initial.dashboard_collapsed));
 
     const sorted = useMemo(() => sortCourses(courses, sortKey, sortOrder), [courses, sortKey, sortOrder]);
-    const totals = useMemo(() => aggregate(courses), [courses]);
-    const heroBand = bandForScore(totals.avgscore, scoreThresholds);
+    const totals = useMemo(() => aggregate(courses, 'avgscore'), [courses]);
+    const heroBand = bandForScore(totals.score, scoreThresholds);
     const heroBandLabel = (i18n.bands || {})[heroBand] || '';
 
     // Local-clock greeting, recomputed every render (cheap).
@@ -298,11 +204,10 @@ export default function DashboardView({initial}) {
     const greeting = greetingTemplate.replace('{$a->firstname}', initial.greeting_firstname || '');
 
     /**
-     * Toggle the hero+insights collapsed state. Optimistic — local state
-     * flips immediately so the UI is responsive; the preference write is
-     * fire-and-forget. On failure we revert state and route the error
-     * through core/notification so the user knows the choice didn't
-     * persist (page reload would show the old value).
+     * Toggle the hero+insights collapsed state. Optimistic: local state
+     * flips at once and the preference is written in the background; if the
+     * write fails the state reverts and core/notification reports that the
+     * choice was not saved.
      *
      * @param {boolean} next
      */
@@ -359,14 +264,11 @@ export default function DashboardView({initial}) {
         }
     };
 
-    // Initial async load. teacher_dashboard.php no longer runs the web
-    // services inline, so the first byte ships immediately and the page never
-    // blocks on per-course / per-group aggregation (previously thousands of
-    // ledger queries ran before the page was sent). Course rows load first —
-    // the hero / global score is derived from them client-side via
-    // aggregate() — with the grade-now list alongside; insights lazy-load in
-    // the effect below. Each fetch re-applies the same server-side
-    // dashboard_scope gate, so this does not widen visibility.
+    // Initial async load. teacher_dashboard.php ships no data, so the page
+    // never blocks on per-course aggregation. Course rows (from which
+    // aggregate() derives the hero score) and the grade-now list are fetched
+    // here; insights lazy-load in the effect below. Each WS re-applies the
+    // server-side dashboard_scope gate, so this does not widen visibility.
     useEffect(() => {
         let cancelled = false;
         getDashboard({})
@@ -424,7 +326,7 @@ export default function DashboardView({initial}) {
 
     // Build the hero props once so both the full and slim variants get the same shape.
     const heroprops = {
-        score: totals.avgscore,
+        score: totals.score,
         band: heroBand,
         bandlabel: heroBandLabel,
         effectivehours: totals.effective,
@@ -472,11 +374,11 @@ export default function DashboardView({initial}) {
                         <span class="bft-dashboard-wave"><${WaveMark} size=${26} /></span>
                     </h1>
                     <div class="bft-dashboard-subline">
-                        <strong>${totals.pending}</strong>
+                        <strong>${formatCount(totals.pending)}</strong>
                         <span>${i18n.dashboard_subline_waiting || 'waiting'}</span>
                         <span class="bft-dashboard-dot">·</span>
                         <strong class=${totals.critical > 0 ? 'bft-overall-score-tone-critical' : ''}>
-                            ${totals.critical}
+                            ${formatCount(totals.critical)}
                         </strong>
                         <span>${i18n.dashboard_subline_critical || 'critical'}</span>
                         <span class="bft-dashboard-dot">·</span>
@@ -487,7 +389,7 @@ export default function DashboardView({initial}) {
                         ${events.length > 0 && (() => {
                             // Latest named optional event from the past 30
                             // days site-scope. paused_aggregator emits in
-                            // date order, so .pop() is the most recent.
+                            // date order, so the last entry is the most recent.
                             const latest = events[events.length - 1];
                             const head = fmtEventYmd(latest.date) + ' '
                                 + fmtEventMin(latest.starttime) + '-'
@@ -526,6 +428,10 @@ export default function DashboardView({initial}) {
                 collapsed=${collapsed}
                 onToggle=${handleToggleCollapsed}
                 heroprops=${heroprops} />
+
+            ${config.show_scheduled_pauses !== false && html`
+                <${ScheduledPauses} pauses=${upcoming} i18n=${i18n} />
+            `}
 
             ${!collapsed
                 && insights
@@ -598,6 +504,10 @@ export default function DashboardView({initial}) {
                 </div>
                 ${coursesbody}
             </section>
+
+            ${config.school_comparison === true && html`
+                <${SchoolComparison} i18n=${i18n} config=${config} />
+            `}
         </div>
     `;
 }

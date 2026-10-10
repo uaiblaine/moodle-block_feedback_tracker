@@ -35,34 +35,47 @@ use core_privacy\local\request\userlist;
 use core_privacy\local\request\writer;
 
 /**
- * Declares which tables the plugin stores personal data in and implements
- * export / delete on behalf of GDPR-driven requests.
+ * Declares the plugin's personal data and exports / deletes it.
  *
- * The one user-bearing table is:
- *  - {block_feedback_tracker_sub} — the per-submission ledger (userid).
- *
- * Calendar config tables (cday / chours / cpause) carry only `usermodified`
- * (who edited a row), declared as such.
- *
- * Rollup / trend / site / queue / bfcursor tables hold aggregates or
- * operational state and are not declared.
- *
- * Since v2.0.0 there is no longer a per-submission pause audit table —
- * pause windows are recomputed on demand from the calendar engine
- * (get_pause_timeline). They're derived data, not stored personal data,
- * so they aren't declared here.
- *
- * User preferences (v1.0.8+):
- *  - block_feedback_tracker_dashboard_collapsed — declared via
- *    user_preference_provider. Deletion is handled by Moodle's core
- *    privacy machinery (no plugin-side delete path needed for
- *    preferences declared this way).
+ *  - {block_feedback_tracker_sub}, the per-submission ledger, holds the
+ *    student (userid); it is exported and deleted per course context. It also
+ *    names the teacher currently allocated to mark each submission
+ *    (allocmarkerid): that teacher's allocations are exported as theirs, and
+ *    erasing them clears the id while the student's row stays.
+ *  - The calendar tables (cday / chours / cpause) record who last edited a
+ *    row (`usermodified`) and the audit log who triggered a recompute
+ *    (`triggeredby`). They live at system context; erasure clears the
+ *    attribution and keeps the rows.
+ *  - The rollup / trend / site / queue / bfcursor tables hold aggregates or
+ *    operational state with no user link and are not declared.
+ *  - Pause windows are derived from the calendar on demand
+ *    (get_pause_timeline), not stored, so they are not declared either.
+ *  - The two collapse-state preferences are declared through
+ *    user_preference_provider; core_user's provider deletes a user's
+ *    preferences, so there is no plugin-side delete path for them.
  */
 class provider implements
     \core_privacy\local\metadata\provider,
     \core_privacy\local\request\core_userlist_provider,
     \core_privacy\local\request\plugin\provider,
     \core_privacy\local\request\user_preference_provider {
+    /**
+     * Site-configuration tables that record which administrator last touched
+     * a row, and the column holding that id.
+     *
+     * These live at system context, which is why get_contexts_for_userid()
+     * offers it — and therefore why the export and delete paths must handle
+     * it too.
+     *
+     * @var array Table name => attribution column.
+     */
+    private const SYSTEM_ATTRIBUTION = [
+        'block_feedback_tracker_cday' => 'usermodified',
+        'block_feedback_tracker_chours' => 'usermodified',
+        'block_feedback_tracker_cpause' => 'usermodified',
+        'block_feedback_tracker_log' => 'triggeredby',
+    ];
+
     /**
      * Describe what the plugin stores.
      *
@@ -73,15 +86,30 @@ class provider implements
         $collection->add_database_table(
             'block_feedback_tracker_sub',
             [
-                'courseid'       => 'privacy:metadata:sub:courseid',
-                'groupid'        => 'privacy:metadata:sub:groupid',
-                'cmid'           => 'privacy:metadata:sub:cmid',
-                'userid'         => 'privacy:metadata:sub:userid',
-                'timesubmitted'  => 'privacy:metadata:sub:timesubmitted',
-                'timegraded'     => 'privacy:metadata:sub:timegraded',
-                'waitinghours'   => 'privacy:metadata:sub:waitinghours',
-                'effectivehours' => 'privacy:metadata:sub:effectivehours',
-                'slabucket'      => 'privacy:metadata:sub:slabucket',
+                'courseid'         => 'privacy:metadata:sub:courseid',
+                'groupid'          => 'privacy:metadata:sub:groupid',
+                'cmid'             => 'privacy:metadata:sub:cmid',
+                'userid'           => 'privacy:metadata:sub:userid',
+                'attemptnumber'    => 'privacy:metadata:sub:attemptnumber',
+                'cycle'            => 'privacy:metadata:sub:cycle',
+                'submissionstatus' => 'privacy:metadata:sub:submissionstatus',
+                'timesubmitted'    => 'privacy:metadata:sub:timesubmitted',
+                'timegraded'       => 'privacy:metadata:sub:timegraded',
+                'timemarked'       => 'privacy:metadata:sub:timemarked',
+                'timereleased'     => 'privacy:metadata:sub:timereleased',
+                'timeclosed'       => 'privacy:metadata:sub:timeclosed',
+                'closedsource'     => 'privacy:metadata:sub:closedsource',
+                'timedismissed'    => 'privacy:metadata:sub:timedismissed',
+                'gradestate'       => 'privacy:metadata:sub:gradestate',
+                'timeallocated'    => 'privacy:metadata:sub:timeallocated',
+                'allocmarkerid'    => 'privacy:metadata:sub:allocmarkerid',
+                'timeallocmarker'  => 'privacy:metadata:sub:timeallocmarker',
+                'queuehours'       => 'privacy:metadata:sub:queuehours',
+                'allochours'       => 'privacy:metadata:sub:allochours',
+                'waitinghours'     => 'privacy:metadata:sub:waitinghours',
+                'effectivehours'   => 'privacy:metadata:sub:effectivehours',
+                'effectivedays'    => 'privacy:metadata:sub:effectivedays',
+                'slabucket'        => 'privacy:metadata:sub:slabucket',
             ],
             'privacy:metadata:sub'
         );
@@ -107,14 +135,12 @@ class provider implements
             'privacy:metadata:log'
         );
 
-        // V1.0.8 — dashboard hero+insights collapse state. Declared via
-        // the user-preference channel so subject-access exports include
-        // the value and core can auto-delete it on user deletion.
+        // Collapse state of the dashboard's hero and insights panels.
         $collection->add_user_preference(
             'block_feedback_tracker_dashboard_collapsed',
             'privacy:metadata:preference:dashboard_collapsed'
         );
-        // V1.0.27 — report page hero+heatmap collapse state.
+        // Collapse state of the pending report's hero and academic-days strip.
         $collection->add_user_preference(
             'block_feedback_tracker_report_collapsed',
             'privacy:metadata:preference:report_collapsed'
@@ -161,9 +187,9 @@ class provider implements
     }
 
     /**
-     * Course contexts where the user has ledger rows; system context when
-     * they appear as `usermodified` on any calendar/pause table or
-     * `triggeredby` on the audit log.
+     * Course contexts where the user has ledger rows or is the allocated
+     * marker of one; system context when they appear as `usermodified` on any
+     * calendar/pause table or `triggeredby` on the audit log.
      *
      * @param int $userid
      * @return contextlist
@@ -180,10 +206,20 @@ class provider implements
             ['userid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
         );
 
-        // The system-context branch must return ctx.id from {context} so the
-        // outer contextlist query sees a properly-typed bigint column. The
-        // previous SELECT :systemctxid pattern made PostgreSQL infer text and
-        // fail the bigint comparison in contextlist::get_contexts().
+        // A separate query rather than an OR, so each column is matched on its own.
+        $sql = "SELECT ctx.id
+                  FROM {block_feedback_tracker_sub} s
+                  JOIN {context} ctx ON ctx.contextlevel = :coursectxlevel AND ctx.instanceid = s.courseid
+                 WHERE s.allocmarkerid = :markerid";
+        $contextlist->add_from_sql(
+            $sql,
+            ['markerid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
+        );
+
+        // Select ctx.id from {context} rather than a bare :placeholder:
+        // PostgreSQL types a selected placeholder as text, and the join that
+        // contextlist::add_from_sql() wraps around this query compares it with
+        // a bigint.
         $sql = "SELECT ctx.id
                   FROM {context} ctx
                  WHERE ctx.id = :sysctxid
@@ -202,8 +238,8 @@ class provider implements
     }
 
     /**
-     * Users with ledger rows in a course context, or who modified any
-     * calendar / audit row at system context.
+     * Users with ledger rows in a course context or allocated to mark one, or
+     * who modified any calendar / audit row at system context.
      *
      * @param userlist $userlist
      * @return void
@@ -215,6 +251,11 @@ class provider implements
             $userlist->add_from_sql(
                 'userid',
                 'SELECT userid FROM {block_feedback_tracker_sub} WHERE courseid = :courseid',
+                ['courseid' => $context->instanceid]
+            );
+            $userlist->add_from_sql(
+                'allocmarkerid',
+                'SELECT allocmarkerid FROM {block_feedback_tracker_sub} WHERE courseid = :courseid AND allocmarkerid > 0',
                 ['courseid' => $context->instanceid]
             );
             return;
@@ -245,7 +286,9 @@ class provider implements
     }
 
     /**
-     * Export the user's submission ledger + pause audit per course context.
+     * Export the user's ledger rows and the submissions they are allocated to
+     * mark, per course context, and the site-configuration rows they are
+     * attributed on at system context.
      *
      * @param approved_contextlist $contextlist
      * @return void
@@ -255,9 +298,15 @@ class provider implements
         $userid = $contextlist->get_user()->id;
 
         foreach ($contextlist->get_contexts() as $context) {
+            if ($context instanceof \context_system) {
+                self::export_system_attribution($context, (int) $userid);
+                continue;
+            }
             if (!($context instanceof \context_course)) {
                 continue;
             }
+
+            self::export_marker_allocations($context, (int) $userid);
 
             $rows = $DB->get_records('block_feedback_tracker_sub', [
                 'courseid' => $context->instanceid,
@@ -267,21 +316,32 @@ class provider implements
                 continue;
             }
 
-            // V2.0.0+: pause windows are no longer stored — they're
-            // derived from the calendar on demand. Per GDPR convention
-            // we only export *stored* personal data, so pause windows
-            // are intentionally omitted from the export. Users wanting
-            // the pause breakdown can hit get_pause_timeline.
+            // Pause windows are not exported: they are derived from the
+            // calendar on demand (get_pause_timeline), not stored.
             $export = ['submissions' => []];
             foreach ($rows as $r) {
                 $export['submissions'][] = [
                     'cmid'           => (int) $r->cmid,
                     'groupid'        => (int) $r->groupid,
                     'attemptnumber'  => (int) $r->attemptnumber,
+                    'cycle'          => (int) $r->cycle,
+                    'submissionstatus' => (string) $r->submissionstatus,
                     'timesubmitted'  => transform::datetime((int) $r->timesubmitted),
                     'timegraded'     => $r->timegraded !== null ? transform::datetime((int) $r->timegraded) : null,
+                    'timemarked'     => $r->timemarked !== null ? transform::datetime((int) $r->timemarked) : null,
+                    'timereleased'   => $r->timereleased !== null ? transform::datetime((int) $r->timereleased) : null,
+                    'timeclosed'     => $r->timeclosed !== null ? transform::datetime((int) $r->timeclosed) : null,
+                    'closedsource'   => $r->closedsource !== null ? (string) $r->closedsource : null,
+                    'timedismissed'  => $r->timedismissed !== null ? transform::datetime((int) $r->timedismissed) : null,
+                    'gradestate'     => $r->gradestate !== null ? (string) $r->gradestate : null,
+                    'timeallocated'  => $r->timeallocated !== null ? transform::datetime((int) $r->timeallocated) : null,
+                    'allocmarkerid'  => (int) $r->allocmarkerid,
+                    'timeallocmarker' => $r->timeallocmarker !== null ? transform::datetime((int) $r->timeallocmarker) : null,
+                    'queuehours'     => $r->queuehours !== null ? (float) $r->queuehours : null,
+                    'allochours'     => $r->allochours !== null ? (float) $r->allochours : null,
                     'waitinghours'   => $r->waitinghours !== null ? (float) $r->waitinghours : null,
                     'effectivehours' => $r->effectivehours !== null ? (float) $r->effectivehours : null,
+                    'effectivedays'  => $r->effectivedays !== null ? (float) $r->effectivedays : null,
                     'slabucket'      => (string) $r->slabucket,
                 ];
             }
@@ -295,12 +355,17 @@ class provider implements
     }
 
     /**
-     * Delete all ledger data for one course context.
+     * Delete every user's ledger rows in a course context, or clear every
+     * attribution at system context.
      *
      * @param \context $context
      * @return void
      */
     public static function delete_data_for_all_users_in_context(\context $context): void {
+        if ($context instanceof \context_system) {
+            self::clear_system_attribution(null);
+            return;
+        }
         if (!($context instanceof \context_course)) {
             return;
         }
@@ -308,7 +373,8 @@ class provider implements
     }
 
     /**
-     * Delete the contextlist user's ledger data.
+     * Delete the user's ledger rows in the approved course contexts, and clear
+     * their attribution at system context.
      *
      * @param approved_contextlist $contextlist
      * @return void
@@ -316,6 +382,10 @@ class provider implements
     public static function delete_data_for_user(approved_contextlist $contextlist): void {
         $userid = (int) $contextlist->get_user()->id;
         foreach ($contextlist->get_contexts() as $context) {
+            if ($context instanceof \context_system) {
+                self::clear_system_attribution([$userid]);
+                continue;
+            }
             if ($context instanceof \context_course) {
                 self::delete_course_data((int) $context->instanceid, $userid);
             }
@@ -330,11 +400,15 @@ class provider implements
      */
     public static function delete_data_for_users(approved_userlist $userlist): void {
         $context = $userlist->get_context();
-        if (!($context instanceof \context_course)) {
-            return;
-        }
         $userids = $userlist->get_userids();
         if (empty($userids)) {
+            return;
+        }
+        if ($context instanceof \context_system) {
+            self::clear_system_attribution(array_map('intval', $userids));
+            return;
+        }
+        if (!($context instanceof \context_course)) {
             return;
         }
         foreach ($userids as $userid) {
@@ -343,9 +417,122 @@ class provider implements
     }
 
     /**
+     * Export the submissions one user is currently allocated to mark in a
+     * course.
+     *
+     * The allocation is the marker's data: which activity and attempt, since
+     * when, and how long they took once allocated. The student's identity is
+     * the student's data and is left out.
+     *
+     * @param \context_course $context
+     * @param int $userid The marker.
+     * @return void
+     */
+    private static function export_marker_allocations(\context_course $context, int $userid): void {
+        global $DB;
+
+        $rows = $DB->get_records(
+            'block_feedback_tracker_sub',
+            ['courseid' => $context->instanceid, 'allocmarkerid' => $userid],
+            'cmid ASC, id ASC',
+            'id, cmid, attemptnumber, cycle, timeallocmarker, allochours'
+        );
+        if (empty($rows)) {
+            return;
+        }
+
+        $allocations = [];
+        foreach ($rows as $r) {
+            $allocations[] = [
+                'cmid' => (int) $r->cmid,
+                'attemptnumber' => (int) $r->attemptnumber,
+                'cycle' => (int) $r->cycle,
+                'timeallocmarker' => $r->timeallocmarker !== null ? transform::datetime((int) $r->timeallocmarker) : null,
+                'allochours' => $r->allochours !== null ? (float) $r->allochours : null,
+            ];
+        }
+
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:allocations', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['allocations' => $allocations]);
+    }
+
+    /**
+     * Export the site-configuration rows one user is attributed on.
+     *
+     * These rows are site configuration rather than the user's own content,
+     * so what is exported is the attribution: which rows they last touched,
+     * and when.
+     *
+     * @param \context $context The system context.
+     * @param int $userid
+     * @return void
+     */
+    private static function export_system_attribution(\context $context, int $userid): void {
+        global $DB;
+
+        $entries = [];
+        foreach (self::SYSTEM_ATTRIBUTION as $table => $column) {
+            $rows = $DB->get_records($table, [$column => $userid]);
+            foreach ($rows as $r) {
+                $entry = ['table' => $table, 'id' => (int) $r->id];
+                if (isset($r->timemodified)) {
+                    $entry['timemodified'] = transform::datetime((int) $r->timemodified);
+                } else if (isset($r->timestarted)) {
+                    $entry['timestarted'] = transform::datetime((int) $r->timestarted);
+                }
+                $entries[] = $entry;
+            }
+        }
+
+        if (empty($entries)) {
+            return;
+        }
+
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:siteconfig', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['records' => $entries]);
+    }
+
+    /**
+     * Drop the user link from the site-configuration tables.
+     *
+     * The rows themselves are site configuration and must survive — deleting
+     * them would silently rewrite the academic calendar for everyone. Only the
+     * attribution is removed, which is what the metadata declares and all that
+     * an erasure request covers here.
+     *
+     * @param int[]|null $userids Users to clear, or null for every user.
+     * @return void
+     */
+    private static function clear_system_attribution(?array $userids): void {
+        global $DB;
+
+        foreach (self::SYSTEM_ATTRIBUTION as $table => $column) {
+            if ($userids === null) {
+                $DB->set_field_select($table, $column, null, "$column IS NOT NULL");
+                continue;
+            }
+            if (empty($userids)) {
+                continue;
+            }
+            [$insql, $inparams] = $DB->get_in_or_equal($userids, SQL_PARAMS_NAMED, 'u');
+            $DB->set_field_select($table, $column, null, "$column $insql", $inparams);
+        }
+    }
+
+    /**
      * Drop ledger rows for (courseid, optional userid) and re-enqueue
      * the affected (course, group) tuples so the rollup re-runs without the
      * deleted contributions.
+     *
+     * For one user, the submissions they are only allocated to mark belong to
+     * their students and stay: the marker's id is cleared from them instead.
+     * No rollup reads that id, so nothing is re-enqueued for it.
      *
      * @param int $courseid
      * @param int|null $userid Restrict to one user, or null to drop the whole course.
@@ -356,6 +543,13 @@ class provider implements
         $params = ['courseid' => $courseid];
         $where = 'courseid = :courseid';
         if ($userid !== null) {
+            $DB->set_field_select(
+                'block_feedback_tracker_sub',
+                'allocmarkerid',
+                0,
+                'courseid = :courseid AND allocmarkerid = :markerid',
+                ['courseid' => $courseid, 'markerid' => $userid]
+            );
             $params['userid'] = $userid;
             $where .= ' AND userid = :userid';
         }

@@ -27,17 +27,17 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\payload;
 
 use block_feedback_tracker\local\calendar\calendar;
-use block_feedback_tracker\local\calendar\paused_aggregator;
+use block_feedback_tracker\local\calendar\upcoming_pauses;
 use block_feedback_tracker\local\score\peer_stats;
 use block_feedback_tracker\local\sla\activity_schedule;
 use block_feedback_tracker\local\sla\bucket;
 
 /**
  * Builds the responsiveness payload (groups array + lastsynced) without
- * touching $PAGE / $OUTPUT. Safe to call from inside `get_content()` on a
- * block (which runs after page output has started) — `external_api::
- * validate_context()` calls `$PAGE->set_context()` which fails at that
- * point, so the WS layer cannot be used directly there.
+ * touching $PAGE / $OUTPUT, so a block's `get_content()` can call it while
+ * the page is rendering. The web service cannot be used there:
+ * `external_api::validate_context()` resets $PAGE's theme, course and context
+ * and re-runs require_login().
  *
  * Capability checks remain the caller's responsibility.
  */
@@ -52,8 +52,8 @@ class responsiveness_payload {
      * carries total / offset / limit / hasmore so the caller can fetch the
      * next page. $sort orders the whole visible group list server-side, so the
      * first page reflects the true top-priority groups (not just whatever is
-     * loaded). $limit = 0 keeps the legacy behaviour: every visible group in
-     * one call, hasmore false. overall_score is the pending-weighted mean over
+     * loaded). $limit = 0 returns every visible group in one call, hasmore
+     * false. overall_score is the pending-weighted mean over
      * the entire visible course, independent of pagination.
      *
      * @param int $courseid
@@ -79,7 +79,9 @@ class responsiveness_payload {
         $cache = \cache::make('block_feedback_tracker', 'responsiveness_payload');
         // The banding ruler (hours vs business days) swaps the pending-band
         // counts, so it is part of the key — flipping the display unit takes
-        // effect on the next fetch instead of waiting out the TTL.
+        // effect on the next fetch instead of waiting out the TTL. So is the
+        // language: the payload carries localised strings and names filtered
+        // in the current language, which a language switch must not reuse.
         $key = calendar::current_version() . '_' . $userid . '_' . $courseid
             . (bucket::use_day_thresholds() ? '_d' : '');
         if ($limit > 0) {
@@ -88,6 +90,7 @@ class responsiveness_payload {
         if ($sort !== 'default') {
             $key .= '_' . $sort;
         }
+        $key .= '_' . current_language();
         if (!$force) {
             $cached = $cache->get($key);
             if (
@@ -141,10 +144,8 @@ class responsiveness_payload {
 
         $total = $DB->count_records_select('block_feedback_tracker_group', $where, $params);
 
-        // Whole-course overall score (pending-weighted mean of per-group
-        // scores, mirroring the JS overallScore()) so the block's banner
-        // stays accurate no matter how many pages are loaded. Single indexed
-        // aggregate over the visible rows; the result is MUC-cached per page.
+        // Computed over every visible group, not just this page, so the
+        // block's banner does not change as further pages load.
         $overallscore = self::overall_score($where, $params);
 
         $rollups = $DB->get_records_select(
@@ -157,10 +158,12 @@ class responsiveness_payload {
             $limit
         );
 
-        // Resolve display names for ONLY this page's real groups (gid > 0).
-        // Naming the whole course on every page is O(total) and was a major
-        // cost on courses with thousands of groups; page-scoping keeps it
-        // O(batch).
+        // Resolve display names for this page's real groups only (gid > 0):
+        // naming every group of the course would cost O(total groups) per page.
+        // Names are filtered but not escaped: the block's text nodes and the
+        // card's double stashes escape for themselves, and a PARAM_TEXT return
+        // field passes an entity through unchanged.
+        $coursecontext = \context_course::instance($courseid);
         $pagegroupids = [];
         foreach ($rollups as $r) {
             $gid = (int) $r->groupid;
@@ -172,7 +175,11 @@ class responsiveness_payload {
         if (!empty($pagegroupids)) {
             $namerows = $DB->get_records_list('groups', 'id', $pagegroupids, '', 'id, name');
             foreach ($namerows as $nr) {
-                $groupnames[(int) $nr->id] = (string) $nr->name;
+                $groupnames[(int) $nr->id] = format_string(
+                    (string) $nr->name,
+                    true,
+                    ['context' => $coursecontext, 'escape' => false]
+                );
             }
         }
         // Composed display titles + subtitles, driven by the
@@ -184,12 +191,10 @@ class responsiveness_payload {
         // block's narrow sparkline; the recent-stats window stays 30 days.
         $trendwindow = self::trend_window(14);
 
-        // Course-level paused aggregate for the last 30 days. One call
-        // per render — the design's PausedNote + report-page callout
-        // share the same numbers.
-        $now = time();
-        $pausedwindowstart = $now - 30 * 86400;
-        $pausedaggregate = paused_aggregator::for_window($courseid, $pausedwindowstart, $now);
+        // Upcoming-pause notice: calendar days plus site and course pauses
+        // (group pauses are not included), so it is attached identically to
+        // every group payload and the block renders it once above the cards.
+        $upcoming = upcoming_pauses::for_display($courseid, 0, time());
 
         // Course-level assign catalog (global dates, group mode, manage
         // capability, group overrides), built once and resolved per group
@@ -206,12 +211,12 @@ class responsiveness_payload {
                 $subtitle = null;
             } else {
                 $resolved = $grouptitles[$gid]
-                    ?? ['title' => $groupnames[$gid] ?? sprintf('Group #%d', $gid), 'subtitle' => null];
+                    ?? ['title' => $groupnames[$gid] ?? self::fallback_group_name($gid), 'subtitle' => null];
                 $name = $resolved['title'];
                 $subtitle = $resolved['subtitle'];
             }
             $series = self::trend_series_for_group($courseid, $gid, $trendwindow);
-            $peer = peer_stats::for_exclusion($gid);
+            $peer = peer_stats::for_exclusion($gid, $courseid);
             $activities = $gid > 0 ? activity_schedule::for_group($activitycatalog, $gid) : [];
             $payloadgroups[] = self::group_payload(
                 $gid,
@@ -219,10 +224,10 @@ class responsiveness_payload {
                 $course,
                 $r,
                 $series,
-                $pausedaggregate,
                 $peer,
                 $subtitle,
-                $activities
+                $activities,
+                $upcoming
             );
         }
 
@@ -302,7 +307,8 @@ class responsiveness_payload {
      * composed names as the full payload without rebuilding it.
      *
      * @param array $groupnames Real group names keyed by group id.
-     * @return array<int, array{title: string, subtitle: string|null}>
+     * @return array<int, array{title: string, subtitle: string|null}> Plain text:
+     *         custom-field values converted, group names as passed in.
      */
     public static function resolve_group_titles(array $groupnames): array {
         $titlefields = self::parse_shortnames(
@@ -347,6 +353,18 @@ class responsiveness_payload {
     }
 
     /**
+     * Display name for a rollup row whose group no longer exists in {groups}.
+     *
+     * Public so get_report_scopes names such a row the same way as the block.
+     *
+     * @param int $groupid The rollup row's group id.
+     * @return string Localised plain text, e.g. "Group #42".
+     */
+    public static function fallback_group_name(int $groupid): string {
+        return get_string('card_groupfallback', 'block_feedback_tracker', $groupid);
+    }
+
+    /**
      * Split a comma-separated shortname list into trimmed, non-empty parts.
      *
      * @param string $csv
@@ -358,7 +376,8 @@ class responsiveness_payload {
     }
 
     /**
-     * Batch-load group custom-field values, keyed by group id then shortname.
+     * Batch-load group custom-field values, keyed by group id then shortname,
+     * as plain text ({@see self::plain_field_value()}).
      * Returns only fields that actually carry a value. Degrades to an empty
      * map (callers fall back to the real group name) on any error.
      *
@@ -391,7 +410,7 @@ class responsiveness_payload {
                     if ($datacontroller === null || !isset($idtoshort[$fid])) {
                         continue;
                     }
-                    $val = trim((string) $datacontroller->export_value());
+                    $val = self::plain_field_value($datacontroller);
                     if ($val !== '') {
                         $out[(int) $gid][$idtoshort[$fid]] = $val;
                     }
@@ -401,6 +420,33 @@ class responsiveness_payload {
             debugging('block_feedback_tracker: group custom-field load failed: ' . $e->getMessage());
         }
         return $out;
+    }
+
+    /**
+     * One group custom field's value as plain single-line text.
+     *
+     * export_value() returns display HTML: text escaped by format_string()
+     * (text, select, number), an <a> around a text field that has a link
+     * configured, and a format_text() block for a textarea. The composed
+     * titles reach PARAM_TEXT web service fields, whose clean_returnvalue()
+     * throws on any tag, and JS text nodes, which would show entities
+     * literally. So the HTML goes through html_to_text(), core's conversion
+     * to plain text (the one content_to_text() uses), without the link list.
+     * Its plain-text conventions apply to a rich textarea: bold is upper-cased
+     * and emphasis wrapped in underscores.
+     *
+     * @param \core_customfield\data_controller $data One field's data for one group.
+     * @return string Plain text on one line; '' when the field has no value.
+     */
+    private static function plain_field_value(\core_customfield\data_controller $data): string {
+        $value = $data->export_value();
+        if ($value === null || $value === '') {
+            return '';
+        }
+        $text = html_to_text((string) $value, 0, false);
+        // A stored entity for an angle bracket decodes to a bare one, which PARAM_TEXT would read as a tag.
+        $text = strip_tags($text);
+        return trim((string) preg_replace('/\s+/u', ' ', $text));
     }
 
     /**
@@ -423,20 +469,18 @@ class responsiveness_payload {
     /**
      * Build one group card payload from a rollup row.
      *
-     * Optional Phase 3C parameters ($pausedaggregate, $peer) are nullable
-     * so unit tests that build a payload from a bare rollup row still work
-     * without wiring the aggregator + peer_stats. for_course() always
-     * passes both.
+     * The optional arguments default to empty aggregates; for_course() always
+     * passes them.
      *
      * @param int $groupid Group ID.
-     * @param string $groupname Group name.
-     * @param \stdClass $course Course object.
+     * @param string $groupname Display title as plain text (composed or real group name).
+     * @param \stdClass $course Course object; its full name is sent as plain text.
      * @param \stdClass $row Rollup row.
-     * @param array $trendseries Last-30-day median values.
-     * @param array|null $pausedaggregate Output of paused_aggregator::for_window().
+     * @param array $trendseries Daily median effective hours over the last 14 days, as {day, value} pairs.
      * @param array|null $peer Output of peer_stats::for_exclusion().
      * @param string|null $groupsubtitle Optional smaller line shown under the title.
      * @param array $activities Per-group assign schedule rows from activity_schedule::for_group().
+     * @param array $upcoming Visible scheduled pauses from upcoming_pauses::for_display().
      * @return array
      */
     public static function group_payload(
@@ -445,12 +489,11 @@ class responsiveness_payload {
         \stdClass $course,
         \stdClass $row,
         array $trendseries = [],
-        ?array $pausedaggregate = null,
         ?array $peer = null,
         ?string $groupsubtitle = null,
-        array $activities = []
+        array $activities = [],
+        array $upcoming = []
     ): array {
-        $pausedaggregate = $pausedaggregate ?? ['total_days' => 0, 'weekend' => 0, 'holiday' => 0, 'recess' => 0, 'events' => []];
         $peer = $peer ?? ['department_score' => null, 'department_hours' => null,
                           'top10_score' => null, 'top10_hours' => null];
         // Pending-band counts follow the banding ruler: business-days mode
@@ -467,7 +510,11 @@ class responsiveness_payload {
             'groupid'              => $groupid,
             'groupname'            => $groupname,
             'groupsubtitle'        => $groupsubtitle,
-            'coursename'           => $course->fullname,
+            'coursename'           => format_string(
+                (string) $course->fullname,
+                true,
+                ['context' => \context_course::instance((int) $course->id), 'escape' => false]
+            ),
             'pending'              => (int) $row->pending,
             'critical'             => $criticalout,
             'overgoal'             => $overgoalout,
@@ -481,11 +528,6 @@ class responsiveness_payload {
             'median_raw_h'         => $row->median_raw_h !== null ? (float) $row->median_raw_h : null,
             'p90_raw_h'            => $row->p90_raw_h !== null ? (float) $row->p90_raw_h : null,
             'max_raw_h'            => $row->max_raw_h !== null ? (float) $row->max_raw_h : null,
-            // Phase 3C — design's "Perceived" KPI; same data source as
-            // median_raw_h, renamed for the user-facing language layer.
-            // We keep median_raw_h around for back-compat with any caller
-            // already binding the old key.
-            'perceived_median_hours' => $row->median_raw_h !== null ? (float) $row->median_raw_h : null,
             // Headline "current" medians — graded ∪ currently-pending — so the
             // block's Effective / Perceived KPI tiles reflect the live backlog
             // instead of reading ~0 when little has been graded, matching the
@@ -498,6 +540,17 @@ class responsiveness_payload {
                 ? (float) $row->cur_median_eff_days : null,
             'cur_median_perc_days' => isset($row->cur_median_perc_days) && $row->cur_median_perc_days !== null
                 ? (float) $row->cur_median_perc_days : null,
+            /* Coordination queue vs marker turnaround. Null-tolerant like the
+             * other materialised columns: the rollup is rebuilt out of band,
+             * so every one of these reads null until a recompute runs. */
+            'unallocated'          => isset($row->unallocated) && $row->unallocated !== null
+                ? (int) $row->unallocated : null,
+            'median_queue_h'       => isset($row->median_queue_h) && $row->median_queue_h !== null
+                ? (float) $row->median_queue_h : null,
+            'median_alloc_h'       => isset($row->median_alloc_h) && $row->median_alloc_h !== null
+                ? (float) $row->median_alloc_h : null,
+            'alloc_coverage_pct'   => isset($row->alloc_coverage_pct) && $row->alloc_coverage_pct !== null
+                ? (float) $row->alloc_coverage_pct : null,
             'responsiveness_score' => $row->responsiveness_score !== null ? (float) $row->responsiveness_score : null,
             'score_band'           => $row->score_band !== null ? (string) $row->score_band : null,
             'comp_compliance'      => isset($row->comp_compliance) && $row->comp_compliance !== null
@@ -512,30 +565,17 @@ class responsiveness_payload {
                 ? (float) $row->comp_trend : null,
             'trend_pct_30d'        => $row->trend_pct_30d !== null ? (float) $row->trend_pct_30d : null,
             'trend_series'         => $trendseries,
-            'nextpause_ts'         => $row->nextpause_ts !== null ? (int) $row->nextpause_ts : null,
-            'nextpause_reason'     => $row->nextpause_reason !== null ? (string) $row->nextpause_reason : null,
-            'nextpause_note'       => $row->nextpause_note !== null ? (string) $row->nextpause_note : null,
-            'lastpause_endts'      => $row->lastpause_endts !== null ? (int) $row->lastpause_endts : null,
-            'lastpause_reason'     => $row->lastpause_reason !== null ? (string) $row->lastpause_reason : null,
-            // Phase 3C — paused-window transparency aggregate (course scope).
-            'paused_days_30d'      => (int) $pausedaggregate['total_days'],
-            'paused_breakdown_30d' => [
-                'weekend' => (int) $pausedaggregate['weekend'],
-                'holiday' => (int) $pausedaggregate['holiday'],
-                'recess'  => (int) $pausedaggregate['recess'],
-            ],
-            /* v1.0.9 — sub-day optional events sidecar list. Each entry
-             * is {date: YYYYMMDD, starttime: min, endtime: min, label: str}.
-             * Label is already format_string()-sanitised by paused_aggregator. */
-            'paused_events_30d' => is_array($pausedaggregate['events'] ?? null)
-                ? array_map(static fn ($e) => [
-                    'date'      => (int) $e['date'],
-                    'starttime' => (int) $e['starttime'],
-                    'endtime'   => (int) $e['endtime'],
-                    'label'     => (string) $e['label'],
-                ], $pausedaggregate['events'])
-                : [],
-            // Phase 3C — peer comparison (excluding this group).
+            /* Upcoming-pause notice: up to 3 pauses visible now, with the
+             * localised when / typelabel strings; label is plain text, not
+             * HTML-escaped (see upcoming_pauses::clean_note()). */
+            'upcoming_pauses' => array_map(static fn ($u) => [
+                'start' => (int) $u['start'],
+                'type' => (string) $u['type'],
+                'label' => (string) $u['label'],
+                'when' => (string) $u['when'],
+                'typelabel' => (string) $u['typelabel'],
+            ], $upcoming),
+            // Peer comparison (excluding this group).
             'peer_department_score' => $peer['department_score'] !== null ? (float) $peer['department_score'] : null,
             'peer_department_hours' => $peer['department_hours'] !== null ? (float) $peer['department_hours'] : null,
             'peer_top10_score'      => $peer['top10_score'] !== null ? (float) $peer['top10_score'] : null,

@@ -27,21 +27,23 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\audit;
 
 /**
- * Wraps {block_feedback_tracker_log}. Used to record bulk recomputes, large
- * calendar edits, and admin resets so they can be explained later.
+ * Wraps {block_feedback_tracker_log}, the audit trail of bulk recomputes,
+ * calendar edits ({@see \block_feedback_tracker\local\calendar\observer}),
+ * queue drains, reconciliation ticks, block removals and data resets, so they
+ * can be explained later.
  *
  * Rows are pruned daily after 90 days by the `prune_audit_log` task.
  */
 class recompute_log {
-    /** Reason: admin reset. */
+    /** Reason: admin data reset, or a settings save that re-queued every rollup. */
     public const REASON_MANUAL_RESET = 'manual_reset';
-    /** Reason: a calendar day was saved. */
+    /** Reason: a calendar day was saved or removed. */
     public const REASON_CALENDAR_SAVE = 'calendar_save';
-    /** Reason: business hours saved. */
+    /** Reason: the business hours of a weekday were saved. */
     public const REASON_BUSINESS_HOURS_SAVE = 'business_hours_save';
-    /** Reason: a pause window was saved. */
+    /** Reason: a pause window was saved or deleted. */
     public const REASON_PAUSE_SAVE = 'pause_save';
-    /** Reason: a CSV bulk import was processed. */
+    /** Reason: a CSV bulk import saved at least one calendar day. */
     public const REASON_BULK_IMPORT = 'bulk_import';
     /** Reason: daily pending recompute pass. */
     public const REASON_DAILY_PENDING = 'daily_pending';
@@ -49,6 +51,35 @@ class recompute_log {
     public const REASON_DRAIN = 'drain';
     /** Reason: deferred per-row effectivedays backfill batch. */
     public const REASON_BACKFILL_DAYS = 'backfill_days';
+
+    /**
+     * One reconciliation tick. Written even when the sweeps found nothing,
+     * because the cost of proving a converged ledger correct is exactly what
+     * this row exists to make visible.
+     */
+    public const REASON_RECONCILE = 'reconcile';
+
+    /**
+     * A course's history was discarded because the block was removed and the
+     * grace period expired. Moodle triggers no event when a block is deleted,
+     * so this row is the only record that the deletion ever happened.
+     */
+    public const REASON_BLOCK_REMOVED = 'block_removed';
+
+    /**
+     * The block was removed from a batch of courses by the bulk tool. Core
+     * records nothing for a block deletion, so this is the only trace a mass
+     * removal leaves anywhere.
+     */
+    public const REASON_BULK_REMOVAL = 'bulk_removal';
+
+    /**
+     * Open cycles taken out of every population by
+     * cli/dismiss_legacy_pending.php. The ledger keeps only the dismissal
+     * instant per row; this row says who ran it, with which cutoff, and how
+     * many rows it took.
+     */
+    public const REASON_LEGACY_DISMISSAL = 'legacy_dismissal';
 
     /**
      * Insert one audit row.
@@ -84,7 +115,7 @@ class recompute_log {
     /**
      * Delete rows older than a cutoff timestamp; returns the count removed.
      *
-     * @param int $cutoffts
+     * @param int $cutoffts Unix timestamp; rows whose timestarted is earlier are deleted.
      * @return int
      */
     public static function prune_older_than(int $cutoffts): int {

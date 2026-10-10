@@ -31,15 +31,16 @@ namespace block_feedback_tracker\local\calendar;
  * day boundaries, not hours — so the result is independent of the time of day.
  * A business day is an "active" calendar day (weekends, holidays and recesses
  * excluded per the platform calendar); reuses the cached per-day classification
- * from {@see day_rule_resolver}. Used by the date-based "dias úteis" display
- * mode; the responsiveness score still uses effective hours and is unaffected.
+ * from {@see day_rule_resolver}. Used by the "business days" display unit
+ * (display_time_unit = business_days); the responsiveness score still uses
+ * effective hours and is unaffected.
  */
 class day_counter {
     /**
      * Count elapsed calendar days and business (active) days between two
      * instants, in the platform timezone, over the range (date($from), date($to)]:
-     * the submit day is excluded, the grade day included. Same calendar day =>
-     * zero. A later-than instant on the same day still counts zero.
+     * the submit day is excluded and the grade day included, so two instants
+     * on the same calendar day count zero.
      *
      * @param int $from Unix seconds (submission instant).
      * @param int $to   Unix seconds (grading instant, or "now" for pending work).
@@ -52,8 +53,7 @@ class day_counter {
 
         $calendar = 0;
         $business = 0;
-        // Step from the day after the submit date up to and including the grade
-        // date. Mirrors academic_time's day walk (dayofweek 0=Mon..6=Sun).
+        // Same day walk and dayofweek convention (0 is Monday) as academic_time.
         $day = $startday->modify('+1 day');
         while ($day <= $endday) {
             $calendar++;

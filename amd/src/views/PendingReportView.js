@@ -14,18 +14,21 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Full-page React view for pages/pending_report.php — MVP3 redesign that
- * inherits the dashboard's hero + collapse pattern and the block's vocabulary.
+ * Full-page React view for pages/pending_report.php, reusing the dashboard's
+ * hero + collapse pattern and the block's vocabulary.
  *
  * Composition (top → bottom):
  *   1. Breadcrumb (back to course + current crumb)
  *   2. Title row (course name H1 + overall status pill)
- *   3. Collapsible container: ResponsivenessModule hero + AcademicDaysStrip
+ *   3. ResponsivenessModule hero, scheduled-pause notice and AcademicDaysStrip
+ *      (the hero and the strip collapse together)
  *   4. StatusDistributionBar — pending bands (Waiting/Attention/Priority) with a
- *      "Já avaliados" toggle into the graded view (Excellent/Good/Up Next/Priority)
+ *      toggle into the graded view (On goal/Good/Regular result bands)
  *   5. Toolbar — class select, real (server-side) search, refresh
- *   6. Table — Student / Activity / Class / Submitted / Effective / Perceived |
- *      Graded / Status|Result / Action (grade + pause-timeline)
+ *   6. Table — Student / Activity / Class / Submitted / [Graded] / Effective /
+ *      [Perceived] / Status or Result / Action (grade or review link); Graded
+ *      shows in graded mode only, Perceived in pending mode only
+ *   7. Drafts table (pending mode only)
  *
  * Everything is server-driven: the group filter, distribution filter, search,
  * column sort, paging, and the distribution counts all re-fetch the WS so they
@@ -45,34 +48,20 @@ import AcademicDaysStrip from 'block_feedback_tracker/components/AcademicDaysStr
 import StatusDistributionBar from 'block_feedback_tracker/components/StatusDistributionBar';
 import Skeleton from 'block_feedback_tracker/components/Skeleton';
 import RetryNotice from 'block_feedback_tracker/components/RetryNotice';
+import ScheduledPauses from 'block_feedback_tracker/components/ScheduledPauses';
 import {bandForScore, colourFor} from 'block_feedback_tracker/lib/bands';
+import {aggregate, perceivedLabel} from 'block_feedback_tracker/lib/aggregate';
 import {getPendingSubmissions, getGradedSubmissions, getAcademicDays, getReportScopes}
     from 'block_feedback_tracker/lib/api';
-import {formatHours, formatDays, formatDate, usesDays} from 'block_feedback_tracker/lib/format';
+import {formatHours, formatDays, formatDate, usesDays, formatCount} from 'block_feedback_tracker/lib/format';
 import {setUserPreference} from 'core_user/repository';
 import Notification from 'core/notification';
 
 /** Moodle user-preference name persisting the hero+heatmap collapse state. */
 const PREF_REPORT_COLLAPSED = 'block_feedback_tracker_report_collapsed';
 
-/** Business hours above which effective/perceived differ enough to tag a row. */
+/** Hours by which the wall-clock wait must exceed effective hours to tag a row as paused. */
 const PAUSED_TAG_EPSILON = 0.5;
-
-/**
- * Perceived calendar-days label from raw (wall-clock) median hours. The raw
- * median already includes weekends and holidays so it converts straight to
- * calendar days.
- *
- * @param {number|null|undefined} rawhours
- * @returns {string}
- */
-const perceivedLabel = (rawhours) => {
-    const n = Number(rawhours);
-    if (!Number.isFinite(n) || n <= 0) {
-        return '—';
-    }
-    return Math.max(1, Math.round(n / 24)) + 'd';
-};
 
 /**
  * Map a pending row's band to its Status badge {colour band slug, label}. Uses
@@ -93,10 +82,29 @@ const pendingBadge = (pendingband, i18n) => {
 };
 
 /**
- * Compute the hero scope for the active class filter. Single group → that
- * group's metrics; "all" → pending-weighted score, mean of the include-pending
- * medians, summed counts. Mirrors the server's old build_pending_report_scope
- * and the dashboard's aggregate().
+ * Map a graded row's slabucket to its result Badge {band, label}. Graded
+ * submissions use the three-band result set (Excellent / Good / Regular) from
+ * the academic-days strip; critical results fold into Regular. The server
+ * already folds them, so the default arm only guards the display.
+ *
+ * @param {string} slabucket  excellent | good | regular (critical pre-folded).
+ * @param {object} i18n
+ * @returns {{band: string, label: string}}
+ */
+const gradedBadge = (slabucket, i18n) => {
+    switch (slabucket) {
+        case 'excellent': return {band: 'excellent', label: i18n.acaday_legend_ongoal || 'On goal'};
+        case 'good': return {band: 'good', label: i18n.acaday_legend_good || 'Good'};
+        default: return {band: 'regular', label: i18n.acaday_legend_regular || 'Regular'};
+    }
+};
+
+/**
+ * Compute the hero scope for the active class filter, in the shape
+ * lib/aggregate.js aggregate() returns plus the band. Single group → that
+ * group's own figures and band; "all" (gid 0) → aggregate() over every scope,
+ * the same aggregation as the dashboard hero, with the band left to the
+ * caller.
  *
  * @param {Array<object>} scopes  Trimmed per-group metrics from the payload.
  * @param {number} gid            Active group id, 0 = whole course.
@@ -115,92 +123,18 @@ const computeScope = (scopes, gid) => {
             score: g.responsiveness_score,
             band: g.score_band || null,
             effective: g.cur_median_eff_h,
-            perceivedraw: g.cur_median_raw_h,
+            perceived: g.cur_median_raw_h,
             effectivedays: g.cur_median_eff_days,
             perceiveddays: g.cur_median_perc_days,
             compliance: g.compliance_pct,
             compliancedays: g.compliance_pct_days,
             trendpct: g.trend_pct_30d,
-            'total_pending': Number(g.pending) || 0,
-            'total_critical': Number(g.critical) || 0,
-            'total_overgoal': Number(g.overgoal) || 0,
+            pending: Number(g.pending) || 0,
+            critical: Number(g.critical) || 0,
+            overgoal: Number(g.overgoal) || 0,
         };
     }
-    let pending = 0;
-    let critical = 0;
-    let overgoal = 0;
-    let scoreSum = 0;
-    let scoreWeight = 0;
-    let effSum = 0;
-    let effCount = 0;
-    let rawSum = 0;
-    let rawCount = 0;
-    let effDaysSum = 0;
-    let effDaysCount = 0;
-    let percDaysSum = 0;
-    let percDaysCount = 0;
-    let compSum = 0;
-    let compCount = 0;
-    let compDaysSum = 0;
-    let compDaysCount = 0;
-    let trendSum = 0;
-    let trendCount = 0;
-    // Branch count over the lint cap is acknowledged debt (refactor pass pending).
-    // eslint-disable-next-line complexity
-    scopes.forEach((g) => {
-        pending += Number(g.pending) || 0;
-        critical += Number(g.critical) || 0;
-        overgoal += Number(g.overgoal) || 0;
-        if (g.responsiveness_score !== null && g.responsiveness_score !== undefined) {
-            const weight = Math.max(1, Number(g.pending) || 0);
-            scoreSum += Number(g.responsiveness_score) * weight;
-            scoreWeight += weight;
-        }
-        if (g.cur_median_eff_h !== null && g.cur_median_eff_h !== undefined) {
-            effSum += Number(g.cur_median_eff_h);
-            effCount += 1;
-        }
-        if (g.cur_median_raw_h !== null && g.cur_median_raw_h !== undefined) {
-            rawSum += Number(g.cur_median_raw_h);
-            rawCount += 1;
-        }
-        // Date-based day medians — the headline pair for the business-days unit.
-        if (g.cur_median_eff_days !== null && g.cur_median_eff_days !== undefined) {
-            effDaysSum += Number(g.cur_median_eff_days);
-            effDaysCount += 1;
-        }
-        if (g.cur_median_perc_days !== null && g.cur_median_perc_days !== undefined) {
-            percDaysSum += Number(g.cur_median_perc_days);
-            percDaysCount += 1;
-        }
-        if (g.compliance_pct !== null && g.compliance_pct !== undefined) {
-            compSum += Number(g.compliance_pct);
-            compCount += 1;
-        }
-        // Day-ruler compliance twin — chosen at display when the unit is days.
-        if (g.compliance_pct_days !== null && g.compliance_pct_days !== undefined) {
-            compDaysSum += Number(g.compliance_pct_days);
-            compDaysCount += 1;
-        }
-        if (g.trend_pct_30d !== null && g.trend_pct_30d !== undefined) {
-            trendSum += Number(g.trend_pct_30d);
-            trendCount += 1;
-        }
-    });
-    return {
-        score: scoreWeight > 0 ? scoreSum / scoreWeight : null,
-        band: null,
-        effective: effCount > 0 ? effSum / effCount : null,
-        perceivedraw: rawCount > 0 ? rawSum / rawCount : null,
-        effectivedays: effDaysCount > 0 ? effDaysSum / effDaysCount : null,
-        perceiveddays: percDaysCount > 0 ? percDaysSum / percDaysCount : null,
-        compliance: compCount > 0 ? compSum / compCount : null,
-        compliancedays: compDaysCount > 0 ? compDaysSum / compDaysCount : null,
-        trendpct: trendCount > 0 ? trendSum / trendCount : null,
-        'total_pending': pending,
-        'total_critical': critical,
-        'total_overgoal': overgoal,
-    };
+    return {...aggregate(scopes, 'responsiveness_score'), band: null};
 };
 
 /**
@@ -223,11 +157,12 @@ const SortableHeader = ({label, sortKey, currentKey, currentOrder, onClick}) => 
         ariaSort = currentOrder === 'asc' ? 'ascending' : 'descending';
     }
     return html`
-        <th class=${'bft-th-sortable' + (active ? ' is-active' : '')}>
+        <th scope="col"
+            class=${'bft-th-sortable' + (active ? ' is-active' : '')}
+            aria-sort=${ariaSort}>
             <button type="button"
                     class="bft-th-sortable-btn"
-                    onClick=${() => onClick(sortKey)}
-                    aria-sort=${ariaSort}>
+                    onClick=${() => onClick(sortKey)}>
                 ${label}${arrow}
             </button>
         </th>
@@ -267,14 +202,102 @@ const PausedTag = ({submissionid, tip, label, openid, onToggle}) => html`
 `;
 
 /**
+ * Marker-turnaround chip. Shown only when the submission carries both
+ * allocation stamps, i.e. when the split is a fact for this row rather than an
+ * estimate. Reads "queue → turnaround" so a long wait for someone to be made
+ * responsible is not mistaken for slow marking.
+ *
+ * @param {object} props
+ * @param {number|null} props.queuehours  Hand-in to first allocation.
+ * @param {number|null} props.allochours  Allocation to grading.
+ * @param {string} props.tip              Localised explanation.
+ * @returns {object|null} vnode
+ */
+const AllocSplitTag = ({queuehours, allochours, tip}) => {
+    if (queuehours === null || queuehours === undefined
+        || allochours === null || allochours === undefined) {
+        return null;
+    }
+    return html`
+        <span class="bft-row-split" title=${tip}>
+            <span class="bft-row-split-queue">${formatHours(queuehours)}</span>
+            <span class="bft-row-split-arrow" aria-hidden="true">→</span>
+            <span class="bft-row-split-alloc">${formatHours(allochours)}</span>
+        </span>
+    `;
+};
+
+/**
+ * The explanation of a resubmitted row, dated with the earlier mark when it is
+ * still known (retention can prune the cycle that held it).
+ *
+ * @param {number} previousmarktime Epoch of the earlier mark, 0 when unknown.
+ * @param {object} i18n
+ * @returns {string}
+ */
+const resubmittedTip = (previousmarktime, i18n) => {
+    const when = Number(previousmarktime) || 0;
+    if (when > 0) {
+        return String(i18n.status_resubmitted_help || '').replace('{$a}', formatDate(when));
+    }
+    return i18n.status_resubmitted_help_nodate || '';
+};
+
+/**
+ * A per-row disclosure: a short tag whose explanation opens on click.
+ *
+ * Used wherever a row's status is true but incomplete on its own — work handed
+ * in again after a mark, a mark the workflow has not released, a cycle answered
+ * outside the activity, a grade the gradebook is hiding. The key carries the variant as well as the row, because
+ * one row can raise more than one of these and a key of the row alone would let
+ * them fight over the single open slot.
+ *
+ * Releasing a workflow mark needs mod/assign:releasegrades, which core grants
+ * only to editing teachers and managers, so the release tag names that step for
+ * a marker who often cannot take it, instead of letting the row read as finished.
+ *
+ * @param {object} props
+ * @param {string} props.tagkey   Unique per row AND variant.
+ * @param {string} props.variant  Modifier for the CSS class.
+ * @param {string} props.tip      The explanation.
+ * @param {string} props.label    The visible tag text.
+ * @param {string} props.openid   Which tag is currently open.
+ * @param {Function} props.onToggle
+ * @returns {object} vnode
+ */
+const RowDisclosureTag = ({tagkey, variant, tip, label, openid, onToggle}) => {
+    const popid = 'bft-tip-' + String(tagkey).replace(':', '-');
+    const open = openid === tagkey;
+    /* No aria-label: the button is named by its visible text. An aria-label
+       holding the explanation would replace that short name, and with title
+       also set screen readers would read the explanation twice on focus.
+       aria-controls ties the button to the popup it opens. */
+    return html`
+        <span class="bft-row-release-wrap">
+            <button type="button"
+                    class="bft-badge bft-badge-${variant}"
+                    title=${tip}
+                    aria-expanded=${open ? 'true' : 'false'}
+                    aria-controls=${popid}
+                    onKeyDown=${(e) => e.key === 'Escape' && open && onToggle(null)}
+                    onClick=${() => onToggle(open ? null : tagkey)}>
+                ${label}
+            </button>
+            ${open && html`
+                <span class="bft-row-release-pop" id=${popid} role="note">${tip}</span>
+            `}
+        </span>
+    `;
+};
+
+/**
  * Top-level view.
  *
  * @param {object} props
  * @param {object} props.initial  Mount-point payload.
  * @returns {object} vnode
  */
-// Branch count over the lint cap is acknowledged debt: decomposing this view
-// is tracked for a dedicated refactor pass (see CLAUDE.md, CI workflow notes).
+// Branch count over the lint cap is acknowledged debt (refactor pass pending).
 // eslint-disable-next-line complexity
 export default function PendingReportView({initial}) {
     const i18n = initial.i18n || {};
@@ -316,8 +339,8 @@ export default function PendingReportView({initial}) {
 
     // Hero scopes + class-filter list, from the lightweight rollup-only
     // get_report_scopes WS (the full responsiveness payload is never built
-    // for this page). Hero renders "—" and the class filter stays hidden
-    // until this lands.
+    // for this page). The hero and the class filter stay hidden until this
+    // lands.
     const [groupScopes, setGroupScopes] = useState([]);
     const availableGroups = groupScopes.map((g) => ({
         id: Number(g.groupid) || 0,
@@ -338,11 +361,19 @@ export default function PendingReportView({initial}) {
 
     // Collapse state for the hero + heatmap container (Moodle user preference).
     const [collapsed, setCollapsed] = useState(Boolean(initial.report_collapsed));
+    // Scheduled-pause notice — preloaded course-scope by pending_report.php,
+    // already decorated + visibility-filtered server-side. Gated by the admin
+    // toggle (default ON).
+    const [upcoming] = useState(Array.isArray(initial.upcoming) ? initial.upcoming : []);
 
     // Which row's paused-info popover is open (submissionid, or null). The
     // info icon keeps its hover title; click pins the explanation for
     // touch devices and discoverability.
     const [pausedinfo, setPausedinfo] = useState(null);
+
+    // Which RowDisclosureTag explanation is pinned open (its tagkey, e.g.
+    // '42:release', or null). Kept separate from pausedinfo so a row can show both.
+    const [releaseinfo, setReleaseinfo] = useState(null);
 
     // Academic-days heatmap (async).
     const [acaDays, setAcaDays] = useState([]);
@@ -459,6 +490,23 @@ export default function PendingReportView({initial}) {
     const totalPages = Math.max(1, Math.ceil(total / perpage));
     const graded = mode === 'graded';
 
+    // Column captions — each cell repeats its caption through data-label, which
+    // surfaces as the field label when the table reflows into stacked cards on
+    // narrow screens (mirrors the dashboard courses table). Values match the
+    // header strings so the card caption always equals its column header.
+    const cols = {
+        activity: i18n.drilldown_col_activity,
+        'class': i18n.pendingreport_filter_class_label || 'Class',
+        submitted: i18n.drilldown_col_submitted,
+        graded: i18n.pendingreport_col_graded || 'Graded',
+        effective: i18n.pendingreport_col_effective || 'Effective',
+        perceived: i18n.pendingreport_col_perceived || 'Perceived',
+        status: graded
+            ? (i18n.pendingreport_col_result || 'Result')
+            : i18n.drilldown_col_status,
+        lastsaved: i18n.drilldown_col_lastsaved || 'Last saved',
+    };
+
     /**
      * Toggle the collapse state, persisting it as a user preference.
      *
@@ -537,11 +585,11 @@ export default function PendingReportView({initial}) {
                 tone: scopeBand,
             });
         }
-        if (scope.total_overgoal > 0) {
-            chips.push({label: scope.total_overgoal + ' ' + (i18n.hero_sla_atrisk || 'at risk'), tone: 'regular'});
+        if (scope.overgoal > 0) {
+            chips.push({label: formatCount(scope.overgoal) + ' ' + (i18n.hero_sla_atrisk || 'at risk'), tone: 'regular'});
         }
-        if (scope.total_critical > 0) {
-            chips.push({label: scope.total_critical + ' ' + (i18n.hero_sla_critical || 'critical'), tone: 'critical'});
+        if (scope.critical > 0) {
+            chips.push({label: formatCount(scope.critical) + ' ' + (i18n.hero_sla_critical || 'critical'), tone: 'critical'});
         }
     }
 
@@ -549,7 +597,7 @@ export default function PendingReportView({initial}) {
     if (usesDays(config)) {
         perceivedlabel = formatDays(scope ? scope.perceiveddays : null);
     } else {
-        perceivedlabel = scope ? perceivedLabel(scope.perceivedraw) : '—';
+        perceivedlabel = scope ? perceivedLabel(scope.perceived) : '—';
     }
 
     const heroprops = {
@@ -575,10 +623,12 @@ export default function PendingReportView({initial}) {
 
     const sublineLabel = (graded
         ? (i18n.pendingreport_subline_graded || '{$a} graded')
-        : (i18n.pendingreport_subline_pending || '{$a} awaiting feedback')).replace('{$a}', String(total));
+        : (i18n.pendingreport_subline_pending || '{$a} awaiting feedback')).replace('{$a}', formatCount(total));
 
     // Empty-state precedence: skeleton while the first page loads, retry on
-    // error, "nothing matches" otherwise; null means the table renders.
+    // error, "nothing matches" otherwise; null means the table renders. The
+    // skeleton is aria-hidden, so while a page loads the table region is
+    // aria-busy and the visually-hidden status line announces the load.
     let emptystate = null;
     if (loading && submissions.length === 0) {
         emptystate = html`<${Skeleton} count=${5} />`;
@@ -625,6 +675,10 @@ export default function PendingReportView({initial}) {
                     collapsed=${collapsed}
                     onToggle=${handleToggleCollapsed}
                     heroprops=${heroprops} />
+            `}
+
+            ${config.show_scheduled_pauses !== false && html`
+                <${ScheduledPauses} pauses=${upcoming} i18n=${i18n} />
             `}
 
             ${!collapsed && html`
@@ -687,8 +741,14 @@ export default function PendingReportView({initial}) {
                     i18n=${i18n}
                     variant="banner" />`}
 
-            ${emptystate}
-            ${!emptystate && html`
+            <span class="bft-sr-only" role="status">
+                ${loading ? i18n.pendingreport_loading : ''}
+            </span>
+            <div class="bft-report-body"
+                 aria-busy=${loading ? 'true' : 'false'}
+                 aria-label=${loading ? i18n.pendingreport_loading : null}>
+                ${emptystate}
+                ${!emptystate && html`
                     <table class="bft-report-table">
                         <thead>
                             <tr>
@@ -717,7 +777,7 @@ export default function PendingReportView({initial}) {
                                         sortKey="perceived" currentKey=${serverSort}
                                         currentOrder=${sortOrder} onClick=${handleSort} />
                                 `}
-                                <${SortableHeader} label=${i18n.drilldown_col_status}
+                                <${SortableHeader} label=${cols.status}
                                     sortKey="status" currentKey=${serverSort}
                                     currentOrder=${sortOrder} onClick=${handleSort} />
                                 <th class="bft-report-col-action">
@@ -741,23 +801,24 @@ export default function PendingReportView({initial}) {
                                     : Number(row.waitinghours || 0)
                                         - Number(row.effectivehours || 0) > PAUSED_TAG_EPSILON;
                                 const rowColor = colourFor(row.slabucket);
+                                const resultbadge = graded ? gradedBadge(row.slabucket, i18n) : null;
                                 return html`
                                     <tr class="bft-report-row" key=${'r-' + row.submissionid}>
-                                        <td>${row.studentname}</td>
-                                        <td>${row.activityname}</td>
-                                        <td>${row.groupname || '-'}</td>
-                                        <td class="bft-mono">${formatDate(row.timesubmitted)}</td>
+                                        <td class="bft-report-cell-title">${row.studentname}</td>
+                                        <td data-label=${cols.activity}>${row.activityname}</td>
+                                        <td data-label=${cols.class}>${row.groupname || '-'}</td>
+                                        <td class="bft-mono" data-label=${cols.submitted}>${formatDate(row.timesubmitted)}</td>
                                         ${graded && html`
-                                            <td class="bft-mono">${formatDate(row.timegraded)}</td>
+                                            <td class="bft-mono" data-label=${cols.graded}>${formatDate(row.timegraded)}</td>
                                         `}
-                                        <td class="bft-report-effective bft-mono"
+                                        <td class="bft-report-effective bft-mono" data-label=${cols.effective}
                                             style=${'color: ' + rowColor + ';'}>
                                             ${usesDays(config)
                                                 ? formatDays(row.effective_days)
                                                 : formatHours(row.effectivehours)}
                                         </td>
                                         ${!graded && html`
-                                            <td class="bft-mono">
+                                            <td class="bft-mono" data-label=${cols.perceived}>
                                                 <span class="bft-report-perceived">
                                                     ${usesDays(config)
                                                         ? formatDays(row.perceived_days)
@@ -771,13 +832,12 @@ export default function PendingReportView({initial}) {
                                                 </span>
                                             </td>
                                         `}
-                                        <td>
+                                        <td data-label=${cols.status}>
                                             ${graded
                                                 ? html`
                                                     <span class="bft-row-result">
-                                                        <${Badge} band=${row.slabucket}
-                                                            label=${(i18n.bands || {})[row.slabucket]
-                                                                || row.slabucket} />
+                                                        <${Badge} band=${resultbadge.band}
+                                                            label=${resultbadge.label} />
                                                         ${paused && html`<${PausedTag}
                                                             submissionid=${row.submissionid}
                                                             tip=${i18n.pendingreport_row_paused_graded_tip || ''}
@@ -790,6 +850,46 @@ export default function PendingReportView({initial}) {
                                                     const pb = pendingBadge(row.pendingband, i18n);
                                                     return html`<${Badge} band=${pb.band} label=${pb.label} />`;
                                                 })()}
+                                            ${!graded && Number(row.resubmitted) === 1 && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':resubmitted'}
+                                                    variant="resubmitted"
+                                                    tip=${resubmittedTip(row.previousmarktime, i18n)}
+                                                    label=${i18n.status_resubmitted || 'Resubmitted'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            ${Number(row.awaitingrelease) === 1 && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':release'}
+                                                    variant="release"
+                                                    tip=${i18n.status_awaiting_release_help || ''}
+                                                    label=${i18n.status_awaiting_release || 'Awaiting release'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            ${row.closedsource === 'gradebook' && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':gradebook'}
+                                                    variant="gradebook"
+                                                    tip=${i18n.status_closed_in_gradebook_help || ''}
+                                                    label=${i18n.status_closed_in_gradebook || 'Graded in gradebook'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            ${Number(row.gradehidden) === 1 && html`
+                                                <${RowDisclosureTag}
+                                                    tagkey=${row.submissionid + ':hidden'}
+                                                    variant="hiddengrade"
+                                                    tip=${i18n.status_grade_hidden_help || ''}
+                                                    label=${i18n.status_grade_hidden || 'Hidden from student'}
+                                                    openid=${releaseinfo}
+                                                    onToggle=${setReleaseinfo} />
+                                            `}
+                                            <${AllocSplitTag}
+                                                queuehours=${row.queuehours}
+                                                allochours=${row.allochours}
+                                                tip=${i18n.alloc_split_tip || ''} />
                                         </td>
                                         <td class="bft-report-col-action">
                                             <a class="bft-report-action-grade" href=${graderUrl(row)}>
@@ -804,6 +904,7 @@ export default function PendingReportView({initial}) {
                         </tbody>
                     </table>
                 `}
+            </div>
 
             ${total > perpage && html`
                 <div class="bft-pagination">
@@ -848,11 +949,11 @@ export default function PendingReportView({initial}) {
                             ${drafts.map((row) => html`
                                 <tr class="bft-report-row bft-report-row--draft"
                                     key=${'d-' + row.submissionid}>
-                                    <td>${row.studentname}</td>
-                                    <td>${row.activityname}</td>
-                                    <td>${row.groupname || '-'}</td>
-                                    <td class="bft-mono">${formatDate(row.timesubmitted)}</td>
-                                    <td>
+                                    <td class="bft-report-cell-title">${row.studentname}</td>
+                                    <td data-label=${cols.activity}>${row.activityname}</td>
+                                    <td data-label=${cols.class}>${row.groupname || '-'}</td>
+                                    <td class="bft-mono" data-label=${cols.lastsaved}>${formatDate(row.timesubmitted)}</td>
+                                    <td data-label=${cols.status}>
                                         <span class="bft-badge bft-badge-draft">
                                             ${i18n.status_draft || 'Draft'}
                                         </span>

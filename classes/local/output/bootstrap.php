@@ -28,20 +28,17 @@ namespace block_feedback_tracker\local\output;
 
 /**
  * Static helpers that build the JSON bundle every React-driven view
- * (block, pending report, teacher dashboard) embeds in its mount-point
- * `<script type="application/json" data-bft-init>` tag.
+ * (block, pending report, teacher dashboard, score simulator) embeds in its
+ * mount-point `<script type="application/json" data-bft-init>` tag.
  *
- * Kept in classes/local/output/ so PSR-style autoloading picks them up
- * from standalone pages — the block class itself isn't autoloaded by
- * Moodle's class loader (block classes only load when the blocks
- * subsystem renders one).
+ * An autoloaded class rather than methods on the block class, which Moodle
+ * loads only when it renders a block, so standalone pages can use it.
  */
 class bootstrap {
     /**
-     * Localised label bundle used by every React view. Keys mirror the
-     * Mustache template contexts so a server-rendered fallback (the
-     * existing responsiveness_card.mustache, drilldown.mustache, …) and
-     * the React tree consume identical strings.
+     * Localised label bundle used by every React view. Keys are the lang
+     * string ids (band labels nested under `bands`), so the React tree and
+     * the server-rendered card show the same strings.
      *
      * @return array
      */
@@ -50,9 +47,6 @@ class bootstrap {
             'card_pending' => get_string('card_pending', 'block_feedback_tracker'),
             'card_critical' => get_string('card_critical', 'block_feedback_tracker'),
             'card_overgoal' => get_string('card_overgoal', 'block_feedback_tracker'),
-            'card_median_eff' => get_string('card_median_eff', 'block_feedback_tracker'),
-            'card_compliance' => get_string('card_compliance', 'block_feedback_tracker'),
-            'card_trend' => get_string('card_trend', 'block_feedback_tracker'),
             'card_refresh' => get_string('card_refresh', 'block_feedback_tracker'),
             'card_footer_cache' => get_string('card_footer_cache', 'block_feedback_tracker'),
             'card_footer_sync' => get_string('card_footer_sync', 'block_feedback_tracker'),
@@ -74,13 +68,16 @@ class bootstrap {
             'block_refresh_error' => get_string('block_refresh_error', 'block_feedback_tracker'),
             'block_loading' => get_string('block_loading', 'block_feedback_tracker'),
             'block_loadmore' => get_string('block_loadmore', 'block_feedback_tracker'),
+            // The next two keep their placeholders for the JS to fill in.
             'block_capnotice' => get_string(
                 'block_capnotice',
                 'block_feedback_tracker',
                 (object) ['shown' => '{shown}', 'total' => '{total}']
             ),
             'sparkline_zone_label' => get_string('sparkline_zone_label', 'block_feedback_tracker', '{$a}'),
-            // Phase 3B additions — block recomposition (hero, KPI tiles, trend row, peer, paused note, activities).
+            // Accessible name of every trend sparkline (TrendRow, CoursesTable).
+            'sparkline_aria' => get_string('sparkline_aria', 'block_feedback_tracker'),
+            // Block card: hero, KPI tiles, trend row, peer context, pause notice, activities.
             'card_activities_head' => get_string('card_activities_head', 'block_feedback_tracker'),
             'card_effective' => get_string('card_effective', 'block_feedback_tracker'),
             'card_effective_sub' => get_string('card_effective_sub', 'block_feedback_tracker'),
@@ -90,7 +87,8 @@ class bootstrap {
             'card_sla' => get_string('card_sla', 'block_feedback_tracker'),
             'card_sla_sub' => get_string('card_sla_sub', 'block_feedback_tracker'),
             'overall_eyebrow' => get_string('overall_eyebrow', 'block_feedback_tracker'),
-            'paused_today_label' => get_string('paused_today_label', 'block_feedback_tracker'),
+            'pause_type_label' => get_string('pause_type_label', 'block_feedback_tracker'),
+            'pause_upcoming_label' => get_string('pause_upcoming_label', 'block_feedback_tracker'),
             'peer_department' => get_string('peer_department', 'block_feedback_tracker'),
             'peer_title' => get_string('peer_title', 'block_feedback_tracker'),
             'peer_top10' => get_string('peer_top10', 'block_feedback_tracker'),
@@ -113,9 +111,10 @@ class bootstrap {
     }
 
     /**
-     * Score-formula config bundle. Defaults match settings.php fallbacks
-     * so a freshly-installed site renders correctly even before the admin
-     * visits the settings page.
+     * Config bundle: score weights, SLA goal, band thresholds, feature
+     * toggles, and the separators, locale and time zone the JS formatters
+     * (amd/src/lib/format.js) need. Fallbacks match the settings.php defaults,
+     * for a site where a setting is not stored yet.
      *
      * @return array
      */
@@ -127,14 +126,14 @@ class bootstrap {
         // mis-handle the off case because '0' is falsy in PHP.
         $peercfg = get_config('block_feedback_tracker', 'show_peer_context');
         $showpeer = ($peercfg === false || $peercfg === null) ? true : ((string) $peercfg !== '0');
+        // Upcoming-pause notice toggle, stored under the older name
+        // show_paused_today_indicator; same default-ON read as above.
+        $pausecfg = get_config('block_feedback_tracker', 'show_paused_today_indicator');
+        $showpause = ($pausecfg === false || $pausecfg === null) ? true : ((string) $pausecfg !== '0');
         return [
-            'weights' => [
-                'compliance' => (float) (get_config('block_feedback_tracker', 'weight_compliance') ?: 0.40),
-                'median'     => (float) (get_config('block_feedback_tracker', 'weight_median') ?: 0.25),
-                'critical'   => (float) (get_config('block_feedback_tracker', 'weight_critical') ?: 0.15),
-                'pending'    => (float) (get_config('block_feedback_tracker', 'weight_pending') ?: 0.10),
-                'trend'      => (float) (get_config('block_feedback_tracker', 'weight_trend') ?: 0.10),
-            ],
+            // The weights the groups are scored with, so the simulator starts
+            // from the live formula: a stored 0 drops its term there too.
+            'weights' => \block_feedback_tracker\local\score\responsiveness_calculator::load_weights(),
             'sla_goal_hours' => (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24),
             'score_thresholds' => [
                 'excellent' => $threxcellent,
@@ -149,13 +148,58 @@ class bootstrap {
             'display_time_unit' =>
                 (string) (get_config('block_feedback_tracker', 'display_time_unit') ?: 'hours'),
             'show_peer_context' => $showpeer,
+            'show_scheduled_pauses' => $showpause,
+            // Active language's thousands separator, so the React surfaces
+            // group counts exactly as numfmt::count() does on the server.
+            'thousandssep' => get_string('thousandssep', 'langconfig'),
+            // Active language's decimal separator, as format_float() uses it.
+            'decsep' => get_string('decsep', 'langconfig'),
+            // Locale and time zone for the JS date formatters, so a timestamp
+            // reads in the language's conventions and on the same day and hour
+            // as userdate() prints it for this user.
+            'locale' => self::date_locale(),
+            'timezone' => \core_date::get_user_timezone(),
+            // Whether the teacher dashboard offers this viewer the site benchmarks.
+            'school_comparison' => self::can_view_school_comparison(),
         ];
+    }
+
+    /**
+     * Whether the current user may see the site benchmarks on the teacher
+     * dashboard: the capability the get_school_comparison web service requires,
+     * at the context it checks it in, so the section is offered to exactly the
+     * viewers the service answers. The service still checks it on every call.
+     *
+     * @return bool
+     */
+    public static function can_view_school_comparison(): bool {
+        return has_capability('block/feedback_tracker:viewschoolcomparison', \context_system::instance());
+    }
+
+    /**
+     * The active language's date locale as a BCP 47 tag for Intl in the
+     * browser, e.g. 'en-AU' from langconfig's 'en_AU.UTF-8': the locale the
+     * language pack declares for its own dates. Falls back to the page's
+     * html lang value when the pack's locale is not a usable tag.
+     *
+     * @return string
+     */
+    private static function date_locale(): string {
+        $locale = (string) get_string('locale', 'langconfig');
+        // Drop the codeset and any modifier, then separate with hyphens as BCP 47 does.
+        $tag = str_replace('_', '-', (string) preg_replace('/[.@].*$/', '', $locale));
+        if (preg_match('/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/', $tag)) {
+            return $tag;
+        }
+        return get_html_lang_attribute_value(current_language());
     }
 
     /**
      * Teacher-dashboard string overlay. Merged on top of i18n_bundle()
      * by pages/teacher_dashboard.php so the hero, courses table, and
-     * site-comparison section all share one localised label map.
+     * site-benchmarks section all share one localised label map. The
+     * site-benchmarks strings ship only to the viewers config_bundle() offers
+     * the section to.
      *
      * @return array
      */
@@ -165,39 +209,17 @@ class bootstrap {
         // "business hours" — resolved here so the React layer needs no change.
         $daysmode = ((string) (get_config('block_feedback_tracker', 'display_time_unit') ?: 'hours'))
             === 'business_days';
-        return [
-            'dashboard_title' => get_string('dashboard_title', 'block_feedback_tracker'),
-            'dashboard_hero_subtitle' => get_string('dashboard_hero_subtitle', 'block_feedback_tracker'),
-            'dashboard_kpi_pending' => get_string('dashboard_kpi_pending', 'block_feedback_tracker'),
-            'dashboard_kpi_critical' => get_string('dashboard_kpi_critical', 'block_feedback_tracker'),
-            'dashboard_kpi_overgoal' => get_string('dashboard_kpi_overgoal', 'block_feedback_tracker'),
+        $strings = [
             'dashboard_courses_title' => get_string('dashboard_courses_title', 'block_feedback_tracker'),
             'dashboard_courses_empty' => get_string('dashboard_courses_empty', 'block_feedback_tracker'),
             'dashboard_col_course' => get_string('dashboard_col_course', 'block_feedback_tracker'),
-            'dashboard_col_groups' => get_string('dashboard_col_groups', 'block_feedback_tracker'),
             'dashboard_col_pending' => get_string('dashboard_col_pending', 'block_feedback_tracker'),
             'dashboard_col_critical' => get_string('dashboard_col_critical', 'block_feedback_tracker'),
-            'dashboard_col_overgoal' => get_string('dashboard_col_overgoal', 'block_feedback_tracker'),
             'dashboard_col_avgscore' => get_string('dashboard_col_avgscore', 'block_feedback_tracker'),
-            'dashboard_comparison_title' => get_string('dashboard_comparison_title', 'block_feedback_tracker'),
-            'dashboard_comparison_subtitle' => get_string('dashboard_comparison_subtitle', 'block_feedback_tracker'),
-            'dashboard_comparison_loading' => get_string('dashboard_comparison_loading', 'block_feedback_tracker'),
-            'dashboard_comparison_empty' => get_string('dashboard_comparison_empty', 'block_feedback_tracker'),
-            'dashboard_comparison_col_day' => get_string('dashboard_comparison_col_day', 'block_feedback_tracker'),
-            'dashboard_comparison_col_median' => get_string('dashboard_comparison_col_median', 'block_feedback_tracker'),
-            'dashboard_comparison_col_p10' => get_string('dashboard_comparison_col_p10', 'block_feedback_tracker'),
-            'dashboard_comparison_col_p90' => get_string('dashboard_comparison_col_p90', 'block_feedback_tracker'),
-            'dashboard_comparison_col_compliance' => get_string('dashboard_comparison_col_compliance', 'block_feedback_tracker'),
-            'dashboard_comparison_col_graded' => get_string('dashboard_comparison_col_graded', 'block_feedback_tracker'),
             'dashboard_refresh' => get_string('dashboard_refresh', 'block_feedback_tracker'),
             'dashboard_error' => get_string('dashboard_error', 'block_feedback_tracker'),
-            'gradenow_title' => get_string('gradenow_title', 'block_feedback_tracker'),
-            'gradenow_subtitle' => get_string('gradenow_subtitle', 'block_feedback_tracker'),
-            'gradenow_empty' => get_string('gradenow_empty', 'block_feedback_tracker'),
             'gradenow_loading' => get_string('gradenow_loading', 'block_feedback_tracker'),
-            'gradenow_error' => get_string('gradenow_error', 'block_feedback_tracker'),
-            'gradenow_open' => get_string('gradenow_open', 'block_feedback_tracker'),
-            // Phase 3E additions — hero, slim toggle, insights, priority, columns.
+            // Hero, slim-hero toggle, insights, priority list, table columns.
             'dashboard_brandtag' => get_string('dashboard_brandtag', 'block_feedback_tracker'),
             'dashboard_business_chip' => $daysmode
                 ? get_string('dashboard_business_chip_days', 'block_feedback_tracker')
@@ -241,14 +263,52 @@ class bootstrap {
             'pendingreport_col_effective' => get_string('pendingreport_col_effective', 'block_feedback_tracker'),
             'pendingreport_col_perceived' => get_string('pendingreport_col_perceived', 'block_feedback_tracker'),
             'priority_open' => get_string('priority_open', 'block_feedback_tracker'),
+            'status_resubmitted' => get_string('status_resubmitted', 'block_feedback_tracker'),
+            // Placeholder kept for the card to fill with the earlier mark's date.
+            'status_resubmitted_help' => get_string('status_resubmitted_help', 'block_feedback_tracker', '{$a}'),
+            'status_resubmitted_help_nodate' => get_string('status_resubmitted_help_nodate', 'block_feedback_tracker'),
             'trend_window_label' => get_string('trend_window_label', 'block_feedback_tracker'),
+        ];
+        if (self::can_view_school_comparison()) {
+            $strings += self::school_comparison_i18n();
+        }
+        return $strings;
+    }
+
+    /**
+     * Strings of the dashboard's site-benchmarks section
+     * (amd/src/components/SchoolComparison.js).
+     *
+     * @return array
+     */
+    private static function school_comparison_i18n(): array {
+        $s = static fn (string $k): string => get_string($k, 'block_feedback_tracker');
+        return [
+            // Keeps its placeholder, the window length, for the JS to fill in.
+            'dashboard_comparison_caption' => get_string('dashboard_comparison_caption', 'block_feedback_tracker', '{$a}'),
+            'dashboard_comparison_chart' => $s('dashboard_comparison_chart'),
+            'dashboard_comparison_col_compliance' => $s('dashboard_comparison_col_compliance'),
+            'dashboard_comparison_col_day' => $s('dashboard_comparison_col_day'),
+            'dashboard_comparison_col_graded' => $s('dashboard_comparison_col_graded'),
+            'dashboard_comparison_col_median' => $s('dashboard_comparison_col_median'),
+            'dashboard_comparison_col_p10' => $s('dashboard_comparison_col_p10'),
+            'dashboard_comparison_col_p90' => $s('dashboard_comparison_col_p90'),
+            'dashboard_comparison_empty' => $s('dashboard_comparison_empty'),
+            'dashboard_comparison_error' => $s('dashboard_comparison_error'),
+            'dashboard_comparison_loading' => $s('dashboard_comparison_loading'),
+            'dashboard_comparison_subtitle' => $s('dashboard_comparison_subtitle'),
+            'dashboard_comparison_title' => $s('dashboard_comparison_title'),
+            'dashboard_comparison_unit_note' => $s('dashboard_comparison_unit_note'),
+            'dashboard_comparison_window' => $s('dashboard_comparison_window'),
+            // Keeps its placeholder, as the caption does.
+            'dashboard_comparison_window_days' => get_string('dashboard_comparison_window_days', 'block_feedback_tracker', '{$a}'),
         ];
     }
 
     /**
      * Pending-report-page string overlay. Merged on top of i18n_bundle()
-     * by pages/pending_report.php so the React filter row / table /
-     * timeline modal all share one localised label map.
+     * by pages/pending_report.php so the React filter row, table and
+     * academic-days strip all share one localised label map.
      *
      * @return array
      */
@@ -258,90 +318,39 @@ class bootstrap {
         $daysmode = ((string) (get_config('block_feedback_tracker', 'display_time_unit') ?: 'hours'))
             === 'business_days';
         return [
-            'pendingreport_title' => get_string('pendingreport_title', 'block_feedback_tracker'),
             'pendingreport_empty' => get_string('pendingreport_empty', 'block_feedback_tracker'),
             'pendingreport_error' => get_string('pendingreport_error', 'block_feedback_tracker'),
             'pendingreport_loading' => get_string('pendingreport_loading', 'block_feedback_tracker'),
             'pendingreport_search_placeholder' => get_string('pendingreport_search_placeholder', 'block_feedback_tracker'),
             'pendingreport_filter_group_all' => get_string('pendingreport_filter_group_all', 'block_feedback_tracker'),
-            'pendingreport_filter_group_label' => get_string('pendingreport_filter_group_label', 'block_feedback_tracker'),
-            'pendingreport_filter_bucket_all' => get_string('pendingreport_filter_bucket_all', 'block_feedback_tracker'),
-            'pendingreport_filter_bucket_label' => get_string('pendingreport_filter_bucket_label', 'block_feedback_tracker'),
-            'pendingreport_filter_serversort_label' => get_string(
-                'pendingreport_filter_serversort_label',
-                'block_feedback_tracker'
-            ),
-            'pendingreport_serversort_longestwait' => get_string('pendingreport_serversort_longestwait', 'block_feedback_tracker'),
-            'pendingreport_serversort_recent' => get_string('pendingreport_serversort_recent', 'block_feedback_tracker'),
             'pendingreport_page_prev' => get_string('pendingreport_page_prev', 'block_feedback_tracker'),
             'pendingreport_page_next' => get_string('pendingreport_page_next', 'block_feedback_tracker'),
             'pendingreport_page_template' => get_string('pendingreport_page_template', 'block_feedback_tracker'),
             'drilldown_col_student' => get_string('drilldown_col_student', 'block_feedback_tracker'),
             'drilldown_col_activity' => get_string('drilldown_col_activity', 'block_feedback_tracker'),
-            'drilldown_col_group' => get_string('drilldown_col_group', 'block_feedback_tracker'),
             'drilldown_col_submitted' => get_string('drilldown_col_submitted', 'block_feedback_tracker'),
-            'drilldown_col_waiting' => get_string('drilldown_col_waiting', 'block_feedback_tracker'),
-            'drilldown_col_effective' => get_string('drilldown_col_effective', 'block_feedback_tracker'),
             'drilldown_col_status' => get_string('drilldown_col_status', 'block_feedback_tracker'),
-            'modal_pauses_title' => get_string('modal_pauses_title', 'block_feedback_tracker'),
-            'modal_pauses_empty' => get_string('modal_pauses_empty', 'block_feedback_tracker'),
-            'modal_pauses_loading' => get_string('modal_pauses_loading', 'block_feedback_tracker'),
-            'modal_pauses_error' => get_string('modal_pauses_error', 'block_feedback_tracker'),
-            'modal_submittedat' => get_string('modal_submittedat', 'block_feedback_tracker'),
-            'modal_effectivewait' => get_string('modal_effectivewait', 'block_feedback_tracker'),
-            'modal_wallclockwait' => get_string('modal_wallclockwait', 'block_feedback_tracker'),
             'pause_reason_weekend' => get_string('pause_reason_weekend', 'block_feedback_tracker'),
             'pause_reason_holiday' => get_string('pause_reason_holiday', 'block_feedback_tracker'),
             'pause_reason_recess' => get_string('pause_reason_recess', 'block_feedback_tracker'),
-            'pause_reason_closed' => get_string('pause_reason_closed', 'block_feedback_tracker'),
-            'pause_reason_outofhours' => get_string('pause_reason_outofhours', 'block_feedback_tracker'),
-            'pause_reason_coursepaused' => get_string('pause_reason_coursepaused', 'block_feedback_tracker'),
-            'pause_reason_grouppaused' => get_string('pause_reason_grouppaused', 'block_feedback_tracker'),
-            'pause_reason_sitepaused' => get_string('pause_reason_sitepaused', 'block_feedback_tracker'),
-            // Phase 3D additions — hero metrics, paused callout, status distribution, segmented filter.
+            // Hero metrics, academic-days pause breakdown, status distribution.
             'distribution_hint' => get_string('distribution_hint', 'block_feedback_tracker'),
             'distribution_title' => get_string('distribution_title', 'block_feedback_tracker'),
+            'distribution_title_result' => get_string('distribution_title_result', 'block_feedback_tracker'),
             'hero_effective_eyebrow' => get_string('hero_effective_eyebrow', 'block_feedback_tracker'),
-            'hero_effective_tip' => $daysmode
-                ? get_string('hero_effective_tip_days', 'block_feedback_tracker')
-                : get_string('hero_effective_tip', 'block_feedback_tracker'),
             'hero_effective_unit' => get_string('hero_effective_unit', 'block_feedback_tracker'),
             'hero_effective_unit_days' => get_string('hero_effective_unit_days', 'block_feedback_tracker'),
             'hero_perceived_label' => get_string('hero_perceived_label', 'block_feedback_tracker'),
-            'hero_perceived_tip' => get_string('hero_perceived_tip', 'block_feedback_tracker'),
             'hero_perceived_unit' => get_string('hero_perceived_unit', 'block_feedback_tracker'),
-            'hero_score_eyebrow' => get_string('hero_score_eyebrow', 'block_feedback_tracker'),
-            'hero_score_note' => $daysmode
-                ? get_string('hero_score_note_days', 'block_feedback_tracker')
-                : get_string('hero_score_note', 'block_feedback_tracker'),
-            'hero_score_tip' => $daysmode
-                ? get_string('hero_score_tip_days', 'block_feedback_tracker')
-                : get_string('hero_score_tip', 'block_feedback_tracker'),
             'hero_sla_atrisk' => get_string('hero_sla_atrisk', 'block_feedback_tracker'),
             'hero_sla_critical' => get_string('hero_sla_critical', 'block_feedback_tracker'),
             'hero_sla_eyebrow' => get_string('hero_sla_eyebrow', 'block_feedback_tracker'),
-            'hero_sla_tip' => $daysmode
-                ? get_string(
-                    'hero_sla_tip_days',
-                    'block_feedback_tracker',
-                    (int) (get_config('block_feedback_tracker', 'sla_goal_days') ?: 2)
-                )
-                : get_string(
-                    'hero_sla_tip',
-                    'block_feedback_tracker',
-                    (int) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24)
-                ),
-            'hero_sla_unit' => get_string('hero_sla_unit', 'block_feedback_tracker'),
             'hero_trend_eyebrow' => get_string('hero_trend_eyebrow', 'block_feedback_tracker'),
-            'hero_trend_tip' => get_string('hero_trend_tip', 'block_feedback_tracker'),
             'hero_trend_unit' => get_string('hero_trend_unit', 'block_feedback_tracker'),
             'paused_breakdown_holiday' => get_string('paused_breakdown_holiday', 'block_feedback_tracker'),
             'paused_breakdown_recess' => get_string('paused_breakdown_recess', 'block_feedback_tracker'),
             'paused_breakdown_weekend' => get_string('paused_breakdown_weekend', 'block_feedback_tracker'),
             'paused_callout_days' => get_string('paused_callout_days', 'block_feedback_tracker'),
-            'paused_callout_explain' => get_string('paused_callout_explain', 'block_feedback_tracker'),
-            'paused_callout_title' => get_string('paused_callout_title', 'block_feedback_tracker'),
-            'paused_callout_view' => get_string('paused_callout_view', 'block_feedback_tracker'),
             'pendingreport_breadcrumb_course' => get_string('pendingreport_breadcrumb_course', 'block_feedback_tracker'),
             'pendingreport_col_effective' => get_string('pendingreport_col_effective', 'block_feedback_tracker'),
             'pendingreport_col_perceived' => get_string('pendingreport_col_perceived', 'block_feedback_tracker'),
@@ -354,8 +363,8 @@ class bootstrap {
             'pendingreport_row_paused_tip' => $daysmode
                 ? get_string('pendingreport_row_paused_tip_days', 'block_feedback_tracker')
                 : get_string('pendingreport_row_paused_tip', 'block_feedback_tracker'),
-            // MVP3 report redesign — hero (reused from the dashboard), academic-days
-            // strip, graded view, action column, and the collapse toggle.
+            // Academic-days strip, graded view, action column, collapse toggle,
+            // and hero strings shared with the dashboard.
             'acaday_holiday_one' => get_string('acaday_holiday_one', 'block_feedback_tracker'),
             'acaday_legend_good' => get_string('acaday_legend_good', 'block_feedback_tracker'),
             'acaday_legend_ongoal' => get_string('acaday_legend_ongoal', 'block_feedback_tracker'),
@@ -372,9 +381,9 @@ class bootstrap {
             'paused_callout_event_singular' => get_string('paused_callout_event_singular', 'block_feedback_tracker'),
             'pendingreport_action_grade' => get_string('pendingreport_action_grade', 'block_feedback_tracker'),
             'pendingreport_action_review' => get_string('pendingreport_action_review', 'block_feedback_tracker'),
-            'pendingreport_action_timeline' => get_string('pendingreport_action_timeline', 'block_feedback_tracker'),
             'pendingreport_col_action' => get_string('pendingreport_col_action', 'block_feedback_tracker'),
             'pendingreport_col_graded' => get_string('pendingreport_col_graded', 'block_feedback_tracker'),
+            'pendingreport_col_result' => get_string('pendingreport_col_result', 'block_feedback_tracker'),
             'pendingreport_mode_graded' => get_string('pendingreport_mode_graded', 'block_feedback_tracker'),
             'pendingreport_mode_pending' => get_string('pendingreport_mode_pending', 'block_feedback_tracker'),
             'pendingreport_subline_graded' => get_string('pendingreport_subline_graded', 'block_feedback_tracker'),
@@ -412,6 +421,8 @@ class bootstrap {
             'breakdown_weight' => $s('breakdown_weight'),
             'breakdown_pts'    => $s('breakdown_pts'),
             'breakdown_total'  => $s('breakdown_total'),
+            // The gauge substitutes the score for the placeholder left in the string.
+            'gauge_aria' => $s('gauge_aria'),
             'sim_intro_eyebrow' => $s('sim_intro_eyebrow'),
             'sim_intro_heading' => $s('sim_intro_heading'),
             'sim_intro_body'    => $s('sim_intro_body'),

@@ -34,13 +34,17 @@ use core_external\external_single_structure;
 use core_external\external_value;
 
 /**
- * Upsert one row in {block_feedback_tracker_cpause}. Capability gate
- * depends on scope: `:managepausewindows` at system context for site
- * pauses; at course context for course/group pauses (the cap is granted
- * to editingteacher at COURSE in db/access.php).
+ * Upsert one row in {block_feedback_tracker_cpause}.
+ *
+ * `:managepausewindows` is checked at system context for site pauses and at
+ * the course context for course and group pauses (editingteacher holds the
+ * capability by archetype, so teachers can pause their own courses). An update
+ * is also checked against the context the existing row lives in.
  *
  * Fires `cal_pause_updated` so the observer scopes the re-enqueue (site →
- * all groups, course → that course, group → one tuple).
+ * all groups, course → that course, group → one tuple). An update that moves
+ * the window to another scope fires it once more for the scope it left, whose
+ * rollups counted the window until now.
  */
 class save_pause_window extends external_api {
     /**
@@ -122,23 +126,45 @@ class save_pause_window extends external_api {
             'timemodified' => $now,
         ];
 
+        $vacated = null;
         if ($id > 0) {
             $existing = $DB->get_record('block_feedback_tracker_cpause', ['id' => $id], '*', MUST_EXIST);
+            /* Authorise against the context the row already lives in, not just
+             * the scope the caller asked for. Checking only the requested scope
+             * would let anyone holding the capability in any course rewrite a
+             * row belonging to another course — or to the whole site. The
+             * sibling delete_pause_window does the same. */
+            $existingcontext = \context::instance_by_id((int) $existing->contextid);
+            self::validate_context($existingcontext);
+            require_capability('block/feedback_tracker:managepausewindows', $existingcontext);
+
             $record->id = (int) $existing->id;
             $DB->update_record('block_feedback_tracker_cpause', $record);
+
+            if ((string) $existing->scopelevel !== $scopelevel || (int) $existing->scopeid !== $scopeid) {
+                $vacated = cal_pause_updated::create([
+                    'context' => $existingcontext,
+                    'other'   => [
+                        'scopelevel' => (string) $existing->scopelevel,
+                        'scopeid' => (int) $existing->scopeid,
+                        'rowid' => $id,
+                    ],
+                ]);
+            }
         } else {
             $record->timecreated = $now;
             $id = (int) $DB->insert_record('block_feedback_tracker_cpause', $record);
         }
 
-        // The cal_pause_updated event doesn't declare 'objecttable' (so bulk-import
-        // and delete paths can also fire it), and Moodle requires both
-        // 'objectid' and 'objecttable' to be set together or not at all.
+        // The row id goes in 'other', not 'objectid': see cal_pause_updated::init().
         $event = cal_pause_updated::create([
             'context'  => $context,
             'other'    => ['scopelevel' => $scopelevel, 'scopeid' => $scopeid, 'rowid' => $id],
         ]);
         $event->trigger();
+        if ($vacated !== null) {
+            $vacated->trigger();
+        }
 
         return ['success' => true, 'id' => $id, 'calver' => calendar::current_version()];
     }

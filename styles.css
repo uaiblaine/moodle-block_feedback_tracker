@@ -3,33 +3,8 @@
  * Block Feedback tracker — block content styles.
  */
 
-/* Design tokens — calm "Academic Responsiveness" palette.
- * Per-band foreground/background pairs match the design mock; keep them in
- * lockstep with classes/output/score_gauge.php::BAND_COLOURS and
- * amd/src/lib/bands.js::BAND_COLOURS. */
+/* Type tokens. */
 :root {
-    --bft-surface: #fff;
-    --bft-surface-alt: #f7f8fa;
-    --bft-surface-dim: #f1f3f6;
-    --bft-border: #e5e7eb;
-    --bft-border-soft: #eef0f3;
-    --bft-text: #0f172a;
-    --bft-text-muted: #64748b;
-    --bft-text-faint: #94a3b8;
-
-    --bft-band-excellent-fg: #047857;
-    --bft-band-excellent-bg: #ecfdf5;
-    --bft-band-good-fg: #0e7490;
-    --bft-band-good-bg: #ecfeff;
-    --bft-band-regular-fg: #b45309;
-    --bft-band-regular-bg: #fffbeb;
-    --bft-band-critical-fg: #be4b25;
-    --bft-band-critical-bg: #fdf2ee;
-    --bft-band-pending-fg: #475569;
-    --bft-band-pending-bg: #f1f5f9;
-    --bft-band-nodata-fg: #64748b;
-    --bft-band-nodata-bg: #f1f5f9;
-
     --bft-font-display: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --bft-font-mono: 'JetBrains Mono', ui-monospace, "SFMono-Regular", Menlo, monospace;
 
@@ -50,6 +25,107 @@
     --bft-ls-label: 0.05em;
 }
 
+/* Colour tokens. Declared on body: it is an ancestor of everything the plugin paints, including
+ * anything core appends to document.body, and a custom property is resolved on the element that
+ * declares it, so body sees the --bs-* set whether the theme puts data-bs-theme on html or on body.
+ *
+ * Neutrals and the brand read the theme: Moodle 5.1+ declares the --bs-* set and redefines it in
+ * dark mode, Moodle 4.5 declares only the Bootstrap 4 names, and the literal is the last fallback.
+ * The band, plum and sand families are the plugin's own, and the dark-mode rule below gives each
+ * a counterpart. Each text colour keeps at least 4.5:1 on every surface colour it is painted on,
+ * in both modes. */
+body {
+    --bft-surface: var(--bs-body-bg, var(--white, #fff));
+    --bft-surface-alt: var(--bs-tertiary-bg, var(--light, #f7f8fa));
+    --bft-surface-dim: var(--bs-secondary-bg, #f1f3f6);
+    --bft-border: var(--bs-border-color, #e5e7eb);
+    --bft-border-soft: var(--bs-secondary-bg, #eef0f3);
+    --bft-border-strong: var(--bs-border-color, #cbd5e1);
+    --bft-text: var(--bs-body-color, #0f172a);
+    --bft-text-muted: var(--bs-secondary-color, #5f6b7f);
+    /* Equal to muted: any lighter grey falls under 4.5:1 on the dim surfaces. */
+    --bft-text-faint: var(--bft-text-muted);
+    /* Focus rings. The link colour is the brand in light mode and a tint of it in dark mode, where
+       Boost's --bs-primary is 3.02:1 on the body. */
+    --bft-brand: var(--bs-link-color, var(--primary, #0f6cbf));
+    --bft-shimmer: rgba(255, 255, 255, 0.6);
+
+    /* Band text (-fg), tint (-bg) and tint edge (-edge). The -fg values equal BAND_COLOURS in
+       amd/src/lib/bands.js except nodata; keep them in step when a band changes. */
+    --bft-band-excellent-fg: #047857;
+    --bft-band-excellent-bg: #ecfdf5;
+    --bft-band-excellent-edge: #a7f3d0;
+    --bft-band-good-fg: #0e7490;
+    --bft-band-good-bg: #ecfeff;
+    --bft-band-good-edge: #a5f3fc;
+    --bft-band-regular-fg: #b45309;
+    --bft-band-regular-bg: #fffbeb;
+    --bft-band-regular-edge: #fde68a;
+    --bft-band-critical-fg: #be4b25;
+    --bft-band-critical-bg: #fdf2ee;
+    --bft-band-critical-edge: #f5c4b0;
+    --bft-band-pending-fg: #475569;
+    --bft-band-pending-bg: #f1f5f9;
+    --bft-band-pending-edge: #cbd5e1;
+    /* Darker than BAND_COLOURS.nodata (#94a3b8) on purpose: that grey is a stroke colour, and as
+       text it is 2.6:1 on white. */
+    --bft-band-nodata-fg: #5f6b7f;
+    --bft-band-nodata-bg: #f1f5f9;
+    --bft-band-nodata-edge: #cbd5e1;
+
+    /* Band fills under --bft-on-fill text. They keep these values in dark mode, where the -fg
+       colours turn light. */
+    --bft-band-excellent-fill: #047857;
+    --bft-band-good-fill: #0e7490;
+    --bft-band-regular-fill: #b45309;
+    --bft-band-critical-fill: #be4b25;
+    --bft-band-pending-fill: #475569;
+    --bft-on-fill: #fff;
+
+    /* Dashboard accents: the warm hero gradient, the insight cards and the call-to-action buttons. */
+    --bft-warm-surface: #fdfbf7;
+    --bft-plum-fg: #6d4aac;
+    --bft-plum-bg: #f7f3fc;
+    --bft-plum-fill: #6d4aac;
+    --bft-plum-fill-hover: #5a3d8f;
+    --bft-sand-fg: #8a6420;
+    --bft-sand-bg: #fbf6ec;
+}
+
+/* Dark mode: Bootstrap 5.3's data-bs-theme attribute, which Moodle 5.3 writes on html and some
+ * themes write on body. Anchored at body so a dark scope deeper in the page, such as a navbar,
+ * does not match. Only the plugin's own colours need a counterpart: the --bs-* tokens above
+ * already follow the mode, and the fills keep their light values. */
+body[data-bs-theme="dark"],
+[data-bs-theme="dark"] body {
+    --bft-shimmer: rgba(255, 255, 255, 0.08);
+
+    --bft-band-excellent-fg: #6ee7b7;
+    --bft-band-excellent-bg: #0b3b2e;
+    --bft-band-excellent-edge: #065f46;
+    --bft-band-good-fg: #67e8f9;
+    --bft-band-good-bg: #0b3441;
+    --bft-band-good-edge: #155e75;
+    --bft-band-regular-fg: #fcd34d;
+    --bft-band-regular-bg: #3b2a0a;
+    --bft-band-regular-edge: #92400e;
+    --bft-band-critical-fg: #fdab8a;
+    --bft-band-critical-bg: #3d1d13;
+    --bft-band-critical-edge: #7c2d12;
+    --bft-band-pending-fg: #cbd5e1;
+    --bft-band-pending-bg: #1e293b;
+    --bft-band-pending-edge: #475569;
+    --bft-band-nodata-fg: #94a3b8;
+    --bft-band-nodata-bg: #1e293b;
+    --bft-band-nodata-edge: #475569;
+
+    --bft-warm-surface: #24211d;
+    --bft-plum-fg: #c4b5fd;
+    --bft-plum-bg: #2d2540;
+    --bft-sand-fg: #e8c67a;
+    --bft-sand-bg: #2f2717;
+}
+
 /* Mono utility — for numeric cells, score values, hour units. Pair with
  * font-variant-numeric: tabular-nums where vertical alignment matters. */
 .bft-mono {
@@ -59,16 +135,13 @@
 
 .block_feedback_tracker {
     font-family: var(--bft-font-display);
-    /* Match the dashboard's WCAG-AA faint text inside the block. */
-    --bft-text-faint: #6b7280;
 }
 
 /* Visible keyboard focus for every interactive control in the block. */
 .block_feedback_tracker a:focus-visible,
 .block_feedback_tracker button:focus-visible,
-.block_feedback_tracker select:focus-visible,
-.block_feedback_tracker summary:focus-visible {
-    outline: 2px solid var(--bft-band-good-fg);
+.block_feedback_tracker select:focus-visible {
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
     border-radius: 4px;
 }
@@ -105,13 +178,13 @@
     border-radius: 4px;
     padding: 0.25rem 0.4rem;
     min-height: 1.75rem;
-    background: #fff;
+    background: var(--bft-surface);
     color: var(--bft-text);
     font-size: var(--bft-fs-body);
 }
 
-/* Error banner and empty-state utility classes are global (used by the
- * block, the pending report page, the dashboard, and the spike harness). */
+/* Error banner and empty state. Global: also used on the standalone report
+ * and dashboard pages, outside the block wrapper. */
 
 .bft-error {
     background: #fee2e2;
@@ -162,8 +235,8 @@
 }
 
 .bft-retry-btn {
-    background: #ea580c;
-    border: 1px solid #ea580c;
+    background: #c2410c;
+    border: 1px solid #c2410c;
     border-radius: 4px;
     padding: 0.3rem 0.8rem;
     font-size: var(--bft-fs-body);
@@ -174,14 +247,18 @@
 
 .bft-retry-btn:hover,
 .bft-retry-btn:focus-visible {
-    background: #c2410c;
-    border-color: #c2410c;
+    background: #9a3412;
+    border-color: #9a3412;
     outline: none;
 }
 
+/* The busy state keeps a readable pair of its own instead of fading the
+ * button: its label ("Loading…") is text. */
 .bft-retry-btn:disabled,
 .bft-retry-busy {
-    opacity: 0.6;
+    background: #fff;
+    border-color: #c2410c;
+    color: #9a3412;
     cursor: progress;
 }
 
@@ -224,7 +301,7 @@
     gap: 0.6rem;
     border: 1px solid var(--bft-border);
     border-radius: 8px;
-    background: #fff;
+    background: var(--bft-surface);
     padding: 0.75rem;
 }
 
@@ -276,7 +353,7 @@
 .block_feedback_tracker .bft-skeleton-hero {
     position: relative;
     overflow: hidden;
-    background: #e9eef5;
+    background: var(--bft-surface-dim);
 }
 
 .block_feedback_tracker .bft-skeleton-line::after,
@@ -290,7 +367,7 @@
         linear-gradient(
             90deg,
             rgba(255, 255, 255, 0) 0,
-            rgba(255, 255, 255, 0.6) 50%,
+            var(--bft-shimmer) 50%,
             rgba(255, 255, 255, 0) 100%
         );
     animation: bft-shimmer 1.4s ease-in-out infinite;
@@ -314,7 +391,8 @@
 .block_feedback_tracker .bft-card {
     border: 1px solid var(--bft-border);
     border-radius: 8px;
-    background: #fff;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     overflow: hidden;
 }
 
@@ -350,10 +428,10 @@
 }
 
 .block_feedback_tracker .bft-card-title {
-    font-size: var(--bft-fs-title);
+    font-size: 0.95rem;
     font-weight: 700;
     color: var(--bft-text);
-    /* Clamp long group names to 2 lines with an ellipsis; full name on hover. */
+    /* Clamp long group names to 2 lines; GroupCard's title attribute shows the full name on hover. */
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -369,36 +447,13 @@
     text-overflow: ellipsis;
 }
 
-/* Preact group card: stack the sections vertically so they reflow down a
- * narrow block column instead of squeezing onto one row. (The server card's
- * .bft-card-body further below is a separate gauge | data flex-row.) */
+/* Group card: stack the sections vertically so they reflow down a narrow
+ * block column instead of squeezing onto one row. */
 .block_feedback_tracker .bft-card-stack {
     display: flex;
     flex-direction: column;
     gap: 0.625rem;
     padding: 0.75rem;
-}
-
-.block_feedback_tracker .bft-card-body {
-    padding: 0.75rem;
-}
-
-/* Server card (no-JS) uses a native <details>/<summary>: hide the default
- * disclosure marker and show a chevron consistent with the JS card. */
-.block_feedback_tracker summary.bft-card-head {
-    list-style: none;
-}
-.block_feedback_tracker summary.bft-card-head::-webkit-details-marker {
-    display: none;
-}
-.block_feedback_tracker details.bft-card > summary.bft-card-head::before {
-    content: "▸";
-    flex: 0 0 auto;
-    font-size: var(--bft-fs-meta);
-    color: var(--bft-text-muted);
-}
-.block_feedback_tracker details.bft-card[open] > summary.bft-card-head::before {
-    content: "▾";
 }
 
 /* Block footer — refresh control + objective sync/cache note. */
@@ -464,57 +519,51 @@
 
 .block_feedback_tracker .bft-loadmore:hover,
 .block_feedback_tracker .bft-loadmore:focus-visible {
-    background: #f1f3f6;
+    background: var(--bft-surface-dim);
     outline: none;
 }
 
 .block_feedback_tracker .bft-loadmore:disabled {
-    opacity: 0.6;
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
     cursor: progress;
 }
 
-/* Refresh-button rules are global (no `.block_feedback_tracker` ancestor
- * scope) so the same button styles work in the in-course block, on
- * pages/pending_report.php, on pages/teacher_dashboard.php, and on the
- * pages/spike_react.php harness — none of the standalone pages live
- * inside the block's `.block_feedback_tracker` wrapper. */
+/* Refresh button. Global: also used on pages/pending_report.php,
+ * pages/teacher_dashboard.php and pages/spike_react.php, which sit outside the
+ * block's .block_feedback_tracker wrapper. */
 
 .bft-refresh {
     background: none;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0 0.4rem;
     font-size: 0.9rem;
     line-height: 1.4;
     cursor: pointer;
-    color: #64748b;
+    color: var(--bft-text-muted);
 }
 
 .bft-refresh:hover,
 .bft-refresh:focus-visible {
-    color: #0f172a;
-    background: #f1f3f6;
+    color: var(--bft-text);
+    background: var(--bft-surface-dim);
     outline: none;
 }
 
-.bft-refresh:disabled {
-    cursor: not-allowed;
-}
-
+.bft-refresh:disabled,
 .bft-refresh-busy {
-    opacity: 0.6;
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
     cursor: progress;
 }
 
-.block_feedback_tracker .bft-card-title {
-    font-size: 0.95rem;
-    color: #0f172a;
-}
-
+/* Gauge beside a data column: the demo card on pages/spike_react.php. */
 .block_feedback_tracker .bft-card-body {
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
+    padding: 0.75rem;
 }
 
 .block_feedback_tracker .bft-card-gauge {
@@ -581,11 +630,10 @@
     line-height: 0;
 }
 
-/* The sparkline has two homes: the in-course block (under .block_feedback_tracker)
- * and the standalone dashboard courses table (under .bft-dashboard). These rules
- * are deliberately UNSCOPED so the geometry + zone colours apply in both — when
- * they were nested under .block_feedback_tracker the dashboard copy rendered the
- * zone <rect> with no fill (black) and the SVG never took the full cell width. */
+/* Unscoped: the sparkline also renders in the dashboard courses table
+ * (.bft-dashboard), outside the block wrapper, where block-scoped rules would
+ * leave the zone <rect> with the default black fill and the SVG narrower than
+ * its cell. */
 .bft-sparkline {
     width: 100%;
     height: 30px;
@@ -595,36 +643,27 @@
 /* Trend "improvement zone" — light-green desired band (effective hours
  * 0 -> goal), solid green baseline at 0, dotted green line at the goal.
  * Geometry comes from the SVG attributes; colours live here. Keep in
- * lockstep with amd/src/components/Sparkline.js + templates/sparkline.mustache. */
+ * lockstep with amd/src/components/Sparkline.js. */
 .bft-sparkline-zone {
-    fill: #dcfce7;
+    fill: var(--bft-band-excellent-bg);
     opacity: 0.6;
 }
 
 .bft-sparkline-zone-base {
-    stroke: #059669;
+    stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
 }
 
 .bft-sparkline-zone-top {
-    stroke: #22c55e;
+    stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
     stroke-dasharray: 3 2;
 }
 
 .bft-sparkline-zone-label {
-    fill: #059669;
+    fill: var(--bft-band-excellent-fg);
     font-size: 7px;
     font-weight: 600;
-}
-
-.block_feedback_tracker .bft-pause-strip {
-    margin-top: 0.5rem;
-    padding: 0.4rem 0.5rem;
-    background: #f1f3f6;
-    border-radius: 4px;
-    font-size: 0.78rem;
-    color: #475569;
 }
 
 .block_feedback_tracker .bft-card-foot {
@@ -636,10 +675,9 @@
     font-size: 0.78rem;
 }
 
-.block_feedback_tracker .bft-breakdown > summary,
 .block_feedback_tracker .bft-breakdown-toggle {
     cursor: pointer;
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-weight: 500;
     background: none;
     border: 0;
@@ -649,7 +687,7 @@
 
 .block_feedback_tracker .bft-breakdown-toggle:hover,
 .block_feedback_tracker .bft-breakdown-toggle:focus {
-    color: #0f172a;
+    color: var(--bft-text);
     outline: none;
 }
 
@@ -662,7 +700,7 @@
 .block_feedback_tracker .bft-breakdown-table th,
 .block_feedback_tracker .bft-breakdown-table td {
     padding: 0.2rem 0.4rem;
-    border-bottom: 1px solid #eef0f3;
+    border-bottom: 1px solid var(--bft-border-soft);
     text-align: left;
 }
 
@@ -673,7 +711,7 @@
 }
 
 .block_feedback_tracker .bft-breakdown-table tfoot th {
-    border-top: 2px solid #cbd5e1;
+    border-top: 2px solid var(--bft-border-strong);
     border-bottom: none;
     font-weight: 700;
 }
@@ -691,14 +729,13 @@
 }
 
 .bft-empty {
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-style: italic;
     font-size: 0.9rem;
 }
 
-/* Band-badge utility class is global — `<Badge>` renders inside the
- * block, the report table, the dashboard hero, the dashboard courses
- * table, the Grade Now panel, and the timeline modal. */
+/* Band badge. Global: <Badge> also renders on the report, dashboard and
+ * simulator pages, outside the block wrapper. */
 
 .bft-badge {
     display: inline-block;
@@ -720,6 +757,13 @@
     color: var(--bft-band-good-fg);
 }
 
+/* Drafts take the lighter nodata pair rather than an opacity, which would take the label under
+ * 4.5:1. */
+.bft-badge-draft {
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
+}
+
 .bft-badge-regular {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
@@ -733,6 +777,11 @@
 .bft-badge-pending {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
+}
+
+.bft-badge-nodata {
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
 }
 
 /* Drilldown / table badges reuse the same tokens. */
@@ -756,25 +805,26 @@
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
 }
+/* Needs its own rule: under Bootstrap 5 a bare .badge sets color: #fff and no
+   background, so the label renders white on white. Same colours as .bft-badge-draft. */
+.badge.badge-draft {
+    background: var(--bft-band-nodata-bg);
+    color: var(--bft-band-nodata-fg);
+}
 
 /* ------------------------------------------------------------------------
- * Teacher dashboard (Phase 2D) — pages/teacher_dashboard.php
+ * Teacher dashboard — pages/teacher_dashboard.php
  *
- * Rules are global (no .block_feedback_tracker prefix) because the
- * dashboard lives at a standalone admin URL, not inside the block's
- * sidebar wrapper.
+ * Global (no .block_feedback_tracker prefix): the dashboard is a standalone
+ * page, outside the block wrapper.
  * ------------------------------------------------------------------------ */
 
 .bft-dashboard {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    padding: 1.5rem 1.75rem 2rem;
     font-family: var(--bft-font-display);
-
-    /* Type-scale + tracking tokens now live in :root (shared with the block).
-     * Lift faint text to WCAG AA: #94a3b8 was ~2.6:1 on white (fail);
-     * #6b7280 is ~4.8:1, a touch lighter than --bft-text-muted. */
-    --bft-text-faint: #6b7280;
 }
 
 /* Visible keyboard-focus indicator for every interactive control on the
@@ -783,185 +833,13 @@
  * `outline: none` rules that only signalled focus with a colour change. */
 .bft-dashboard a:focus-visible,
 .bft-dashboard button:focus-visible {
-    outline: 2px solid var(--bft-plum-fg);
+    outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
     border-radius: 4px;
 }
 
-.bft-dashboard-hero {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1.25rem 1.5rem;
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-}
-
-.bft-dashboard-hero-text {
-    flex: 1 1 240px;
-}
-
-.bft-dashboard-hero-greeting {
-    margin: 0 0 0.25rem;
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: #0f172a;
-}
-
-.bft-dashboard-hero-subtitle {
-    margin: 0;
-    color: #64748b;
-    font-size: 0.95rem;
-}
-
-.bft-dashboard-hero-stats {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1.25rem;
-}
-
-.bft-dashboard-kpi {
-    display: flex;
-    flex-direction: column;
-    min-width: 72px;
-    line-height: 1.1;
-}
-
-.bft-dashboard-kpi-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: #0f172a;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-dashboard-kpi-label {
-    font-size: 0.72rem;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 0.15rem;
-}
-
-.bft-dashboard-score {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    padding-left: 1rem;
-    border-left: 1px solid #cbd5e1;
-}
-
-/* Cap the hero gauge so it can't outgrow the KPI row on narrow viewports.
- * Beyond max-width the SVG scales down; the responsive @media block below
- * drops the left border + padding when wrapped. */
-
-.bft-dashboard-score .bft-gauge {
-    width: 140px;
-    height: 140px;
-    max-width: 100%;
-}
-
-.bft-dashboard-score-inline {
-    font-weight: 700;
-    margin-right: 0.4rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-dashboard-section {
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-}
-
-.bft-dashboard-section-title {
-    margin: 0 0 0.75rem;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #0f172a;
-}
-
-.bft-dashboard-section-subtitle {
-    margin: 0.25rem 0 0.75rem;
-    color: #64748b;
-    font-size: 0.85rem;
-}
-
-/* Grade Now panel (Phase 3A). */
-
-.bft-gradenow-head {
-    margin-bottom: 0.5rem;
-}
-
-.bft-gradenow-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.bft-gradenow-item {
-    padding: 0.55rem 0.75rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    background: #fff;
-}
-
-.bft-gradenow-item:hover {
-    background: #f8fafc;
-}
-
-.bft-gradenow-item-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 0.5rem;
-}
-
-.bft-gradenow-item-name {
-    font-weight: 600;
-    color: #0f172a;
-    text-decoration: none;
-}
-
-.bft-gradenow-item-name:hover,
-.bft-gradenow-item-name:focus {
-    text-decoration: underline;
-    color: #4338ca;
-}
-
-.bft-gradenow-item-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.2rem 0.75rem;
-    margin-top: 0.2rem;
-    font-size: 0.82rem;
-    color: #64748b;
-}
-
-.bft-gradenow-item-activity {
-    color: #475569;
-}
-
-.bft-gradenow-item-course {
-    font-style: italic;
-}
-
-.bft-gradenow-item-wait {
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
-    color: #0f172a;
-    font-weight: 500;
-}
-
 /* ------------------------------------------------------------------------
- * Pending grading report page (Phase 2C) — pages/pending_report.php
+ * Pending grading report page — pages/pending_report.php
  * ------------------------------------------------------------------------ */
 
 .bft-report {
@@ -981,8 +859,10 @@
     flex: 1 1 220px;
     min-width: 160px;
     padding: 0.3rem 0.5rem;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     font-size: 0.9rem;
 }
 
@@ -991,7 +871,7 @@
     align-items: center;
     gap: 0.3rem;
     font-size: 0.78rem;
-    color: #64748b;
+    color: var(--bft-text-muted);
 }
 
 .bft-filter-label > span {
@@ -1001,11 +881,11 @@
 }
 
 .bft-filter-label select {
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0.2rem 0.4rem;
-    background: #fff;
-    color: #0f172a;
+    background: var(--bft-surface);
+    color: var(--bft-text);
     font-size: 0.85rem;
 }
 
@@ -1019,14 +899,14 @@
 .bft-report-table td {
     padding: 0.4rem 0.6rem;
     text-align: left;
-    border-bottom: 1px solid #eef0f3;
+    border-bottom: 1px solid var(--bft-border-soft);
 }
 
 .bft-report-table thead th {
-    background: #f8fafc;
+    background: var(--bft-surface-alt);
     font-weight: 600;
-    color: #475569;
-    border-bottom: 2px solid #cbd5e1;
+    color: var(--bft-text-muted);
+    border-bottom: 2px solid var(--bft-border-strong);
 }
 
 .bft-th-sortable-btn {
@@ -1040,7 +920,7 @@
 }
 
 .bft-th-sortable.is-active .bft-th-sortable-btn {
-    color: #0f172a;
+    color: var(--bft-text);
 }
 
 .bft-report-row {
@@ -1050,12 +930,12 @@
 .bft-report-row:hover,
 .bft-report-row:focus,
 .bft-report-row:focus-within {
-    background: #f1f5f9;
+    background: var(--bft-surface-alt);
     outline: none;
 }
 
 .bft-report-row:focus-visible {
-    box-shadow: inset 0 0 0 2px #6366f1;
+    box-shadow: inset 0 0 0 2px var(--bft-brand);
 }
 
 .bft-pagination {
@@ -1068,155 +948,105 @@
 }
 
 .bft-pagination button {
-    background: #fff;
-    border: 1px solid #cbd5e1;
+    background: var(--bft-surface);
+    border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0.2rem 0.6rem;
-    color: #0f172a;
+    color: var(--bft-text);
     cursor: pointer;
 }
 
 .bft-pagination button:disabled {
-    opacity: 0.5;
+    background: var(--bft-surface-dim);
+    border-color: var(--bft-border);
+    color: var(--bft-text-muted);
     cursor: not-allowed;
 }
 
 .bft-pagination-state {
-    color: #64748b;
+    color: var(--bft-text-muted);
     font-variant-numeric: tabular-nums;
 }
 
 /* ------------------------------------------------------------------------
- * Mobile responsive — narrow viewports.
- *
- * Tables get a horizontal scroll surface (Bootstrap-style) so the columns
- * keep their width but the table doesn't blow out the layout. Hero KPI
- * tiles stack via existing flex-wrap; we just remove the score block's
- * left border when it wraps below the KPI row so it doesn't look orphaned.
+ * Narrow viewports: report tables reflow into cards.
  * ------------------------------------------------------------------------ */
 
 @media (max-width: 640px) {
-    .bft-report-table {
+    /* Report tables (pending / graded / drafts) reflow into stacked cards,
+     * mirroring the dashboard courses table. The native <table> keeps its
+     * semantics: the column headers stay in the accessibility tree (clipped,
+     * not display:none) and each cell shows its column caption from
+     * data-label. */
+    .bft-report-table,
+    .bft-report-table tbody {
         display: block;
-        overflow-x: auto;
+        /* Strip theme-applied table chrome (border, radius, shadow, padding)
+         * so only the per-row cards draw a frame — without this the bare
+         * <table> paints a faint outer box around the cards. The dashboard
+         * courses table makes the same reset in its card mode. */
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+    .bft-report-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
         white-space: nowrap;
+        border: 0;
     }
-
-    .bft-dashboard-score {
-        border-left: 0;
-        padding-left: 0;
-        align-items: flex-start;
+    .bft-report-row {
+        display: block;
+        margin-bottom: 0.6rem;
+        border: 1px solid var(--bft-border);
+        border-radius: 10px;
+        background: var(--bft-surface);
     }
-
-    .bft-dashboard-hero {
-        padding: 1rem;
+    .bft-report-table td {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        text-align: right;
+        padding: 0.5rem 0.75rem;
+        border-top: 1px solid var(--bft-border-soft);
+        border-bottom: 0;
+        white-space: normal;
     }
-
-    .bft-dashboard-hero-greeting {
-        font-size: 1.2rem;
+    .bft-report-table td[data-label]::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        font-size: var(--bft-fs-eyebrow, 0.6875rem);
+        font-weight: 700;
+        letter-spacing: var(--bft-ls-label, 0.05em);
+        text-transform: uppercase;
+        color: var(--bft-text-muted);
+        text-align: left;
     }
-
-    .bft-dashboard-section {
-        padding: 0.75rem 1rem;
+    /* First cell (student) reads as the card title — full width, no caption. */
+    .bft-report-table td.bft-report-cell-title {
+        justify-content: flex-start;
+        border-top: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--bft-text);
+    }
+    /* Action button right-aligns at the card foot, like the dashboard CTA. */
+    .bft-report-table td.bft-report-col-action {
+        justify-content: flex-end;
     }
 
     .bft-report-controls {
         gap: 0.4rem;
     }
-}
-
-/* ------------------------------------------------------------------------
- * Pause timeline modal (Phase 2C) — components/PauseTimelineModal.js
- *
- * Lives inside Moodle's modal chrome (.modal-dialog .modal-body), so these
- * rules are global (not scoped under .block_feedback_tracker) — the body
- * isn't a descendant of the block when rendered into a modal.
- * ------------------------------------------------------------------------ */
-
-.bft-modal-loading,
-.bft-timeline {
-    font-size: 0.9rem;
-    color: #0f172a;
-}
-
-.bft-timeline-summary {
-    background: #f8fafc;
-    border-left: 3px solid #94a3b8;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    border-radius: 4px;
-}
-
-.bft-timeline-summary-head {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 0.75rem;
-    align-items: baseline;
-    margin-bottom: 0.4rem;
-}
-
-.bft-timeline-summary-activity {
-    color: #64748b;
-    font-size: 0.85rem;
-}
-
-.bft-timeline-summary-meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.1rem 0.5rem;
-    margin: 0;
-    font-size: 0.85rem;
-}
-
-.bft-timeline-summary-meta dt {
-    color: #64748b;
-    font-weight: 500;
-}
-
-.bft-timeline-summary-meta dd {
-    margin: 0;
-    color: #0f172a;
-    font-variant-numeric: tabular-nums;
-}
-
-.bft-timeline-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-.bft-timeline-item {
-    padding: 0.5rem 0.75rem;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
-}
-
-.bft-timeline-reason {
-    font-weight: 600;
-    color: #0f172a;
-}
-
-.bft-timeline-range {
-    font-size: 0.82rem;
-    color: #475569;
-    font-variant-numeric: tabular-nums;
-    margin-top: 0.1rem;
-}
-
-.bft-timeline-note {
-    font-size: 0.82rem;
-    color: #64748b;
-    margin-top: 0.2rem;
-}
-
-.bft-timeline-empty {
-    padding: 0.5rem 0.75rem;
-    color: #64748b;
-    font-style: italic;
 }
 
 /* Sortable pending-submissions table (AMD module pending_table.js). */
@@ -1226,29 +1056,35 @@ table.bft-sortable th[data-sort] {
     white-space: nowrap;
 }
 
+/* The arrow is the only sign that a header sorts, so it needs 3:1 as a
+ * non-text indicator. The header's colours belong to the theme (core's
+ * generaltable), so the arrow brings its own pair: muted on the plugin surface
+ * while idle, full text colour once the column sorts. */
 table.bft-sortable th[data-sort]::after {
-    content: ' ↕';
-    opacity: 0.3;
+    content: '↕';
+    margin-left: 0.3em;
+    padding: 0 0.2em;
+    border-radius: 3px;
+    background: var(--bft-surface);
+    color: var(--bft-text-muted);
     font-size: 0.8em;
 }
 
 table.bft-sortable th.bft-sort-asc::after {
-    content: ' ▲';
-    opacity: 1;
+    content: '▲';
+    color: var(--bft-text);
 }
 
 table.bft-sortable th.bft-sort-desc::after {
-    content: ' ▼';
-    opacity: 1;
+    content: '▼';
+    color: var(--bft-text);
 }
 
 /* ------------------------------------------------------------------------
- * Phase 3B atoms — block-view recomposition.
+ * Block-view components (GroupCard and its parts).
  *
- * The rules here are global (no .block_feedback_tracker prefix) so the
- * components can be reused from the report and dashboard views in 3D / 3E
- * without restyling. Visual tokens come from the :root block at the top
- * of this file.
+ * Global (no .block_feedback_tracker prefix) so the report and dashboard
+ * views can reuse them. Tokens come from the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* ScoreRing — flex: 0 0 auto so it never shrinks inside a hero row. */
@@ -1328,39 +1164,130 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text-muted);
 }
 
-/* Paused note — shared by OverallBanner and the report page's callout. */
-.bft-paused-note {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.7rem;
-    color: var(--bft-text-muted);
-    line-height: 1.4;
-    padding-top: 0.4rem;
-    border-top: 1px dashed var(--bft-border-soft);
+/* Band tone of a hero or notice section (bft-rh-tone-<band>): the band's text, tint and edge
+ * colours, for the section's own rules to read. The scheduled-pause notice paints with them; the
+ * heroes carry the class too, and show their band through the ring, the score and the badge. */
+.bft-rh-tone-excellent {
+    --bft-tone-fg: var(--bft-band-excellent-fg);
+    --bft-tone-bg: var(--bft-band-excellent-bg);
+    --bft-tone-edge: var(--bft-band-excellent-edge);
+}
+.bft-rh-tone-good {
+    --bft-tone-fg: var(--bft-band-good-fg);
+    --bft-tone-bg: var(--bft-band-good-bg);
+    --bft-tone-edge: var(--bft-band-good-edge);
+}
+.bft-rh-tone-regular {
+    --bft-tone-fg: var(--bft-band-regular-fg);
+    --bft-tone-bg: var(--bft-band-regular-bg);
+    --bft-tone-edge: var(--bft-band-regular-edge);
+}
+.bft-rh-tone-critical {
+    --bft-tone-fg: var(--bft-band-critical-fg);
+    --bft-tone-bg: var(--bft-band-critical-bg);
+    --bft-tone-edge: var(--bft-band-critical-edge);
+}
+.bft-rh-tone-pending {
+    --bft-tone-fg: var(--bft-band-pending-fg);
+    --bft-tone-bg: var(--bft-band-pending-bg);
+    --bft-tone-edge: var(--bft-band-pending-edge);
+}
+.bft-rh-tone-nodata {
+    --bft-tone-fg: var(--bft-band-nodata-fg);
+    --bft-tone-bg: var(--bft-band-nodata-bg);
+    --bft-tone-edge: var(--bft-band-nodata-edge);
 }
 
-.bft-paused-swatch {
+/* Scheduled-pause notice ("Upcoming pause"): attention card shared by the in-course block
+   (compact variant), the dashboard and the report. It paints with the tone class beside it;
+   ScheduledPauses passes bft-rh-tone-regular, the amber one. */
+.bft-scheduled {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--bft-tone-bg);
+    color: var(--bft-text);
+    border: 1px solid var(--bft-tone-edge);
+    border-radius: 12px;
+}
+
+.bft-scheduled-swatch {
     width: 12px;
     height: 12px;
     flex: 0 0 auto;
+    margin-top: 0.2rem;
     border-radius: 3px;
-    background: repeating-linear-gradient(45deg, #cbd5e1 0 2px, #e2e8f0 2px 4px);
-    border: 1px solid #cbd5e1;
+    background: repeating-linear-gradient(45deg, var(--bft-tone-edge) 0 2px, var(--bft-tone-bg) 2px 4px);
+    border: 1px solid var(--bft-tone-edge);
 }
 
-.bft-paused-eyebrow {
-    color: var(--bft-text-faint);
+.bft-scheduled-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.bft-scheduled-eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    font-weight: 600;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--bft-tone-fg);
+    margin-bottom: 0.4rem;
 }
 
-.bft-paused-next {
+.bft-scheduled-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.bft-scheduled-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    line-height: 1.35;
+}
+
+.bft-scheduled-item + .bft-scheduled-item {
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--bft-tone-edge);
+}
+
+.bft-scheduled-label {
+    font-weight: 600;
+    color: var(--bft-text);
+}
+
+.bft-scheduled-when {
+    font-size: 0.85rem;
+    color: var(--bft-tone-fg);
+}
+
+.bft-scheduled-type {
+    font-size: 0.78rem;
     color: var(--bft-text-muted);
 }
 
-/* KpiTile — 3-column grid container styled by GroupCard / report views. */
+/* Compact variant for the narrow in-course block. */
+.bft-scheduled-compact {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.7rem;
+    border-radius: 8px;
+}
+
+.bft-scheduled-compact .bft-scheduled-eyebrow {
+    font-size: 0.65rem;
+}
+
+.bft-scheduled-compact .bft-scheduled-when {
+    font-size: 0.8rem;
+}
+
+/* KpiTile row in GroupCard: three tiles that wrap in a narrow block column. */
 .bft-kpi-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
@@ -1486,7 +1413,7 @@ table.bft-sortable th.bft-sort-desc::after {
     flex: 0 0 auto;
 }
 
-/* StatTile — clickable Pending / At risk / Priority tiles. */
+/* StatTile: the clickable Waiting / Attention / Priority tiles in GroupCard. */
 .bft-stat-row {
     display: flex;
     flex-wrap: wrap;
@@ -1511,7 +1438,15 @@ table.bft-sortable th.bft-sort-desc::after {
     text-align: left;
     text-decoration: none;
     font-family: inherit;
-    transition: background 0.12s;
+    transition: box-shadow 0.12s;
+}
+
+/* Hover and focus draw a ring in the tile's own text colour, which keeps at least 4.5:1 on the
+ * tile in both colour modes. */
+.bft-stat-tile:hover,
+.bft-stat-tile:focus-visible {
+    box-shadow: inset 0 0 0 2px currentcolor;
+    outline: none;
 }
 
 .bft-stat-tile-label {
@@ -1519,7 +1454,6 @@ table.bft-sortable th.bft-sort-desc::after {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    opacity: 0.78;
     /* Break an over-long single word onto two lines rather than overflow. */
     overflow-wrap: anywhere;
 }
@@ -1535,32 +1469,14 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text);
 }
 
-.bft-stat-tile-tone-neutral:hover,
-.bft-stat-tile-tone-neutral:focus-visible {
-    background: var(--bft-surface-dim);
-    outline: none;
-}
-
 .bft-stat-tile-tone-warn {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
 }
 
-.bft-stat-tile-tone-warn:hover,
-.bft-stat-tile-tone-warn:focus-visible {
-    background: #fef3c7;
-    outline: none;
-}
-
 .bft-stat-tile-tone-critical {
     background: var(--bft-band-critical-bg);
     color: var(--bft-band-critical-fg);
-}
-
-.bft-stat-tile-tone-critical:hover,
-.bft-stat-tile-tone-critical:focus-visible {
-    background: #fce4d6;
-    outline: none;
 }
 
 /* PeerContext. */
@@ -1621,11 +1537,6 @@ table.bft-sortable th.bft-sort-desc::after {
     line-height: 1;
 }
 
-.bft-peer-hours {
-    font-size: 0.65rem;
-    color: var(--bft-text-muted);
-}
-
 /* TimelineBar (activity open/close). */
 .bft-timeline-bar {
     display: flex;
@@ -1650,7 +1561,7 @@ table.bft-sortable th.bft-sort-desc::after {
 }
 
 .bft-timeline-bar-date-overdue {
-    color: #c2410c;
+    color: var(--bft-band-critical-fg);
     font-weight: 700;
 }
 
@@ -1677,7 +1588,7 @@ table.bft-sortable th.bft-sort-desc::after {
     width: 8px;
     height: 8px;
     border-radius: 2px;
-    box-shadow: 0 0 0 1.5px #fff;
+    box-shadow: 0 0 0 1.5px var(--bft-surface);
 }
 
 /* Before the open date: teal track, thumb pinned at the left. */
@@ -1799,8 +1710,9 @@ table.bft-sortable th.bft-sort-desc::after {
     text-decoration: underline;
 }
 
-/* Clickable action chip: links to the group-override editor. Variant colour
- * signals the state — done (teal), override (orange), create (neutral). */
+/* Activity action chip, a link to the group-override editor when the viewer
+ * can edit it. Colour signals the state: done (teal), override (orange),
+ * create (neutral). */
 .bft-activity-action {
     flex: none;
     font-size: 0.55rem;
@@ -1824,8 +1736,8 @@ a.bft-activity-action:focus {
 }
 
 .bft-activity-action-override {
-    color: #c2410c;
-    background: #fbe9d0;
+    color: var(--bft-band-critical-fg);
+    background: var(--bft-band-critical-bg);
 }
 
 .bft-activity-action-create {
@@ -1834,8 +1746,8 @@ a.bft-activity-action:focus {
     border: 1px solid var(--bft-border);
 }
 
-/* Static, non-editable badge: "Sem regra" (no manage capability + no schedule).
- * Same look as the old rule_off chip, but as a non-interactive span. */
+/* "No rule" chip: the viewer cannot manage the activity and it has no
+ * schedule. Rendered as a plain span, not a link. */
 .bft-activity-action-norule {
     color: var(--bft-text-muted);
     background: var(--bft-surface-dim);
@@ -1843,11 +1755,10 @@ a.bft-activity-action:focus {
 }
 
 /* ------------------------------------------------------------------------
- * Phase 3D — pending report page atoms.
+ * Pending report page components — pages/pending_report.php
  *
- * Rules are global (no .block_feedback_tracker scope) so they apply on
- * pages/pending_report.php which sits outside the block wrapper. Tokens
- * come from the :root block at the top of this file.
+ * Global (no .block_feedback_tracker scope): the page sits outside the block
+ * wrapper. Tokens come from the top of this file.
  * ------------------------------------------------------------------------ */
 
 /* Breadcrumb above the title. */
@@ -1910,242 +1821,6 @@ a.bft-activity-action:focus {
     gap: 0.35rem;
 }
 
-.bft-report-subline-classes {
-    color: var(--bft-text-muted);
-}
-
-/* Hero metric row — 4 cards (Score / Effective / SLA / Trend). */
-.bft-hero-row {
-    display: grid;
-    grid-template-columns: 1.5fr 1fr 1fr 1fr;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-}
-
-.bft-hero-card {
-    padding: 0.875rem 1rem;
-    border-radius: 10px;
-    background: var(--bft-surface);
-    border: 1px solid var(--bft-border);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    min-height: 130px;
-    min-width: 0;
-}
-
-.bft-hero-card-wide {
-    /* Stretches across 1.5fr via grid-template; this class is a stable hook
-       for callers that want to apply additional styling. */
-    background: var(--bft-surface);
-}
-
-.bft-hero-card-eyebrow {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.65rem;
-    font-weight: 700;
-    color: var(--bft-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-.bft-hero-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    flex: 1;
-    min-width: 0;
-}
-
-.bft-info-dot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--bft-surface-dim);
-    color: var(--bft-text-muted);
-    font-size: 0.62rem;
-    font-weight: 700;
-    cursor: help;
-    font-family: var(--bft-font-display);
-    letter-spacing: 0;
-}
-
-/* Hero score card — left "wide" tile. */
-.bft-hero-score {
-    display: flex;
-    align-items: center;
-    gap: 0.875rem;
-    margin-top: 0.125rem;
-}
-
-.bft-hero-score-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-}
-
-.bft-hero-score-row {
-    display: flex;
-    align-items: baseline;
-    gap: 0.25rem;
-}
-
-.bft-hero-score-val {
-    font-size: 2.2rem;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.05em;
-}
-
-.bft-hero-score-of {
-    font-size: 0.75rem;
-    color: var(--bft-text-muted);
-    font-weight: 700;
-}
-
-.bft-hero-score-note {
-    font-size: 0.7rem;
-    color: var(--bft-text-faint);
-    font-weight: 600;
-    letter-spacing: 0.01em;
-}
-
-/* Hero KPI tiles (Effective / SLA / Trend). */
-.bft-hero-kpi {
-    display: flex;
-    align-items: baseline;
-    gap: 0.3rem;
-}
-
-.bft-hero-kpi-val {
-    font-size: 1.625rem;
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.04em;
-    display: inline-flex;
-    align-items: center;
-}
-
-.bft-hero-kpi-unit {
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--bft-text-muted);
-}
-
-.bft-hero-kpi-sub {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin-top: 0.2rem;
-}
-
-.bft-hero-kpi-sub-label {
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: var(--bft-text-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.bft-hero-kpi-sub-value {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--bft-text-muted);
-}
-
-.bft-hero-kpi-chips {
-    display: flex;
-    gap: 0.35rem;
-    margin-top: 0.25rem;
-    flex-wrap: wrap;
-}
-
-.bft-hero-chip {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.18rem 0.5rem;
-    border-radius: 999px;
-    letter-spacing: 0.02em;
-}
-
-.bft-hero-chip-regular {
-    color: var(--bft-band-regular-fg);
-    background: var(--bft-band-regular-bg);
-}
-
-.bft-hero-chip-critical {
-    color: var(--bft-band-critical-fg);
-    background: var(--bft-band-critical-bg);
-}
-
-.bft-hero-spark {
-    margin-top: 0.5rem;
-    line-height: 0;
-}
-
-/* Paused callout — transparency strip. */
-.bft-paused-callout {
-    margin-bottom: 0.875rem;
-    padding: 0.75rem 0.875rem;
-    background: var(--bft-surface-alt);
-    border: 1px solid var(--bft-border-soft);
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.bft-paused-callout-swatch {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-    border-radius: 3px;
-    background: repeating-linear-gradient(45deg, #cbd5e1 0 2px, #e2e8f0 2px 4px);
-    border: 1px solid #cbd5e1;
-}
-
-.bft-paused-callout-text {
-    flex: 1;
-    min-width: 0;
-}
-
-.bft-paused-callout-title {
-    font-size: 0.78rem;
-    font-weight: 800;
-    color: var(--bft-text);
-    letter-spacing: 0.01em;
-}
-
-.bft-paused-callout-body {
-    font-size: 0.75rem;
-    color: var(--bft-text-muted);
-    margin-top: 0.15rem;
-    line-height: 1.5;
-}
-
-.bft-paused-callout-view {
-    padding: 0.4rem 0.75rem;
-    border-radius: 6px;
-    background: var(--bft-surface);
-    border: 1px solid var(--bft-border);
-    color: var(--bft-text);
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: inherit;
-    cursor: pointer;
-}
-
-.bft-paused-callout-view:hover,
-.bft-paused-callout-view:focus-visible {
-    background: var(--bft-surface-alt);
-    outline: none;
-}
-
 /* Status distribution bar — click a segment to filter. */
 .bft-dist {
     margin-bottom: 0.875rem;
@@ -2177,8 +1852,9 @@ a.bft-activity-action:focus {
 
 .bft-dist-bar {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
-    height: 48px;
+    min-height: 48px;
 }
 
 .bft-dist-seg {
@@ -2190,40 +1866,49 @@ a.bft-activity-action:focus {
     border-radius: 8px;
     border: none;
     cursor: pointer;
-    color: #fff;
+    /* Each tone class below sets the token. */
+    background: var(--bft-dist-tone);
+    color: var(--bft-on-fill);
     font-family: inherit;
-    transition: opacity 0.15s;
+    transition: background-color 0.15s, color 0.15s;
     overflow: hidden;
     /* Floor wide enough that a zero-count segment still shows its full label
      * instead of clipping (the flex-basis is 0, so without this the label is
      * cropped when a band has no rows). */
     min-width: 5.25rem;
-}
-
-.bft-dist-seg-dim {
-    opacity: 0.28;
+    /* Hold full height when the bar wraps onto multiple rows on narrow
+     * screens — the bar's flex stretch no longer sets it. */
+    min-height: 48px;
 }
 
 .bft-dist-seg-excellent {
-    background: var(--bft-band-excellent-fg);
+    --bft-dist-tone: var(--bft-band-excellent-fill);
 }
 .bft-dist-seg-good {
-    background: var(--bft-band-good-fg);
+    --bft-dist-tone: var(--bft-band-good-fill);
 }
 .bft-dist-seg-regular {
-    background: var(--bft-band-regular-fg);
+    --bft-dist-tone: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-critical {
-    background: var(--bft-band-critical-fg);
+    --bft-dist-tone: var(--bft-band-critical-fill);
 }
 .bft-dist-seg-aguardando {
-    background: var(--bft-band-pending-fg);
+    --bft-dist-tone: var(--bft-band-pending-fill);
 }
 .bft-dist-seg-atencao {
-    background: var(--bft-band-regular-fg);
+    --bft-dist-tone: var(--bft-band-regular-fill);
 }
 .bft-dist-seg-prioridade {
-    background: var(--bft-band-critical-fg);
+    --bft-dist-tone: var(--bft-band-critical-fill);
+}
+
+/* The segments not selected while one filters the table. They stay buttons,
+ * so their labels keep a readable pair; the band shows as a stripe. */
+.bft-dist-seg.bft-dist-seg-dim {
+    background: var(--bft-surface-dim);
+    color: var(--bft-text-muted);
+    box-shadow: inset 0 -4px 0 var(--bft-dist-tone);
 }
 
 .bft-dist-seg-n {
@@ -2235,7 +1920,6 @@ a.bft-activity-action:focus {
 .bft-dist-seg-l {
     font-size: 0.65rem;
     font-weight: 700;
-    opacity: 0.95;
     letter-spacing: 0.02em;
     text-transform: uppercase;
     max-width: 100%;
@@ -2244,47 +1928,8 @@ a.bft-activity-action:focus {
     text-overflow: ellipsis;
 }
 
-/* Segmented filter — used by the status toolbar. */
-.bft-segmented {
-    display: inline-flex;
-    background: var(--bft-surface-dim);
-    border-radius: 6px;
-    padding: 2px;
-}
-
-.bft-segmented-btn {
-    padding: 0.3rem 0.625rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.72rem;
-    font-weight: 700;
-    font-family: inherit;
-    letter-spacing: 0.01em;
-    background: transparent;
-    color: var(--bft-text-muted);
-}
-
-.bft-segmented-btn.is-active {
-    background: var(--bft-text);
-    color: #fff;
-}
-
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-excellent {
-    background: var(--bft-band-excellent-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-good {
-    background: var(--bft-band-good-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-regular {
-    background: var(--bft-band-regular-fg);
-}
-.bft-segmented-btn.is-active.bft-segmented-btn-tone-critical {
-    background: var(--bft-band-critical-fg);
-}
-
-/* Report controls (toolbar) — keep existing widths, just tweak alignment.
-   The existing .bft-report-controls flexbox layout is reused. */
+/* Spacer that pushes the controls after it to the end of the
+   .bft-report-controls row. */
 .bft-report-controls-spacer {
     flex: 1;
 }
@@ -2381,49 +2026,119 @@ a.bft-activity-action:focus {
     border: 1px solid #cbd5e1;
 }
 
-/* Mobile responsive — collapse hero grid to 2 columns then 1. */
-@media (max-width: 900px) {
-    .bft-hero-row {
-        grid-template-columns: 1fr 1fr;
-    }
+/* Awaiting-release chip: a marked submission the marking workflow has not
+ * released yet. Amber rather than a band colour — it is an outstanding action,
+ * not a result. */
+.bft-row-release-wrap {
+    position: relative;
+    display: inline-flex;
+    margin-left: 0.3rem;
 }
 
-@media (max-width: 540px) {
-    .bft-hero-row {
-        grid-template-columns: 1fr;
-    }
+.bft-badge-release {
+    border: 1px solid #f59e0b;
+    background: #fef3c7;
+    color: #92400e;
+    cursor: pointer;
+}
 
-    .bft-paused-callout {
-        flex-direction: column;
-        align-items: flex-start;
-    }
+.bft-badge-release:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+/* Answered outside the activity. Blue rather than amber: it is a statement of
+   provenance, not a warning — the response did reach the student. */
+.bft-badge-gradebook {
+    border: 1px solid #3b82f6;
+    background: #dbeafe;
+    color: #1e40af;
+    cursor: pointer;
+}
+
+.bft-badge-gradebook:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+/* A grade the student cannot see. Grey rather than red: nothing is wrong, the
+   feedback simply has not arrived yet, and the row says so instead of letting
+   the closed clock imply otherwise. */
+.bft-badge-hiddengrade {
+    border: 1px solid #94a3b8;
+    background: #f1f5f9;
+    color: #334155;
+    cursor: pointer;
+}
+
+.bft-badge-hiddengrade:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+/* Work handed in again after a mark (core's "Graded - resubmitted"). Plum: it
+   says why the row is back, neither a warning nor a result. The .badge form is
+   the drilldown's, qualified because a bare Bootstrap badge sets its own
+   colours. */
+.bft-badge-resubmitted,
+.badge.bft-badge-resubmitted {
+    border: 1px solid var(--bft-plum-fg);
+    background: var(--bft-plum-bg);
+    color: var(--bft-plum-fg);
+}
+
+button.bft-badge-resubmitted {
+    cursor: pointer;
+}
+
+button.bft-badge-resubmitted:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+/* Queue-to-turnaround chip: the response interval split by owner. Muted, so
+ * it reads as annotation beside the result badge rather than competing with
+ * it. */
+.bft-row-split {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.22rem;
+    margin-left: 0.35rem;
+    font-size: 0.62rem;
+    font-family: var(--bft-font-mono);
+    color: var(--bft-text-muted);
+    white-space: nowrap;
+}
+
+.bft-row-split-alloc {
+    font-weight: 700;
+}
+
+.bft-row-release-pop {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    width: max-content;
+    max-width: 260px;
+    padding: 0.45rem 0.6rem;
+    border-radius: 8px;
+    background: var(--bft-surface);
+    border: 1px solid var(--bft-border-soft);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+    color: var(--bft-text);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: normal;
+    text-align: left;
 }
 
 /* ----------------------------------------------------------------------
- * Phase 3E — dashboard redesign atoms.
- *
- * Decorative palette extensions for the warm hero gradient + insight
- * card tones. Plum / sand are new tokens scoped to the dashboard.
+ * Dashboard components: header, responsiveness hero, insight and priority
+ * cards, courses table.
  * ---------------------------------------------------------------------- */
-
-:root {
-    --bft-warm-surface: #fdfbf7;
-    --bft-plum-fg: #6d4aac;
-    --bft-plum-bg: #f5f0fb;
-    --bft-sand-fg: #a37a2a;
-    --bft-sand-bg: #fbf6ec;
-}
-
-/* Override the legacy Phase 2D dashboard hero block with a no-op so the
-   new flex-based header takes over. The class name persists to keep the
-   .min.js mount-point selector valid. */
-.bft-dashboard {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-    font-family: var(--bft-font-display);
-    padding: 1.5rem 1.75rem 2rem;
-}
 
 /* Header row — brandtag eyebrow, greeting, subline + refresh button. */
 .bft-dashboard-header {
@@ -2479,13 +2194,12 @@ a.bft-activity-action:focus {
     color: var(--bft-text-muted);
 }
 
-/* v1.0.11 — most-recent named optional event from the academic calendar.
-   Sits in the subline alongside the business-chip. Uses the plum tone
-   from the design's "warm" accents so the event reads as celebratory
-   rather than alarmist. */
+/* Most recent named optional event from the academic calendar, beside the
+   business-hours chip in the subline. Plum, so the event reads as
+   celebratory rather than alarmist. */
 .bft-dashboard-event-chip {
     color: var(--bft-text);
-    background: var(--bft-plum-bg, #f5f0fb);
+    background: var(--bft-plum-bg);
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
     font-size: var(--bft-fs-meta);
@@ -2496,7 +2210,7 @@ a.bft-activity-action:focus {
 }
 
 .bft-dashboard-event-chip-label {
-    color: var(--bft-plum-fg, #6d4aac);
+    color: var(--bft-plum-fg);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: var(--bft-ls-label);
@@ -2520,7 +2234,8 @@ a.bft-activity-action:focus {
     grid-template-columns: 200px 1fr;
     gap: 1.75rem;
     padding: 1.5rem 1.75rem;
-    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, #fff 60%, var(--bft-plum-bg) 100%);
+    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, var(--bft-surface) 60%, var(--bft-plum-bg) 100%);
+    color: var(--bft-text);
     border: 1px solid var(--bft-border-soft);
     border-radius: 18px;
     overflow: hidden;
@@ -2618,8 +2333,8 @@ a.bft-activity-action:focus {
     color: var(--bft-plum-fg);
     letter-spacing: var(--bft-ls-eyebrow);
     text-transform: uppercase;
-    /* Clear the floating collapse button (top:16px right:18px) — the copy
-     * column now spans to the panel's right edge in the 2-column layout. */
+    /* Clears the floating collapse button (top: 16px, right: 18px), which
+     * overlaps the copy column in the two-column layout. */
     padding-right: 5rem;
 }
 
@@ -2638,9 +2353,8 @@ a.bft-activity-action:focus {
     max-width: 540px;
 }
 
-/* Mini stats now live at the foot of the copy column, laid out as a
- * horizontal row (mirrors the slim hero), separated from the body text by a
- * dashed top rule. Wraps on narrow screens (see the 1024px breakpoint). */
+/* Mini stats: a horizontal row at the foot of the copy column, like the slim
+ * hero's stats. Wraps on narrow screens (see the 1024px breakpoint). */
 .bft-rh-mini-col {
     display: flex;
     flex-direction: row;
@@ -2716,7 +2430,8 @@ a.bft-activity-action:focus {
     align-items: center;
     gap: 0.6rem 0.875rem;
     padding: 0.75rem 1.125rem;
-    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, #fff 60%, var(--bft-plum-bg) 100%);
+    background: linear-gradient(135deg, var(--bft-warm-surface) 0%, var(--bft-surface) 60%, var(--bft-plum-bg) 100%);
+    color: var(--bft-text);
     border: 1px solid var(--bft-border-soft);
     border-radius: 14px;
     min-height: 78px;
@@ -2799,8 +2514,8 @@ a.bft-activity-action:focus {
 .bft-rh-slim-expand {
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
-    background: var(--bft-plum-fg);
-    color: #fff;
+    background: var(--bft-plum-fill);
+    color: var(--bft-on-fill);
     border: none;
     cursor: pointer;
     font-family: inherit;
@@ -2812,7 +2527,7 @@ a.bft-activity-action:focus {
 
 .bft-rh-slim-expand:hover,
 .bft-rh-slim-expand:focus-visible {
-    background: #5a3d8f;
+    background: var(--bft-plum-fill-hover);
     outline: none;
 }
 
@@ -3018,8 +2733,8 @@ a.bft-activity-action:focus {
     margin-top: 0.875rem;
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
-    background: var(--bft-plum-fg);
-    color: #fff;
+    background: var(--bft-plum-fill);
+    color: var(--bft-on-fill);
     text-decoration: none;
     font-family: inherit;
     font-weight: 700;
@@ -3029,8 +2744,8 @@ a.bft-activity-action:focus {
 
 .bft-priority-cta:hover,
 .bft-priority-cta:focus-visible {
-    background: #5a3d8f;
-    color: #fff;
+    background: var(--bft-plum-fill-hover);
+    color: var(--bft-on-fill);
     outline: none;
     text-decoration: none;
 }
@@ -3157,6 +2872,157 @@ a.bft-activity-action:focus {
     text-decoration: none;
     color: var(--bft-text);
     outline: none;
+}
+
+/* -------------------- Site benchmarks (SchoolComparison.js) -------------------- */
+.bft-comparison-heading {
+    margin: 0;
+    font-size: var(--bft-fs-eyebrow);
+    line-height: 1.4;
+}
+
+.bft-comparison-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--bft-text-muted);
+    font-family: inherit;
+    font-size: var(--bft-fs-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--bft-ls-eyebrow);
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.bft-comparison-toggle:hover {
+    color: var(--bft-text);
+}
+
+.bft-comparison-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.625rem;
+}
+
+/* The flex display above would otherwise override the hidden attribute. */
+.bft-comparison-body[hidden] {
+    display: none;
+}
+
+.bft-comparison-subtitle,
+.bft-comparison-note {
+    margin: 0;
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-body);
+    line-height: 1.5;
+}
+
+.bft-comparison-windows {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.bft-comparison-window {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--bft-border);
+    border-radius: 999px;
+    background: var(--bft-surface-alt);
+    color: var(--bft-text);
+    font-family: inherit;
+    font-size: var(--bft-fs-body);
+    cursor: pointer;
+}
+
+.bft-comparison-window:hover {
+    background: var(--bft-surface-dim);
+}
+
+.bft-comparison-window.is-active {
+    background: var(--bft-band-good-bg);
+    border-color: var(--bft-band-good-fg);
+    color: var(--bft-band-good-fg);
+    font-weight: 700;
+}
+
+.bft-comparison-chart {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+}
+
+.bft-comparison-chart .bft-sparkline {
+    flex: 1 1 240px;
+    height: 48px;
+    max-width: 360px;
+}
+
+.bft-comparison-chart-caption {
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-meta);
+}
+
+/* Scrolls sideways on a narrow screen; focusable so a keyboard can scroll it. */
+.bft-comparison-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--bft-border);
+    border-radius: 12px;
+    background: var(--bft-surface);
+}
+
+.bft-comparison-table-wrap:focus-visible {
+    outline: 2px solid var(--bft-brand);
+    outline-offset: 2px;
+}
+
+.bft-comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--bft-text);
+    font-size: var(--bft-fs-body);
+}
+
+.bft-comparison-caption {
+    caption-side: top;
+    padding: 0.75rem 1rem 0.5rem;
+    color: var(--bft-text);
+    font-weight: 700;
+    text-align: left;
+}
+
+.bft-comparison-table thead th {
+    padding: 0.6rem 1rem;
+    background: var(--bft-surface-alt);
+    border-bottom: 1px solid var(--bft-border-soft);
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-eyebrow);
+    font-weight: 700;
+    letter-spacing: var(--bft-ls-label);
+    text-transform: uppercase;
+    text-align: left;
+    vertical-align: bottom;
+}
+
+.bft-comparison-table tbody th,
+.bft-comparison-table tbody td {
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--bft-border-soft);
+}
+
+.bft-comparison-table tbody th {
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.bft-comparison-table .bft-comparison-num {
+    text-align: right;
+    white-space: nowrap;
 }
 
 /* -------------------- Responsive breakpoints -------------------- */
@@ -3417,7 +3283,7 @@ a.bft-activity-action:focus {
     text-transform: lowercase;
 }
 .bft-sim-slider-off {
-    opacity: 0.5;
+    color: var(--bft-text-muted);
 }
 .bft-sim-check {
     display: flex;
@@ -3446,6 +3312,7 @@ a.bft-activity-action:focus {
     background: var(--bft-surface-alt);
     border-radius: 8px;
     padding: 0.3rem 0.7rem;
+    color: var(--bft-text);
     font-size: 0.8rem;
     cursor: pointer;
 }
@@ -3512,7 +3379,8 @@ a.bft-activity-action:focus {
     font-weight: 800;
 }
 .bft-sim-term-off {
-    opacity: 0.5;
+    color: var(--bft-text-muted);
+    font-style: italic;
 }
 .bft-sim-nodata,
 .bft-sim-foot-note {
@@ -3529,8 +3397,8 @@ a.bft-activity-action:focus {
 }
 
 /* ====================================================================
- * MVP3 report redesign — hero chips, distribution mode toggle,
- * last-30-academic-days heatmap, and the table action column.
+ * Pending report: hero chips, distribution mode toggle, last-30-academic-days
+ * heatmap and the table action column.
  * ==================================================================== */
 
 /* Optional chips in the reused dashboard hero (SLA %, at-risk, critical). */
@@ -3548,7 +3416,7 @@ a.bft-activity-action:focus {
     border-radius: 999px;
     font-size: var(--bft-fs-meta);
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.65);
+    background: var(--bft-surface);
     color: var(--bft-text);
     border: 1px solid var(--bft-border);
 }
@@ -3577,7 +3445,7 @@ a.bft-activity-action:focus {
     color: var(--bft-band-pending-fg);
 }
 
-/* Distribution bar — "Já avaliados" / "Pendentes" mode toggle. */
+/* Distribution bar: the button that switches between the pending and graded views. */
 .bft-dist-modebtn {
     display: inline-flex;
     align-items: center;
@@ -3606,15 +3474,16 @@ a.bft-activity-action:focus {
     background: var(--bft-text);
     border-style: solid;
     border-color: var(--bft-text);
-    color: #fff;
+    color: var(--bft-surface);
 }
 
 /* Keep the active (graded) toggle legible on hover — the base hover rule
- * darkens the text, which has no contrast on the dark active background. */
+ * darkens the text, which has no contrast on the dark active background. The
+ * underline marks the hover without fading the pair. */
 .bft-dist-modebtn-active:hover {
-    color: #fff;
+    color: var(--bft-surface);
     border-color: var(--bft-text);
-    opacity: 0.92;
+    text-decoration: underline;
 }
 
 /* Last 30 academic days heatmap. */
@@ -3722,7 +3591,7 @@ a.bft-activity-action:focus {
     color: var(--bft-text-faint);
 }
 
-/* Report table — action column (Grade / Review + pause timeline). */
+/* Report table action column: the Grade / Review link. */
 .bft-report-col-action {
     text-align: right;
     white-space: nowrap;
@@ -3733,8 +3602,8 @@ a.bft-activity-action:focus {
     align-items: center;
     padding: 0.3rem 0.7rem;
     border-radius: 6px;
-    background: var(--bft-band-excellent-fg);
-    color: #fff;
+    background: var(--bft-band-excellent-fill);
+    color: var(--bft-on-fill);
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     text-decoration: none;
@@ -3743,7 +3612,46 @@ a.bft-activity-action:focus {
 
 .bft-report-action-grade:hover,
 .bft-report-action-grade:focus {
-    color: #fff;
-    text-decoration: none;
-    opacity: 0.9;
+    color: var(--bft-on-fill);
+    text-decoration: underline;
+}
+
+/* Bulk block-removal tool. Collapsed rows are in the DOM from the first render,
+ * so a ticked checkbox survives every reveal; refetching would drop it. */
+/* Scoped under .bft-bulk to beat Bootstrap's single-class rules on the same
+ * elements: .btn sets display: inline-block at equal specificity and the theme
+ * CSS loads after plugin CSS, so an unscoped .bft-hidden would lose on source
+ * order. Moodle's stylelint config forbids !important. */
+.bft-bulk .bft-bulk-row-collapsed {
+    display: none;
+}
+
+.bft-bulk .bft-hidden {
+    display: none;
+}
+
+.bft-bulk-count {
+    font-family: var(--bft-font-mono);
+    font-weight: 700;
+}
+
+.bft-bulk-shortname {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--bft-text-muted);
+}
+
+.bft-bulk-hidden {
+    background: #e2e8f0;
+    color: #475569;
+    margin-left: 0.35rem;
+}
+
+.bft-bulk-tablewrap {
+    overflow-x: auto;
+}
+
+.bft-bulk-confirm {
+    max-width: 22rem;
+    margin: 1rem 0;
 }

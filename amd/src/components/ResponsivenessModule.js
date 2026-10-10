@@ -14,16 +14,14 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Renders the dashboard hero in either its full or slim variant.
+ * Renders the responsiveness hero (teacher dashboard and pending report) in
+ * either its full or slim variant.
  *
- * Pure presentational component as of v1.0.8 — the parent
- * (DashboardView) owns the collapsed state because the Insights
- * section needs to react to the same toggle. The module just maps
- * `collapsed` to a hero variant and routes the user's click to the
- * parent's `onToggle` callback.
- *
- * Persistence moved server-side to a Moodle user preference; the
- * localStorage round-trip used in v1.0.5–1.0.7 is gone.
+ * Stateless: the calling view owns `collapsed`, because other sections of
+ * the page (the dashboard insights, the report's academic-days strip) hide
+ * with the same toggle, and persists it in a Moodle user preference. The
+ * module maps `collapsed` to a hero variant and routes the user's click to
+ * `onToggle`.
  *
  * @module    block_feedback_tracker/components/ResponsivenessModule
  * @copyright 2026 Anderson Blaine <anderson@blaine.com.br>

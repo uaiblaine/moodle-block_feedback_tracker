@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\trend_service;
 
 /**
  * Daily 03:00 — writes one {block_feedback_tracker_trend} row per
- * (courseid, groupid) that had at least one grading yesterday, providing
- * the 30-day sparkline its data points.
+ * (courseid, groupid) that had at least one grading yesterday, the data
+ * points of the sparklines and the academic-days strip.
  */
 class recompute_trend extends \core\task\scheduled_task {
     /**
@@ -49,6 +50,7 @@ class recompute_trend extends \core\task\scheduled_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         trend_service::recompute_yesterday();
     }
 }

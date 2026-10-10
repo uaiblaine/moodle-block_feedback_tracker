@@ -69,7 +69,8 @@ class business_hours_form extends \moodleform {
             $mform->setType("end_$i", PARAM_INT);
         }
 
-        $this->add_action_buttons(false, get_string('save', 'core'));
+        $mform->addElement('submit', 'savehoursbutton', get_string('save', 'core'));
+        $mform->closeHeaderBefore('savehoursbutton');
     }
 
     /**

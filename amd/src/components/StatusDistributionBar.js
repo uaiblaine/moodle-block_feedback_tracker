@@ -18,10 +18,10 @@
  * in each band; click a segment to filter the table. Mode-aware:
  *
  *  - pending: three segments (Waiting / Attention / Priority) over the pending
- *    effective-hours bands, plus a trailing "Já avaliados" button that switches
- *    the table to the graded view.
- *  - graded: four segments (Excellent / Good / Up Next / Priority) over the
- *    slabucket result bands, plus a "back to pending" button.
+ *    bands, plus a trailing "Graded" button that switches the table to the
+ *    graded view.
+ *  - graded: three segments (On goal / Good / Regular) over the slabucket
+ *    result bands, plus a "Pending" button back to the pending view.
  *
  * The counts come from the web service so they reflect every matching row, not
  * just the loaded page. The bar renders even when a mode has no rows so the
@@ -33,6 +33,7 @@
  */
 
 import {html} from 'block_feedback_tracker/lib/preact';
+import {formatCount} from 'block_feedback_tracker/lib/format';
 
 /**
  * Segment descriptors per mode. `slug` is the filter value sent to the table
@@ -44,13 +45,13 @@ import {html} from 'block_feedback_tracker/lib/preact';
  * @returns {Array<{slug: string, label: string, tone: string}>}
  */
 const segmentsFor = (mode, i18n) => {
-    const bands = i18n.bands || {};
     if (mode === 'graded') {
+        // Three-band result set (Excellent / Good / Regular) reusing the
+        // academic-days vocabulary; critical graded results fold into Regular.
         return [
-            {slug: 'excellent', label: bands.excellent || 'Excellent', tone: 'excellent'},
-            {slug: 'good', label: bands.good || 'Good', tone: 'good'},
-            {slug: 'regular', label: bands.regular || 'Up Next', tone: 'regular'},
-            {slug: 'critical', label: bands.critical || 'Priority', tone: 'critical'},
+            {slug: 'excellent', label: i18n.acaday_legend_ongoal || 'On goal', tone: 'excellent'},
+            {slug: 'good', label: i18n.acaday_legend_good || 'Good', tone: 'good'},
+            {slug: 'regular', label: i18n.acaday_legend_regular || 'Regular', tone: 'regular'},
         ];
     }
     return [
@@ -80,7 +81,9 @@ export default function StatusDistributionBar({mode, counts, active, onSelect, o
         <div class="bft-dist">
             <div class="bft-dist-head">
                 <span class="bft-dist-title">
-                    ${i18n.distribution_title || 'Distribution by status'}
+                    ${graded
+                        ? (i18n.distribution_title_result || 'Distribution by result')
+                        : (i18n.distribution_title || 'Distribution by status')}
                 </span>
                 <span class="bft-dist-hint">
                     ${i18n.distribution_hint || 'Click a band to filter the table'}
@@ -97,9 +100,9 @@ export default function StatusDistributionBar({mode, counts, active, onSelect, o
                                 class=${'bft-dist-seg bft-dist-seg-' + seg.tone + (dim ? ' bft-dist-seg-dim' : '')}
                                 style=${'flex: ' + Math.max(pct, 1).toFixed(2) + ' 1 0;'}
                                 aria-pressed=${active === seg.slug}
-                                aria-label=${seg.label + ' — ' + n}
+                                aria-label=${seg.label + ' — ' + formatCount(n)}
                                 onClick=${() => onSelect(active === seg.slug ? '' : seg.slug)}>
-                            <span class="bft-dist-seg-n bft-mono">${n}</span>
+                            <span class="bft-dist-seg-n bft-mono">${formatCount(n)}</span>
                             <span class="bft-dist-seg-l">${seg.label}</span>
                         </button>
                     `;

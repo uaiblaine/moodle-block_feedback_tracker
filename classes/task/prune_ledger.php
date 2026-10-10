@@ -1,0 +1,214 @@
+<?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+
+/**
+ * Scheduled task: discard measured history past its retention window.
+ *
+ * @package    block_feedback_tracker
+ * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+declare(strict_types=1);
+
+namespace block_feedback_tracker\task;
+
+use block_feedback_tracker\local\sla\process_memos;
+use block_feedback_tracker\local\sla\retention;
+
+/**
+ * Bounds the ledger's growth by dropping closed measurements older than the
+ * configured window, plus the daily aggregate rows that outlived every surface
+ * that reads them.
+ *
+ * Two rules make this safe to run unattended:
+ *
+ *  - Only closed rows are deleted: answered ones by their response time, and
+ *    dismissed ones ({@see \block_feedback_tracker\local\sla\legacy_dismissal})
+ *    by their dismissal time. A row still awaiting feedback is outstanding
+ *    work whose age is the signal this plugin exists to surface; it leaves the
+ *    ledger only when its submission, course or enrolment does, which the
+ *    reconciler handles.
+ *  - The reconciler's row-creating sweeps read the same
+ *    {@see retention::cutoff()}, so they do not recreate what is deleted here.
+ *
+ * The rollup is not re-enqueued afterwards: every statistical window is 30
+ * days and the retention floor is 30 days, so no pruned row could have been
+ * contributing to a displayed figure. The report's all-time Graded tab does
+ * shrink to the window, as the setting's description states.
+ */
+class prune_ledger extends \core\task\scheduled_task {
+    /** Default rows deleted per table per run. */
+    public const DEFAULT_BATCH = 5000;
+
+    /** Default soft time cap for the whole tick, in seconds. */
+    public const DEFAULT_TIME_CAP = 50;
+
+    /**
+     * Task display name.
+     *
+     * @return string
+     */
+    public function get_name(): string {
+        return get_string('task_prune_ledger', 'block_feedback_tracker');
+    }
+
+    /**
+     * Delete one bounded batch of expired history.
+     *
+     * @return void
+     */
+    public function execute(): void {
+        global $DB;
+        process_memos::reset();
+
+        $cutoff = retention::cutoff();
+        if ($cutoff === null) {
+            mtrace('prune_ledger: retention is off; nothing is ever deleted.');
+            return;
+        }
+
+        $batch = (int) (get_config('block_feedback_tracker', 'retention_batch_size') ?: self::DEFAULT_BATCH);
+        if ($batch < 1) {
+            $batch = self::DEFAULT_BATCH;
+        }
+        $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
+        $deadline = time() + $timecap;
+
+        mtrace(sprintf(
+            'prune_ledger: discarding closed history recorded before %s.',
+            userdate($cutoff, get_string('strftimedatetimeshort', 'langconfig'))
+        ));
+
+        $subs = $this->prune_closed_submissions($cutoff, $batch);
+        if ($subs < $batch) {
+            $subs += $this->prune_dismissed_submissions($cutoff, $batch - $subs);
+        }
+        mtrace(sprintf('prune_ledger: %d closed submission row(s) deleted.', $subs));
+
+        if (time() > $deadline) {
+            mtrace('prune_ledger: time cap reached; the aggregate tables run next tick.');
+            return;
+        }
+
+        $trend = $this->prune_daily_table('block_feedback_tracker_trend', $cutoff, $batch);
+        $site = $this->prune_daily_table('block_feedback_tracker_site', $cutoff, $batch);
+        mtrace(sprintf(
+            'prune_ledger: %d trend row(s) and %d site row(s) deleted.',
+            $trend,
+            $site
+        ));
+    }
+
+    /**
+     * Delete closed ledger rows recorded before the cutoff.
+     *
+     * Keyed on `timegraded`, which is what every read predicate in the plugin
+     * treats as "this measurement is finished" and is always populated on a
+     * closed row. Pending rows are excluded by that same test, so no age
+     * threshold can reach them.
+     *
+     * @param int $cutoff Epoch seconds.
+     * @param int $batch Row ceiling for this run.
+     * @return int Rows deleted.
+     */
+    private function prune_closed_submissions(int $cutoff, int $batch): int {
+        global $DB;
+
+        $ids = $DB->get_fieldset_sql(
+            "SELECT id
+               FROM {block_feedback_tracker_sub}
+              WHERE timegraded IS NOT NULL
+                AND timegraded < :cutoff
+           ORDER BY timegraded ASC",
+            ['cutoff' => $cutoff],
+            0,
+            $batch
+        );
+        if (empty($ids)) {
+            return 0;
+        }
+        [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
+        $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
+        return count($ids);
+    }
+
+    /**
+     * Delete dismissed ledger rows whose dismissal predates the cutoff.
+     *
+     * A dismissed row never gets `timegraded`, so the closed-row query never
+     * reaches it; without this its personal data would outlive the window.
+     * Its hand-in predates the dismissal, so the reconciler's retention floor
+     * keeps the missing-row sweep from recreating it.
+     *
+     * @param int $cutoff Epoch seconds.
+     * @param int $batch Row ceiling left for this run.
+     * @return int Rows deleted.
+     */
+    private function prune_dismissed_submissions(int $cutoff, int $batch): int {
+        global $DB;
+
+        $ids = $DB->get_fieldset_sql(
+            "SELECT id
+               FROM {block_feedback_tracker_sub}
+              WHERE timedismissed IS NOT NULL
+                AND timedismissed < :cutoff
+           ORDER BY timedismissed ASC",
+            ['cutoff' => $cutoff],
+            0,
+            $batch
+        );
+        if (empty($ids)) {
+            return 0;
+        }
+        [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
+        $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
+        return count($ids);
+    }
+
+    /**
+     * Delete daily aggregate rows older than the cutoff.
+     *
+     * These rows carry no per-user data. The sparklines read the last 14 days
+     * and the academic-days strip 30, but get_school_comparison accepts up to
+     * 365 days of site rows, so a retention window shorter than a year also
+     * shortens that comparison.
+     *
+     * @param string $table Either the trend or the site-stats table.
+     * @param int $cutoff Epoch seconds.
+     * @param int $batch Row ceiling for this run.
+     * @return int Rows deleted.
+     */
+    private function prune_daily_table(string $table, int $cutoff, int $batch): int {
+        global $DB;
+
+        /* `day` is a YYYYMMDD integer, not an epoch: compared raw, the cutoff
+         * would match nothing and read as "there was nothing to delete". */
+        $cutoffday = (int) userdate($cutoff, '%Y%m%d');
+        $ids = $DB->get_fieldset_sql(
+            "SELECT id FROM {" . $table . "} WHERE day < :cutoffday ORDER BY day ASC",
+            ['cutoffday' => $cutoffday],
+            0,
+            $batch
+        );
+        if (empty($ids)) {
+            return 0;
+        }
+        [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
+        $DB->delete_records_select($table, "id $isql", $iparams);
+        return count($ids);
+    }
+}

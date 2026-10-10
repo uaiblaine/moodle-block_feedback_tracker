@@ -26,59 +26,62 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
-use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\calendar\day_counter;
-use block_feedback_tracker\local\calendar\pause_lookup;
 use block_feedback_tracker\local\score\responsiveness_calculator;
 
 /**
  * Reads the per-submission ledger and produces one row in
- * {block_feedback_tracker_group}. Called by the drain task for tuples in the
- * dirty queue and by the adhoc `recompute_one` task right after grading.
+ * {block_feedback_tracker_group}. Called by the adhoc `recompute_one` task
+ * (queued by the drain_queue task and by the submission_graded observer) and
+ * by the recompute CLIs.
  *
  * Metrics split into three groups:
  * - Pending counts (pending / critical / overgoal) — current backlog state.
- * - Last-30d graded stats (medians / p90 / max / compliance) — historical
- *   responsiveness, used by the score formula.
+ * - Graded stats over the trend_window_days window (medians / p90 / max /
+ *   compliance) — historical responsiveness, used by the score formula.
  * - Trend (rolling 7d vs prior 7d median) — week-over-week direction of travel.
- *
- * Plus auxiliary `nextpause_*` / `lastpause_*` columns to power the dashboard
- * "next pause: May 25 (holiday)" indicator without extra read-path queries.
  */
 class rollup_service {
-    /** Recent-stats window length in days (compliance / median / counts). */
+    /**
+     * Default graded-stats window in days (compliance / median / counts), used when the
+     * trend_window_days setting is unset. Despite the name, the trend uses TREND_COMPARE_DAYS.
+     */
     public const TREND_WINDOW_DAYS = 30;
 
     /** Rolling window (days) for the trend comparison — a fixed weekly cycle. */
     public const TREND_COMPARE_DAYS = 7;
 
     /**
-     * Display cap (±%) for trend_pct_30d. The raw ratio is unbounded when the
-     * prior-window median is near zero (e.g. 0.06h → 227h ≈ 118950%), which
-     * overflows the NUMBER(6,2) column. A regression beyond ~900% already
-     * reads as "far worse", so clamping here loses no signal — and the score's
-     * trend term saturates via clamp01() long before this bound.
+     * Cap (±%) for trend_pct_30d. The raw ratio is unbounded when the
+     * prior-window median is near zero and would overflow the NUMBER(6,2)
+     * column. Clamping loses no signal: the score's trend term already
+     * saturates at ±100%.
      */
     public const TREND_PCT_CAP = 999.99;
 
     /**
      * Recompute and upsert the rollup row for one (courseid, groupid).
      *
-     * Guarded by a non-blocking Moodle Lock API lock keyed on the tuple. When
-     * two workers race on the same (courseid, groupid) — e.g. a drain_queue
-     * tick and a recompute_one adhoc task — the second arrival returns
-     * silently. The math is idempotent so the winning worker produces the
-     * same rollup row either way; the lock just elides duplicate I/O.
+     * Guarded by a non-blocking Lock API lock keyed on the tuple: when two
+     * workers race on the same (courseid, groupid) — e.g. two recompute_one
+     * adhoc tasks, or a CLI recompute and an adhoc task — the second arrival
+     * returns without recomputing.
+     *
+     * Callers that retire a queue entry afterwards must not do so when this
+     * returns false: the tuple would be dequeued without anyone having
+     * recomputed it, leaving the materialized rollup stale until some later
+     * event touches the same tuple.
      *
      * @param int $courseid
      * @param int $groupid
      * @param int|null $now Override "now" for tests; defaults to time().
-     * @return void
+     * @return bool True when the rollup was recomputed, false when the lock
+     *              was held elsewhere and this call did nothing.
      */
-    public static function recompute_group(int $courseid, int $groupid, ?int $now = null): void {
+    public static function recompute_group(int $courseid, int $groupid, ?int $now = null): bool {
         [$lock, $proceed] = self::acquire_recompute_lock($courseid, $groupid);
         if (!$proceed) {
-            return;
+            return false;
         }
         try {
             self::recompute_group_locked($courseid, $groupid, $now);
@@ -87,11 +90,12 @@ class rollup_service {
                 $lock->release();
             }
         }
+        return true;
     }
 
     /**
      * Body of recompute_group(), invoked once the per-tuple lock is held (or
-     * the lock store proved unavailable and we fell back to running uncoupled).
+     * the lock factory was unavailable and the recompute runs unlocked).
      *
      * @param int $courseid
      * @param int $groupid
@@ -112,61 +116,69 @@ class rollup_service {
         $slagoal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
         $thresholds = bucket::parse_thresholds_eff();
         $criticalmin = $thresholds[2];
-        // Day-ruler bounds for the critical_days/overgoal_days twins (the
-        // hour-based critical/overgoal above keep feeding the score).
-        $daythresholds = bucket::parse_thresholds_days();
-        $daygoal = $daythresholds[0];
-        $daycrit = $daythresholds[2];
-        // Business-days SLA goal for the display-only compliance_pct_days
-        // twin (the hour-based compliance_pct above keeps feeding the score).
+        /* Business-days SLA goal: the day-ruler twin of sla_goal_hours, and
+         * like it the bound of both the over-goal count and compliance. The
+         * critical cutoff is the third day threshold, as the hour one is the
+         * third hour threshold. All of these day figures are display-only; the
+         * score reads the hour-based counts and compliance. */
         $slagoaldays = (float) (get_config('block_feedback_tracker', 'sla_goal_days') ?: 2);
+        $daycrit = bucket::parse_thresholds_days()[2];
 
-        // 1. Pending counts. Only genuinely submitted work counts toward the
-        // SLA — draft / new / reopened attempts are awaiting the student, not
-        // the teacher, so they are excluded here (and everywhere downstream).
-        $pendingrows = $DB->get_records_select(
-            'block_feedback_tracker_sub',
-            'courseid = :courseid AND groupid = :groupid AND timegraded IS NULL'
-                . ' AND submissionstatus = :substatus',
+        /* 1. Pending counts, submitted work only (see submission_status). The
+         * activity is resolved as the ledger writer resolves it, and LEFT
+         * joined so a row whose activity is gone still counts as pending. */
+        $pendingrows = $DB->get_records_sql(
+            "SELECT sub.id, sub.effectivehours, sub.waitinghours, sub.timesubmitted, sub.timeallocated,
+                    a.markingworkflow, a.markingallocation
+               FROM {block_feedback_tracker_sub} sub
+          LEFT JOIN {course_modules} cm ON cm.id = sub.cmid
+          LEFT JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+          LEFT JOIN {assign} a ON a.id = cm.instance AND m.id IS NOT NULL
+              WHERE sub.courseid = :courseid AND sub.groupid = :groupid AND sub.timegraded IS NULL
+                AND sub.submissionstatus = :substatus
+                AND sub.islatest = 1 AND sub.iscurrent = 1",
             [
+                'modname' => 'assign',
                 'courseid' => $courseid,
                 'groupid' => $groupid,
                 'substatus' => submission_status::SUBMITTED,
-            ],
-            '',
-            'id, effectivehours, waitinghours, timesubmitted'
+            ]
         );
         $pending = count($pendingrows);
         $critical = 0;
         $overgoal = 0;
         $criticaldays = 0;
         $overgoaldays = 0;
-        $pendingeffvals = [];
-        $pendingrawvals = [];
-        $pendingeffdays = [];
-        $pendingpercdays = [];
+        /* Pending work nobody has been made responsible for yet. Only an
+         * activity that allocates markers can leave work unallocated, so the
+         * count covers those activities alone, and stays null when no pending
+         * row belongs to one. Allocation needs marking workflow as well, as in
+         * mod_assign, which clears markingallocation when workflow is off. */
+        $unallocated = 0;
+        $allocating = false;
         foreach ($pendingrows as $r) {
+            if ((int) $r->markingworkflow === 1 && (int) $r->markingallocation === 1) {
+                $allocating = true;
+                if ($r->timeallocated === null) {
+                    $unallocated++;
+                }
+            }
             $eff = (float) ($r->effectivehours ?? 0.0);
-            $pendingeffvals[] = $eff;
-            $pendingrawvals[] = (float) ($r->waitinghours ?? 0.0);
             // Date-based elapsed days (pending elapses up to now).
             $days = day_counter::between((int) $r->timesubmitted, $now);
-            $pendingeffdays[] = $days['business'];
-            $pendingpercdays[] = $days['calendar'];
             // Day-ruler partition (inclusive bounds, mirroring
             // bucket::for_effective_days): critical > crit | overgoal
             // goal..crit | within-goal the remainder.
             if ($days['business'] > $daycrit) {
                 $criticaldays++;
-            } else if ($days['business'] > $daygoal) {
+            } else if ($days['business'] > $slagoaldays) {
                 $overgoaldays++;
             }
-            // Mutually-exclusive pending bands that partition $pending, so the
-            // three displayed counts sum to the total: critical (eff >=
+            // Mutually-exclusive bands that partition $pending: critical (eff >=
             // criticalmin) | over-goal (goal < eff < criticalmin) | within-goal
-            // (the remainder, eff <= goal, derived at display as
-            // $pending - $overgoal - $critical). $pending stays the total — the
-            // score and the overall-weighting depend on it.
+            // (eff <= goal, derived at display as $pending - $overgoal - $critical).
+            // $pending stays the total: the score and the pending-weighted course
+            // score depend on it.
             if ($eff >= $criticalmin) {
                 $critical++;
             } else if ($eff > $slagoal) {
@@ -186,7 +198,7 @@ class rollup_service {
                 'substatus' => submission_status::SUBMITTED,
             ],
             '',
-            'id, effectivehours, waitinghours, timesubmitted, timegraded'
+            'id, effectivehours, waitinghours, timesubmitted, timegraded, queuehours, allochours'
         );
         $effvals = [];
         $rawvals = [];
@@ -194,6 +206,8 @@ class rollup_service {
         $percdays = [];
         $compliantcount = 0;
         $compliantdayscount = 0;
+        $queuevals = [];
+        $allocvals = [];
         foreach ($gradedrows as $r) {
             $eff = (float) ($r->effectivehours ?? 0.0);
             $raw = (float) ($r->waitinghours ?? 0.0);
@@ -211,6 +225,15 @@ class rollup_service {
             if ($days['business'] <= $slagoaldays) {
                 $compliantdayscount++;
             }
+            /* Queue and marker hours are collected only where they were
+             * measured; alloc_coverage_pct below says how much of the window
+             * that is. */
+            if ($r->queuehours !== null) {
+                $queuevals[] = (float) $r->queuehours;
+            }
+            if ($r->allochours !== null) {
+                $allocvals[] = (float) $r->allochours;
+            }
         }
         $numgraded30d = count($gradedrows);
 
@@ -224,26 +247,30 @@ class rollup_service {
         // Display-only business-days compliance (not fed to the score).
         $compliancepctdays = $numgraded30d ? round(100.0 * $compliantdayscount / $numgraded30d, 2) : null;
 
-        // 2b. Headline "current" medians — graded-in-window plus currently
-        // pending work — so the dashboard's effective / perceived times
-        // reflect the live backlog instead of reading ~0 when little has been
-        // graded. These feed the display only; the score keeps using the
-        // graded-only $medianeff above.
-        $cureffvals = array_merge($effvals, $pendingeffvals);
-        $currawvals = array_merge($rawvals, $pendingrawvals);
-        $curmedianeff = !empty($cureffvals) ? stats::median($cureffvals) : null;
-        $curmedianraw = !empty($currawvals) ? stats::median($currawvals) : null;
-        // Date-based day medians (graded ∪ pending) — the headline in days mode.
-        $cureffdays = array_merge($effdays, $pendingeffdays);
-        $curpercdays = array_merge($percdays, $pendingpercdays);
-        $curmedianeffdays = !empty($cureffdays) ? stats::median($cureffdays) : null;
-        $curmedianpercdays = !empty($curpercdays) ? stats::median($curpercdays) : null;
+        /* Coordination queue vs marker turnaround. Coverage is the share of
+         * the graded window that carries a marker measurement: before Moodle
+         * 5.2 only one of mod_assign's three allocation paths (the batch
+         * action) fires marker_updated, so the sample is partial and the
+         * median must be read beside the coverage. */
+        $medianqueue = !empty($queuevals) ? stats::median($queuevals) : null;
+        $medianalloc = !empty($allocvals) ? stats::median($allocvals) : null;
+        $alloccoverage = $numgraded30d ? round(100.0 * count($allocvals) / $numgraded30d, 2) : null;
 
-        // 3. Trend — rolling 7-day cycle: this week's median effective hours vs
-        // the prior week's (submitted, graded work only). A deliberately
-        // SEPARATE, shorter window from the 30-day stats above, so the trend
-        // reacts week-over-week while compliance / median / counts keep their
-        // monthly view. Stored in the legacy-named trend_pct_30d column.
+        // 2b. Headline "current" medians over graded-in-window plus pending
+        // work, so the display reflects the live backlog. Display only; the
+        // score uses the graded-only $medianeff. Not a merge of the two sets
+        // above, which would count an attempt twice (see current_state_values()).
+        $current = self::current_state_values($courseid, $groupid, $cutoffrecent, $now);
+        $curmedianeff = !empty($current['eff']) ? stats::median($current['eff']) : null;
+        $curmedianraw = !empty($current['raw']) ? stats::median($current['raw']) : null;
+        // Date-based day medians (graded ∪ pending) — the headline in days mode.
+        $curmedianeffdays = !empty($current['effdays']) ? stats::median($current['effdays']) : null;
+        $curmedianpercdays = !empty($current['percdays']) ? stats::median($current['percdays']) : null;
+
+        // 3. Trend: median effective hours of the last 7 days vs the 7 days
+        // before (submitted, graded work only). Deliberately shorter than the
+        // stats window above so it reacts week over week. Stored in the
+        // legacy-named trend_pct_30d column.
         $trendsec = self::TREND_COMPARE_DAYS * 86400;
         $trendrecent = self::graded_eff_hours($courseid, $groupid, $now - $trendsec, $now);
         $trendprior = self::graded_eff_hours($courseid, $groupid, $now - 2 * $trendsec, $now - $trendsec);
@@ -265,11 +292,7 @@ class rollup_service {
             'trend_pct_30d'  => $trendpct,
         ]);
 
-        // 5. Next + last pause indicators.
-        [$nextts, $nextreason, $nextnote] = self::next_pause_indicator($courseid, $groupid, $now);
-        [$lastendts, $lastreason] = self::last_pause_indicator($courseid, $groupid, $now);
-
-        // 6. Upsert.
+        // 5. Upsert.
         $existing = $DB->get_record(
             'block_feedback_tracker_group',
             ['courseid' => $courseid, 'groupid' => $groupid],
@@ -305,11 +328,10 @@ class rollup_service {
             'comp_pending'         => $components['pending'] ?? null,
             'comp_trend'           => $components['trend'] ?? null,
             'trend_pct_30d'        => $trendpct,
-            'nextpause_ts'         => $nextts,
-            'nextpause_reason'     => $nextreason,
-            'nextpause_note'       => $nextnote,
-            'lastpause_endts'      => $lastendts,
-            'lastpause_reason'     => $lastreason,
+            'unallocated'          => $allocating ? $unallocated : null,
+            'median_queue_h'       => $medianqueue,
+            'median_alloc_h'       => $medianalloc,
+            'alloc_coverage_pct'   => $alloccoverage,
             'timerecomputed'       => $now,
             'timemodified'         => $now,
         ];
@@ -319,6 +341,52 @@ class rollup_service {
         } else {
             $DB->insert_record('block_feedback_tracker_group', $record);
         }
+    }
+
+    /**
+     * Value arrays for the "state right now" headline medians.
+     *
+     * One live observation per attempt: `iscurrent = 1` excludes cycles a
+     * resubmission has already closed, so an attempt whose earlier cycle was
+     * graded inside the window and whose current cycle is pending contributes
+     * once — as pending, which is what it actually is. Graded rows elapse to
+     * their grading instant, pending rows to now.
+     *
+     * @param int $courseid
+     * @param int $groupid
+     * @param int $cutoff Graded-window start (inclusive, epoch seconds).
+     * @param int $now
+     * @return array{eff:array, raw:array, effdays:array, percdays:array}
+     */
+    private static function current_state_values(int $courseid, int $groupid, int $cutoff, int $now): array {
+        global $DB;
+
+        $rows = $DB->get_records_select(
+            'block_feedback_tracker_sub',
+            'courseid = :courseid AND groupid = :groupid'
+                . ' AND submissionstatus = :substatus'
+                . ' AND islatest = 1 AND iscurrent = 1'
+                . ' AND (timegraded IS NULL OR timegraded >= :cutoff)',
+            [
+                'courseid' => $courseid,
+                'groupid' => $groupid,
+                'substatus' => submission_status::SUBMITTED,
+                'cutoff' => $cutoff,
+            ],
+            '',
+            'id, effectivehours, waitinghours, timesubmitted, timegraded'
+        );
+
+        $out = ['eff' => [], 'raw' => [], 'effdays' => [], 'percdays' => []];
+        foreach ($rows as $r) {
+            $out['eff'][] = (float) ($r->effectivehours ?? 0.0);
+            $out['raw'][] = (float) ($r->waitinghours ?? 0.0);
+            $upper = $r->timegraded !== null ? (int) $r->timegraded : $now;
+            $days = day_counter::between((int) $r->timesubmitted, $upper);
+            $out['effdays'][] = $days['business'];
+            $out['percdays'][] = $days['calendar'];
+        }
+        return $out;
     }
 
     /**
@@ -362,11 +430,8 @@ class rollup_service {
      *
      * Returns [$lock, $proceed].
      *  - $proceed=true, $lock=lock object: acquired; caller must release.
-     *  - $proceed=true, $lock=null: lock store unavailable; run without it.
+     *  - $proceed=true, $lock=null: lock factory unavailable; run without it.
      *  - $proceed=false: another worker holds the lock; caller skips silently.
-     *
-     * Resource key uses `_` not `:` because some lock-store backends (notably
-     * the file store) treat `:` as a path separator.
      *
      * @param int $courseid
      * @param int $groupid
@@ -391,165 +456,5 @@ class rollup_service {
             return [null, false];
         }
         return [$lock, true];
-    }
-
-    /**
-     * Find the next pause that affects this (course, group) within 30 days.
-     * Considers both cday-driven holidays/recesses/closures and overlapping
-     * cpause windows.
-     *
-     * @param int $courseid
-     * @param int $groupid
-     * @param int $now
-     * @return array{0:?int, 1:?string, 2:?string} [ts, reason, note]
-     */
-    private static function next_pause_indicator(int $courseid, int $groupid, int $now): array {
-        global $DB;
-        $horizon = $now + 30 * 86400;
-
-        $tz = calendar::timezone();
-        $todayymd = (int) (new \DateTimeImmutable('@' . $now))->setTimezone($tz)->format('Ymd');
-        $horizonymd = (int) (new \DateTimeImmutable('@' . $horizon))->setTimezone($tz)->format('Ymd');
-
-        $candidates = [];
-
-        $cdays = $DB->get_records_select(
-            'block_feedback_tracker_cday',
-            'daydate >= :today AND daydate <= :horizon AND daytype IN (:t1, :t2, :t3, :t4)',
-            [
-                'today'   => $todayymd,
-                'horizon' => $horizonymd,
-                't1' => calendar::DAYTYPE_HOLIDAY,
-                't2' => calendar::DAYTYPE_RECESS,
-                't3' => calendar::DAYTYPE_CLOSED,
-                // V1.0.9 — optional days surface as paused too. Sub-day
-                // event rows resolve their start to ymd + starttime*60 so
-                // PausedNote can show "Paused 16:00-18:00: {label}".
-                't4' => calendar::DAYTYPE_OPTIONAL,
-            ],
-            'daydate ASC',
-            'id, daydate, daytype, starttime, endtime, note',
-            0,
-            10
-        );
-        foreach ($cdays as $row) {
-            $daystart = self::ymd_to_ts((int) $row->daydate, $tz);
-            $issubday = (string) $row->daytype === calendar::DAYTYPE_OPTIONAL
-                && $row->starttime !== null;
-            $ts = $issubday ? $daystart + ((int) $row->starttime) * 60 : $daystart;
-            if ($ts > $now) {
-                $candidates[] = [$ts, (string) $row->daytype, $row->note !== null ? (string) $row->note : null];
-            }
-        }
-
-        $pauses = pause_lookup::for_course_group($courseid, $groupid, $now, $horizon);
-        foreach ($pauses as $p) {
-            $start = (int) $p->timestart;
-            if ($start > $now) {
-                $reason = self::cpause_reason((string) $p->scopelevel);
-                $note = $p->note !== null ? (string) $p->note : null;
-                $candidates[] = [$start, $reason, $note];
-            }
-        }
-
-        if (empty($candidates)) {
-            return [null, null, null];
-        }
-        usort($candidates, static fn($a, $b) => $a[0] <=> $b[0]);
-        return $candidates[0];
-    }
-
-    /**
-     * Find the most recent pause that ended at or before now (within last 7 days).
-     *
-     * @param int $courseid
-     * @param int $groupid
-     * @param int $now
-     * @return array{0:?int, 1:?string} [endts, reason]
-     */
-    private static function last_pause_indicator(int $courseid, int $groupid, int $now): array {
-        global $DB;
-        $lookback = $now - 7 * 86400;
-
-        $tz = calendar::timezone();
-        $todayymd = (int) (new \DateTimeImmutable('@' . $now))->setTimezone($tz)->format('Ymd');
-        $lookbackymd = (int) (new \DateTimeImmutable('@' . $lookback))->setTimezone($tz)->format('Ymd');
-
-        $candidates = [];
-
-        $cdays = $DB->get_records_select(
-            'block_feedback_tracker_cday',
-            'daydate >= :lookback AND daydate <= :today AND daytype IN (:t1, :t2, :t3, :t4)',
-            [
-                'lookback' => $lookbackymd,
-                'today'    => $todayymd,
-                't1' => calendar::DAYTYPE_HOLIDAY,
-                't2' => calendar::DAYTYPE_RECESS,
-                't3' => calendar::DAYTYPE_CLOSED,
-                // V1.0.9 — optional days surface as paused too.
-                't4' => calendar::DAYTYPE_OPTIONAL,
-            ],
-            'daydate DESC',
-            'id, daydate, daytype, starttime, endtime',
-            0,
-            10
-        );
-        foreach ($cdays as $row) {
-            $daystart = self::ymd_to_ts((int) $row->daydate, $tz);
-            $issubday = (string) $row->daytype === calendar::DAYTYPE_OPTIONAL
-                && $row->starttime !== null && $row->endtime !== null;
-            $endts = $issubday
-                ? $daystart + ((int) $row->endtime) * 60
-                : $daystart + 86400;
-            if ($endts <= $now) {
-                $candidates[] = [$endts, (string) $row->daytype];
-            }
-        }
-
-        $pauses = pause_lookup::for_course_group($courseid, $groupid, $lookback, $now);
-        foreach ($pauses as $p) {
-            if ($p->timeend !== null && (int) $p->timeend <= $now && (int) $p->timeend >= $lookback) {
-                $candidates[] = [(int) $p->timeend, self::cpause_reason((string) $p->scopelevel)];
-            }
-        }
-
-        if (empty($candidates)) {
-            return [null, null];
-        }
-        usort($candidates, static fn($a, $b) => $b[0] <=> $a[0]);
-        return $candidates[0];
-    }
-
-    /**
-     * Convert a YYYYMMDD int to a unix timestamp at midnight in a timezone.
-     *
-     * @param int $ymd
-     * @param \DateTimeZone $tz
-     * @return int
-     */
-    private static function ymd_to_ts(int $ymd, \DateTimeZone $tz): int {
-        $year = (int) substr((string) $ymd, 0, 4);
-        $month = (int) substr((string) $ymd, 4, 2);
-        $day = (int) substr((string) $ymd, 6, 2);
-        return (new \DateTimeImmutable(sprintf('%04d-%02d-%02d 00:00:00', $year, $month, $day), $tz))
-            ->getTimestamp();
-    }
-
-    /**
-     * Translate a cpause scopelevel to a stable reason slug.
-     *
-     * @param string $scopelevel
-     * @return string
-     */
-    private static function cpause_reason(string $scopelevel): string {
-        switch ($scopelevel) {
-            case 'course':
-                return 'coursepaused';
-            case 'group':
-                return 'grouppaused';
-            case 'site':
-            default:
-                return 'sitepaused';
-        }
     }
 }

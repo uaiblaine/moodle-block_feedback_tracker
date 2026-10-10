@@ -15,9 +15,9 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Phase 2A spike harness — admin-only page that mounts every shared
- * Preact component into two roots, so we can smoke-test that the vendored
- * bundle + AMD shim + components all work end-to-end after every build.
+ * Admin-only smoke-test page: mounts a sample of the shared Preact components
+ * into two roots to check that the vendored bundle, the AMD shim and the
+ * components work end to end after a build.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -37,19 +37,12 @@ $PAGE->set_title(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
 
-// Load the vendored Preact + htm bundle into the document head before any
-// AMD module resolves. The `true` second arg places the script in <head>
-// and runs synchronously, so window.bftPreact is set before lib/preact.js
-// is evaluated.
-$PAGE->requires->js(
-    new \moodle_url('/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js'),
-    true
-);
+\block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/spike_react', 'init');
 
 echo $OUTPUT->header();
-// Two mount points so the spike exercises the multi-root querySelectorAll
-// branch — every future view (block / report / dashboard) will rely on it.
+// Two mount points exercise the multi-root querySelectorAll path that the
+// block, report and dashboard entrypoints rely on.
 echo '<div data-bft-spike-root></div>';
 echo '<hr aria-hidden="true">';
 echo '<div data-bft-spike-root></div>';

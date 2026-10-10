@@ -17,9 +17,10 @@
 /**
  * Interactive Academic Responsiveness Score simulator — a sandbox for tuning
  * the five score weights and building intuition for how the score behaves.
- * Admin-only by default; teachers gain access when the
- * 'enable_teacher_simulator' setting is on (same scope rule as the dashboard).
- * Pure client-side; nothing is saved.
+ * Admin-only by default; a full-site grant (the viewalldata capability, or a
+ * site admin with enable_admin_view_all) always has access, and teachers gain
+ * access when the 'enable_teacher_simulator' setting is on (same scope rule as
+ * the dashboard). Pure client-side; nothing is saved.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -31,15 +32,14 @@ require(__DIR__ . '/../../../config.php');
 require_login();
 $sysctx = \context_system::instance();
 
-// Same visibility rule as the teacher dashboard, gated by the master switch:
-// admins always pass; non-admins need the 'enable_teacher_simulator' setting
-// on AND a teacher-or-higher role in at least one course (dashboard_scope).
-// With the setting off the simulator stays admin-only.
+// Same visibility rule as the teacher dashboard, gated by the master switch.
 global $USER;
 $simenabled = (int) (get_config('block_feedback_tracker', 'enable_teacher_simulator') ?: 0) === 1;
 if (!is_siteadmin()) {
     $scope = \block_feedback_tracker\local\sla\dashboard_scope::visible_course_ids((int) $USER->id);
-    if (!$simenabled || empty($scope)) {
+    // A null scope (full-site grant) is always allowed; anyone else needs the
+    // simulator switch on and a non-empty teaching scope.
+    if ($scope !== null && (!$simenabled || empty($scope))) {
         throw new \required_capability_exception(
             $sysctx,
             'block/feedback_tracker:viewdashboard',
@@ -67,12 +67,7 @@ if ($initialjson === false) {
     $initialjson = '{}';
 }
 
-// Load the vendored Preact + htm bundle into <head> before any AMD module
-// resolves, so window.bftPreact is set before lib/preact.js evaluates.
-$PAGE->requires->js(
-    new \moodle_url('/blocks/feedback_tracker/js/vendor/bft-vendor-10.29.2-3.1.1.min.js'),
-    true
-);
+\block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/simulator_app', 'init');
 
 echo $OUTPUT->header();
