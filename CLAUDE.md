@@ -5,13 +5,19 @@ directory tree. It captures the **Moodle development standards** this plugin
 follows so future edits stay in the same style and pass CI on the first try.
 
 Plugin context: a Moodle block plugin that measures teacher response time
-for `mod_assign` submissions using business/academic time. Supports
-Moodle **4.5 through 5.2** (`$plugin->requires = 2024100700`,
-`$plugin->supported = [405, 502]`). CI is the
-**moodle-an-hochschulen/moodle-workflows** reusable workflow, called once
-per supported Moodle branch in `.github/workflows/ci.yml` (5.02 full
-PHP × DB matrix; 5.01/5.00/4.05 PostgreSQL-only) — **update those calls
-when `supported` changes**. Development happens on 5.1.
+for `mod_assign` submissions using business/academic time. **One branch per
+Moodle version**: `main` is the Moodle 5.2 branch, the same commit as
+`MOODLE_502_STABLE` (`$plugin->requires = 2026042000`,
+`$plugin->supported = [502, 502]`); `MOODLE_501_STABLE` is 5.1;
+`MOODLE_503_DEV` awaits a 5.3 compatibility review. CI is the
+**moodle-an-hochschulen/moodle-workflows** reusable workflow, one call in
+each branch's `.github/workflows/ci.yml` naming that branch's core.
+
+**Version numbers live in the range of the Moodle version a branch requires**
+(5.1 `20251006XX`, 5.2 `20260420XX`, 5.3 `20261005XX`), the fleet rule: the
+first release is the `requires` value and each change on that branch counts up
+inside it. 1.1.0 (`2026100902`) was the last date-numbered release; its upgrade
+steps were removed in 1.2.0, and `CHANGELOG.md` says how a site switches.
 
 ## Agent orchestration budget (fleet rule, repeated here on purpose)
 
@@ -44,8 +50,8 @@ definition, and none runs on the session model.
 
 Run from the plugin repo (`~/dev/moodle-block_feedback_tracker`). It is
 bind-mounted at `blocks/feedback_tracker` into every stack whose branch
-`$plugin->supported = [405, 502]` covers (`m405`, `m501`, `m502` and its twin
-`m502b`; not `m53`), and that mount only exists **inside the container** — on
+`$plugin->supported` covers (`main`, 5.2: `m502` and its twin `m502b`), and
+that mount only exists **inside the container** — on
 the host, `~/dev/moodle-501/public/blocks/feedback_tracker` is an empty
 directory.
 A linter pointed at the stack checkout therefore scans nothing and passes
@@ -59,9 +65,9 @@ mounted stacks.
 
 | Command | What it does |
 |---------|--------------|
-| `mdl grunt m501 blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Core's `amd` task is `eslint:amd` + `rollup`, so this lints the JS on the way. Required before committing JS. |
+| `mdl grunt m502 blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Core's `amd` task is `eslint:amd` + `rollup`, so this lints the JS on the way. Required before committing JS. |
 | `mdl ci moodle-block_feedback_tracker --only grunt` | The CI JS/CSS gate itself: `grunt --max-lint-warnings 0` (ESLint + Stylelint). |
-| `xmllint --noout --schema ~/dev/moodle-501/public/lib/xmldb/xmldb.xsd db/install.xml` | Validate the XMLDB schema. Core libs sit under `public/` on the 5.x split layout; against `~/dev/moodle-405` drop that segment. |
+| `xmllint --noout --schema ~/dev/moodle-502/public/lib/xmldb/xmldb.xsd db/install.xml` | Validate the XMLDB schema. Core libs sit under `public/` on the 5.x split layout. |
 
 CI runs the fleet-standard gate set (static leg, then PHPUnit and Behat per
 runtime leg), with Behat faildumps uploaded as artifacts on failure. One
@@ -71,7 +77,7 @@ the plugin and phpcs would otherwise scan the result. Reproduce the whole
 pipeline locally with `mdl ci moodle-block_feedback_tracker` before pushing
 — see *Debugging CI failures* for this plugin's invocations.
 
-PHPUnit runs as `mdl phpunit m501 block_feedback_tracker`. Its `phpunit.xml`
+PHPUnit runs as `mdl phpunit m502 block_feedback_tracker`. Its `phpunit.xml`
 is generated at the **stack checkout root** (`$CFG->root`, above `public/`),
 never `public/phpunit.xml`; `mdl phpunit-init <stack>` regenerates it, which
 is required after the mounted plugin set changes.
@@ -423,7 +429,9 @@ Each upgrade step ends with:
 ```php
 upgrade_block_savepoint(true, <version>, 'feedback_tracker');
 ```
-Match `<version>` to the version.php bump.
+Match `<version>` to the version.php bump, inside the branch's own range
+(see the plugin context above). `upgrade.php` starts with a schema check that
+refuses a site which never reached 1.1.0; a new step goes below it.
 
 - **Write the step and the `version.php` bump in the same edit, before running
   anything.** This tree is mounted live on every stack, so a savepoint above
@@ -431,25 +439,15 @@ Match `<version>` to the version.php bump.
   that stack then reads `version.php` as a downgrade and stops.
   `upgrade_test::test_no_savepoint_is_ahead_of_version_php` fails on that
   state. A code-only bump needs no step.
-- **`dirty_queue::enqueue()` is called by name from several steps**
-  (2026060112 onwards: every step that re-queues rollups), so its signature,
-  the `REASON_SUBMISSION` / `REASON_BULK` constants those steps pass, and its
-  semantics (an already queued tuple is refreshed, and outside a transaction a
-  duplicate-key collision adopts the other writer's row instead of throwing)
-  are frozen. Change them only with a new function beside it. The same holds, for the same reason, for
-  `calendar::bump_version()` (four steps) and
-  `gradebook_response::SOURCE_ASSIGN` (2026080400).
-- Anything else a new step needs is written out inside it, as the rules stand
-  at that version, rather than read from a class that may change later: the
-  2026092500 step repeats the numeric rules of `thresholds_setting::validate()`
-  and the calver bump instead of calling into `thresholds_setting` or
-  `calendar::bump_version()`, and `upgrade_test` pins its verdicts as literals.
+- Anything a new step needs is written out inside it, as the rules stand at
+  that version, rather than read from a class that may change later; a class
+  a step does call by name is frozen from then on.
 - A step that writes a setting with `set_config()` fires no
   `set_updatedcallback`, and `block_feedback_tracker_invalidate_rollups()`
   returns early while `$CFG->upgraderunning` anyway (see *Install / upgrade
   guards*). A step that changes a setting the rollups depend on does the
-  callback's work itself, as the 2026092500 step does: a new calver, and every
-  rollup re-queued with `REASON_BULK`.
+  callback's work itself: a new calver, and every rollup re-queued with
+  `dirty_queue::REASON_BULK`.
 
 ### Cross-DB SQL
 
@@ -1085,9 +1083,7 @@ had `disable_behat`); a failing scenario uploads a faildump artifact.
   `thresholds_setting_test` fails if the page builds one any other way. The parsers
   (`bucket::parse_thresholds_eff()` / `parse_thresholds_days()`,
   `responsiveness_calculator::parse_thresholds_band()`) stay tolerant of any
-  stored value; the 2026092500 upgrade step reset the ones saved before the
-  setting validated them. A change to these rules does not reach that step,
-  which keeps its own copy (see *Upgrade savepoints*).
+  stored value, so one saved before the setting validated it still parses.
 
 ## Score formula
 
@@ -1349,7 +1345,7 @@ a mount-time loader) without `TypeError: finally is not a function`.
 
 Every new `amd/src/**/*.js` file must have its `amd/build/**/*.min.js`
 counterpart committed in the same PR. Build with
-`mdl grunt m501 blocks/feedback_tracker`.
+`mdl grunt m502 blocks/feedback_tracker`.
 
 `amd/build/**` is **tracked** in git (not gitignored) — Moodle serves the
 compiled bundle, not `amd/src`. When resolving a cherry-pick conflict,
@@ -1362,7 +1358,7 @@ amd/build/...` is a valid way to restore it.
 - The stacks serve `amd/build/*.min.js`, not `amd/src`, even with
   `cachejs = false`: Moodle reads `amd/src` only when the `.map` beside the build
   is missing. An edit is therefore live only after
-  `mdl grunt m501 blocks/feedback_tracker`, and a mutation test that skips the
+  `mdl grunt m502 blocks/feedback_tracker`, and a mutation test that skips the
   rebuild silently tests the old build.
 - Visit `/blocks/feedback_tracker/pages/spike_react.php` as site admin
   (e.g. http://localhost:8501/…) for a quick smoke test of the Preact
@@ -1404,17 +1400,17 @@ a while).
 The plugin is its **own git repo** (branch `main`) at
 `~/dev/moodle-block_feedback_tracker`, a sibling of the stack checkouts
 rather than a directory inside one. The stacks' branches
-(`MOODLE_405_STABLE` / `MOODLE_501_STABLE`) are core's, unrelated to this
+(`MOODLE_501_STABLE`, `MOODLE_502_STABLE`) are core's, unrelated to this
 repo's; git run from a stack checkout never sees plugin changes.
 
-`version.php` **diverges by branch on purpose**: `main` carries
-`$plugin->supported = [405, 502]`, `MOODLE_501_STABLE` carries `[501, 501]`.
-Cherry-picking a version bump conflicts on that line — keep each branch's own
-`supported` when resolving. **`.github/workflows/ci.yml` diverges the same
-way**: `main` makes one reusable-workflow call per supported core branch,
-while `MOODLE_XX_STABLE` plugin branches carry a single call with no
-`moodle-core-branch` input (the workflow auto-detects it from the branch
-name) — keep each branch's own when resolving cherry-picks.
+`version.php` **diverges by branch on purpose**: each branch carries its own
+`$plugin->version`, `requires` and `supported` (`main` and
+`MOODLE_502_STABLE`: 5.2; `MOODLE_501_STABLE`: 5.1). A fix lands on `main`
+and is merged or cherry-picked into the other branches; keep each branch's own
+`version.php` lines when resolving, then bump that branch's counter. Check all
+five `$plugin->` lines afterwards. **`.github/workflows/ci.yml` and the
+README's requirements line diverge the same way**: each branch names its own
+`moodle-core-branch` in a single job.
 
 ### Debugging CI failures
 
@@ -1425,9 +1421,8 @@ name) — keep each branch's own when resolving cherry-picks.
   use the API endpoint. Failures cluster in the "Static checks" job
   (phplint/phpcs/phpdoc/grunt/leftover) since runtime legs rarely break.
 - **The whole gate runs locally — don't push to find out whether phpcs
-  passes.** The repo dir is `moodle-block_feedback_tracker`; it mounts at
-  `blocks/feedback_tracker` on `m405`, `m501`, `m502` and `m502b`
-  (`$plugin->supported = [405, 502]` keeps it off `m53`). This plugin's
+  passes.** The repo dir is `moodle-block_feedback_tracker` (`main`, 5.2); it
+  mounts at `blocks/feedback_tracker` on `m502` and `m502b`. This plugin's
   invocations:
 
   ```sh
@@ -1435,17 +1430,15 @@ name) — keep each branch's own when resolving cherry-picks.
   mdl ci moodle-block_feedback_tracker --only grunt          # ESLint + Stylelint
   mdl ci moodle-block_feedback_tracker                       # full static + PHPUnit
   mdl ci moodle-block_feedback_tracker --behat               # add the Behat leg
-  mdl phpunit m501 block_feedback_tracker                    # this plugin's testsuite
-  mdl behat m501 @block_feedback_tracker                     # this plugin's scenarios
-  mdl grunt m501 blocks/feedback_tracker                     # rebuild amd/build
+  mdl phpunit m502 block_feedback_tracker                    # this plugin's testsuite
+  mdl behat m502 @block_feedback_tracker                     # this plugin's scenarios
+  mdl grunt m502 blocks/feedback_tracker                     # rebuild amd/build
   ```
 
 - `mdl ci` defaults to the 5.1 leg (`--branch MOODLE_501_STABLE --php 8.3
-  --db pgsql`) and skips Behat unless asked. Because `supported` starts at
-  405, anything version-conditional needs the 4.5 leg run too:
-  `mdl ci moodle-block_feedback_tracker --branch MOODLE_405_STABLE`. The
-  MariaDB leg (`--db mariadb`) is worth a run whenever the change touches
-  SQL — CI runs it only on the highest branch.
+  --db pgsql`) and skips Behat unless asked: for `main` pass
+  `--branch MOODLE_502_STABLE --php 8.4`, or run `--matrix`. The MariaDB leg
+  (`--db mariadb`) is worth a run whenever the change touches SQL.
 
 ## MDL Shield reviews
 
