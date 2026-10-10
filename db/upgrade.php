@@ -753,9 +753,9 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
     }
 
     if ($oldversion < 2026100902) {
-        /* The reconciliation window default moved from 500 to 1000. A site
-         * still on the old default takes the new one; any other value was
-         * chosen by an administrator and is kept. */
+        /* The reconciliation window default moved from 500 to 1000. A stored
+         * 500 is taken to be the old default and moves; any other value is
+         * kept. An administrator who chose 500 on purpose moves too. */
         if ((string) get_config('block_feedback_tracker', 'reconcile_batch_size') === '500') {
             set_config('reconcile_batch_size', '1000', 'block_feedback_tracker');
         }

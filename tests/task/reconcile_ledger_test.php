@@ -319,6 +319,14 @@ final class reconcile_ledger_test extends \advanced_testcase {
             'The fixture is only meaningful while the enrolment survives the deletion.'
         );
 
+        /* The sweep itself must not queue the repair: the repair task checks
+         * participation again, so the end result alone would not show it. */
+        $this->assertNotContains(
+            (int) $student->id,
+            $this->sweep_dispatches(get_course((int) $cm->course), 'sweep_missing_rows', 'missing')
+        );
+        $DB->delete_records('task_adhoc');
+
         $this->run_reconciler();
 
         $this->assertSame(
@@ -371,6 +379,13 @@ final class reconcile_ledger_test extends \advanced_testcase {
             $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]),
             'A front-page submission must still get a ledger row.'
         );
+
+        // Nor does the departed-participant sweep take it: there, only a deleted account departs.
+        unset_config('reconcile_cursor_participant', 'block_feedback_tracker');
+        $task = new reconcile_ledger();
+        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, time() + 60);
+        (new \ReflectionMethod($task, 'sweep_departed_participants'))->invoke($task, [SITEID], 500, 'participant');
+        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
     }
 
     /**
@@ -1554,7 +1569,12 @@ final class reconcile_ledger_test extends \advanced_testcase {
                 return count($rows);
             });
             $cursor = 0;
+            $windows = 0;
             while ($rows = $window($cursor)) {
+                // A window that does not move past its cursor would loop for ever.
+                if (++$windows > 50) {
+                    throw new \coding_exception('The submission window never ran out.');
+                }
                 $act($rows);
                 $cursor = (int) array_key_last($rows);
             }
@@ -1571,9 +1591,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * An enrolment in a disabled instance, one not started yet and one already
-     * ended all leave the participant: the departed sweep deletes the row and
-     * the missing-row sweep does not rebuild it. Both read the one predicate,
+     * An enrolment in a disabled instance, one not started yet, one already
+     * ended and a deleted account with a live enrolment all leave the
+     * participant: the departed sweep deletes the row and the missing-row
+     * sweep does not rebuild it. Both read the one predicate,
      * so they agree. The active classmate in the same course is the control.
      *
      * @return void
@@ -1599,9 +1620,10 @@ final class reconcile_ledger_test extends \advanced_testcase {
             'ended' => fn(int $userid, int $courseid) => $DB->set_field(
                 'user_enrolments',
                 'timeend',
-                $now - 60,
+                $now - 3600,
                 ['userid' => $userid]
             ),
+            'deleted account' => fn(int $userid, int $courseid) => $DB->set_field('user', 'deleted', 1, ['id' => $userid]),
         ];
         foreach ($cases as $why => $leave) {
             [$cm, $student, $assign, $course] = $this->build_environment();
@@ -1632,6 +1654,41 @@ final class reconcile_ledger_test extends \advanced_testcase {
                 );
             }
         }
+    }
+
+    /**
+     * An enrolment counts in its own course only: a student suspended in one
+     * course and active in another loses the rows of the first and keeps those
+     * of the second.
+     *
+     * @return void
+     */
+    public function test_an_enrolment_elsewhere_does_not_keep_a_departed_participant(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $now = time();
+        [$cma, $student, $assigna, $coursea] = $this->build_environment();
+        [$cmb, , $assignb, $courseb] = $this->build_environment();
+        $this->getDataGenerator()->enrol_user((int) $student->id, (int) $courseb->id, 'student');
+        foreach ([[$cma, $assigna], [$cmb, $assignb]] as [$cm, $assign]) {
+            $this->insert_submission((int) $assign->id, (int) $student->id, $now - 4 * 86400, 0);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        }
+        $enrola = $DB->get_field('enrol', 'id', ['courseid' => $coursea->id, 'enrol' => 'manual'], MUST_EXIST);
+        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, ['enrolid' => $enrola, 'userid' => $student->id]);
+
+        $task = new reconcile_ledger();
+        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, time() + 60);
+        (new \ReflectionMethod($task, 'sweep_departed_participants'))->invoke(
+            $task,
+            [(int) $coursea->id, (int) $courseb->id],
+            500,
+            'participant'
+        );
+
+        $this->assertFalse($DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cma->id, 'userid' => $student->id]));
+        $this->assertTrue($DB->record_exists('block_feedback_tracker_sub', ['cmid' => $cmb->id, 'userid' => $student->id]));
     }
 
     /**

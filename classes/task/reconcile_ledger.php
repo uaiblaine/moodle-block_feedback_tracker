@@ -498,8 +498,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * ({@see get_enrolled_join()}, {@see get_enrolled_with_capabilities_join()}):
      * an account that is not deleted and, outside the site course, an active
      * enrolment in an enabled instance whose start has passed and whose end
-     * has not. Everybody counts on the site course, where core joins no
-     * enrolment at all. Keep it in step with core.
+     * has not, tested at the same rounded instant core uses
+     * ({@see self::enrolment_now()}). Everybody counts on the site course,
+     * where core joins no enrolment at all. Keep it in step with core.
      *
      * Written as a correlated predicate on both columns rather than joined from
      * core's helper: with the course fixed as a constant, PostgreSQL turned the
@@ -538,6 +539,17 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
+     * The instant enrolment windows are tested at: now, rounded to 100 seconds
+     * as `get_enrolled_join()` rounds it, so a start or end within a minute of
+     * now is judged as core judges it.
+     *
+     * @return int Epoch seconds.
+     */
+    private static function enrolment_now(): int {
+        return (int) round(time(), -2);
+    }
+
+    /**
      * Submissions with no ledger row at all.
      *
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
@@ -555,7 +567,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return int Rows dispatched for repair.
      */
     private function sweep_missing_rows(array $processable, int $batch, string $key): int {
-        [$activesql, $activeparams] = self::active_participant_sql('s.userid', 'cm.course', time());
+        [$activesql, $activeparams] = self::active_participant_sql('s.userid', 'cm.course', self::enrolment_now());
         $acted = $this->walk(
             $key,
             $batch,
@@ -953,7 +965,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function drain_departed_for_course(int $courseid, int $batch): int {
         global $DB;
 
-        [$activesql, $activeparams] = self::active_participant_sql('l.userid', 'l.courseid', time());
+        [$activesql, $activeparams] = self::active_participant_sql('l.userid', 'l.courseid', self::enrolment_now());
         $rows = $DB->get_records_sql(
             "SELECT l.id, l.groupid
                FROM {block_feedback_tracker_sub} l
