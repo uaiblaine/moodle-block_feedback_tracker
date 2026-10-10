@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - Unreleased
 
+### Changed
+- **Reconciliation no longer reads the whole submission table per query.**
+  Measured on 5 million submissions (250 000 students, 6 000 groups):
+  - the missing-row sweep cost 1.6 s per window of 500 on PostgreSQL, because
+    its window filtered by course through joins and read every submission of
+    the tracked courses to keep 500; the window now walks the primary key
+    alone and the tracked submissions are picked out in PHP, which is cheap on
+    both PostgreSQL and MariaDB (filtering by a list of assignment ids instead
+    was fast on PostgreSQL and 1.6 s per window on MariaDB);
+  - its probe started from the activities and scanned their submissions
+    again, 0.9 s, and now starts from the window's ids, 16 ms;
+  - the departed-participant sweep compared every ledger row of a course with
+    every participant, 1.75 s per course; it now looks each row up, about
+    75 ms per course.
+
+  The missing-row and departed-participant sweeps share one definition of an
+  active participant, core's own; the missing-row sweep's start-date test now
+  matches core's (`timestart < now`).
+- **`reconcile_batch_size` defaults to 1000** (was 500). On the same table,
+  1000 to 2000 rows per query is the cheapest per row. Sites still on 500 move
+  to 1000 on upgrade; any other value is kept.
+- **The performance settings say what each one does and when to change it**,
+  in a sentence or two each, and the retention ones say it does not reduce
+  the reconciliation load.
+
 ### Added
 - **Pending rows that lost their response before the cycle model can be
   dismissed.** Before measurement cycles, a student who saved an

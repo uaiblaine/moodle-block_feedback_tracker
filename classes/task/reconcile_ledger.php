@@ -74,7 +74,7 @@ use block_feedback_tracker\local\sla\submission_status;
  */
 class reconcile_ledger extends \core\task\scheduled_task {
     /** Default driving rows per window. */
-    public const DEFAULT_BATCH = 500;
+    public const DEFAULT_BATCH = 1000;
 
     /** Default soft time cap for the whole tick, in seconds. */
     public const DEFAULT_TIME_CAP = 50;
@@ -417,25 +417,149 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
+     * A window fetcher over {assign_submission} that walks the primary key alone.
+     *
+     * No other predicate goes into the window: which submissions concern the
+     * sweep is decided in PHP by {@see self::tracked_submissions()}. Every
+     * filter tried in SQL made one engine read far more than the window: by
+     * course through joins, PostgreSQL read every submission of the tracked
+     * courses per window; by a list of assignment ids, MariaDB did the same
+     * through the assignment index. A bare range on the primary key reads one
+     * window on both.
+     *
+     * @param int $batch Window size.
+     * @return callable Takes the cursor (int), returns up to `$batch` rows keyed by id,
+     *                  each with assignment, userid and timemodified.
+     */
+    private function submission_window(int $batch): callable {
+        global $DB;
+        return fn(int $cursor): array => $DB->get_records_sql(
+            "SELECT s.id, s.assignment, s.userid, s.timemodified
+               FROM {assign_submission} s
+              WHERE s.id > :cursor
+           ORDER BY s.id ASC",
+            ['cursor' => $cursor],
+            0,
+            $batch
+        );
+    }
+
+    /**
+     * An act callback that keeps the window's submissions a sweep is about and
+     * probes those.
+     *
+     * Kept: submissions of assignments in the tracked courses, team container
+     * rows (userid 0) or individual ones as `$team` says, and none older than
+     * the retention floor, which the pruner shares ({@see retention::cutoff()}).
+     *
+     * @param array $processable Course ids in scope.
+     * @param bool $team Team container rows rather than individual submissions.
+     * @param callable $probe The probe for the kept rows ({@see self::repair_probe()}).
+     * @return callable Takes one window (array), returns the rows acted on (int).
+     */
+    private function tracked_submissions(array $processable, bool $team, callable $probe): callable {
+        global $DB;
+        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $tracked = array_flip(array_map('intval', $DB->get_fieldset_sql(
+            "SELECT a.id
+               FROM {assign} a
+               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE a.teamsubmission = :team
+                AND cm.course $csql",
+            $cparams + ['modname' => 'assign', 'team' => $team ? 1 : 0]
+        )));
+        $floor = $this->retention_floor();
+        return function (array $window) use ($tracked, $team, $floor, $probe): int {
+            $kept = array_filter(
+                $window,
+                static fn($s): bool => isset($tracked[(int) $s->assignment])
+                    && ($team ? (int) $s->userid === 0 : (int) $s->userid > 0)
+                    && (int) $s->timemodified >= $floor
+            );
+            return empty($kept) ? 0 : $probe($kept);
+        };
+    }
+
+    /**
+     * The id of the assign module row, which the submission probes join on.
+     *
+     * @return int
+     */
+    private function assign_module_id(): int {
+        global $DB;
+        return (int) $DB->get_field('modules', 'id', ['name' => 'assign'], MUST_EXIST);
+    }
+
+    /**
+     * SQL that is true when a user is an active participant of a course.
+     *
+     * Core's rule for `get_enrolled_sql($context, '', 0, true)`
+     * ({@see get_enrolled_join()}, {@see get_enrolled_with_capabilities_join()}):
+     * an account that is not deleted and, outside the site course, an active
+     * enrolment in an enabled instance whose start has passed and whose end
+     * has not, tested at the same rounded instant core uses
+     * ({@see self::enrolment_now()}). Everybody counts on the site course,
+     * where core joins no enrolment at all. Keep it in step with core.
+     *
+     * Written as a correlated predicate on both columns rather than joined from
+     * core's helper: with the course fixed as a constant, PostgreSQL turned the
+     * anti-join into a comparison of every ledger row of the course with every
+     * participant, while this form is one index lookup per row.
+     *
+     * @param string $useridcol Column holding the user id.
+     * @param string $courseidcol Column holding the course id.
+     * @param int $now The instant enrolment windows are tested at.
+     * @return array [sql, params], the parameters prefixed `ap`.
+     */
+    private static function active_participant_sql(string $useridcol, string $courseidcol, int $now): array {
+        $sql = "EXISTS (
+                    SELECT 1
+                      FROM {user} apu
+                     WHERE apu.id = $useridcol
+                       AND apu.deleted = 0
+                       AND ($courseidcol = :apsiteid OR EXISTS (
+                           SELECT 1
+                             FROM {user_enrolments} apue
+                             JOIN {enrol} ape ON ape.id = apue.enrolid AND ape.courseid = $courseidcol
+                            WHERE apue.userid = $useridcol
+                              AND apue.status = :apactive
+                              AND ape.status = :apenabled
+                              AND apue.timestart < :apnow1
+                              AND (apue.timeend = 0 OR apue.timeend > :apnow2)
+                       ))
+                )";
+        return [$sql, [
+            'apsiteid' => SITEID,
+            'apactive' => ENROL_USER_ACTIVE,
+            'apenabled' => ENROL_INSTANCE_ENABLED,
+            'apnow1' => $now,
+            'apnow2' => $now,
+        ]];
+    }
+
+    /**
+     * The instant enrolment windows are tested at: now, rounded to 100 seconds
+     * as `get_enrolled_join()` rounds it, so a start or end within a minute of
+     * now is judged as core judges it.
+     *
+     * @return int Epoch seconds.
+     */
+    private static function enrolment_now(): int {
+        return (int) round(time(), -2);
+    }
+
+    /**
      * Submissions with no ledger row at all.
      *
      * The fingerprint of `add_attempt()` (a brand-new reopened row nobody was
      * told about), of a restored course, and of any event lost in flight.
      *
-     * Restricted to users who are still active participants, and must agree
-     * with {@see self::sweep_departed_participants()}'s
-     * `get_enrolled_sql($context, '', 0, true)`: a deleted account, a
-     * suspended enrolment or method, or an enrolment outside its start/end
-     * window all disqualify. Otherwise the two sweeps fight, this one
-     * rebuilding on every pass the rows the other deleted, each round trip
-     * costing a backfill dispatch and a rollup recompute. The predicate is
-     * inlined because `get_enrolled_sql()` is course-scoped while this sweep is
-     * cross-course.
-     *
-     * The site course is exempt, as in core: `get_enrolled_join()` skips the
-     * enrolment join when the course is SITEID, and nobody holds a
-     * {user_enrolments} row there. Without the exemption no front-page
-     * activity would ever be repaired.
+     * Restricted to users who are still active participants, through the
+     * predicate {@see self::sweep_departed_participants()} also uses
+     * ({@see self::active_participant_sql()}). If the two disagreed they would
+     * fight, this one rebuilding on every pass the rows the other deleted,
+     * each round trip costing a backfill dispatch and a rollup recompute.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Window size.
@@ -443,66 +567,31 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return int Rows dispatched for repair.
      */
     private function sweep_missing_rows(array $processable, int $batch, string $key): int {
-        global $DB;
-        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $now = time();
+        [$activesql, $activeparams] = self::active_participant_sql('s.userid', 'cm.course', self::enrolment_now());
         $acted = $this->walk(
             $key,
             $batch,
-            /* The driving set: a keyset range over {assign_submission} with
-             * point lookups on the activity, carrying every predicate the sweep
-             * applies to the source row itself. */
-            fn(int $cursor): array => $DB->get_records_sql(
-                "SELECT s.id
-                   FROM {assign_submission} s
-                   JOIN {assign} a ON a.id = s.assignment AND a.teamsubmission = 0
-                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-                  WHERE s.userid > 0
-                    AND s.id > :cursor
-                    AND cm.course $csql
-                    AND s.timemodified >= :retention
-               ORDER BY s.id ASC",
-                $cparams + [
-                    'modname' => 'assign',
-                    'cursor' => $cursor,
-                    'retention' => $this->retention_floor(),
-                ],
-                0,
-                $batch
-            ),
-            $this->repair_probe(
+            $this->submission_window($batch),
+            /* Driven from the kept rows' primary keys. With {assign} in the
+             * join, PostgreSQL drove from the activity instead and read every
+             * submission of each activity to find these rows; they are already
+             * submissions of tracked assignments, so the module id is all the
+             * probe needs to find the course module. */
+            $this->tracked_submissions($processable, false, $this->repair_probe(
                 "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
                         s.userid, s.groupid, s.attemptnumber
                    FROM {assign_submission} s
-                   JOIN {user} u ON u.id = s.userid AND u.deleted = 0
-                   JOIN {assign} a ON a.id = s.assignment
-                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {course_modules} cm ON cm.instance = s.assignment AND cm.module = :assignmodule
               LEFT JOIN {block_feedback_tracker_sub} l
                      ON l.cmid = cm.id
                     AND l.userid = s.userid
                     AND l.attemptnumber = s.attemptnumber
                   WHERE s.id " . self::WINDOW_TOKEN . "
                     AND l.id IS NULL
-                    AND (cm.course = :siteid OR EXISTS (
-                        SELECT 1
-                          FROM {user_enrolments} ue
-                          JOIN {enrol} en ON en.id = ue.enrolid AND en.courseid = cm.course
-                         WHERE ue.userid = s.userid
-                           AND ue.status = 0
-                           AND en.status = 0
-                           AND (ue.timestart = 0 OR ue.timestart <= :nowstart)
-                           AND (ue.timeend = 0 OR ue.timeend > :nowend)
-                    ))
+                    AND $activesql
                ORDER BY s.id ASC",
-                [
-                    'modname' => 'assign',
-                    'nowstart' => $now,
-                    'nowend' => $now,
-                    'siteid' => SITEID,
-                ]
-            )
+                $activeparams + ['assignmodule' => $this->assign_module_id()]
+            ))
         );
         $this->flush_repairs($key);
         return $acted;
@@ -520,37 +609,16 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * @return int Rows dispatched for repair.
      */
     private function sweep_missing_team_rows(array $processable, int $batch, string $key): int {
-        global $DB;
-        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $acted = $this->walk(
             $key,
             $batch,
-            fn(int $cursor): array => $DB->get_records_sql(
-                "SELECT s.id
-                   FROM {assign_submission} s
-                   JOIN {assign} a ON a.id = s.assignment AND a.teamsubmission = 1
-                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-                  WHERE s.userid = 0
-                    AND s.id > :cursor
-                    AND cm.course $csql
-                    AND s.timemodified >= :retention
-               ORDER BY s.id ASC",
-                $cparams + [
-                    'modname' => 'assign',
-                    'cursor' => $cursor,
-                    'retention' => $this->retention_floor(),
-                ],
-                0,
-                $batch
-            ),
-            $this->repair_probe(
+            $this->submission_window($batch),
+            // Driven from the kept rows' primary keys, as in sweep_missing_rows().
+            $this->tracked_submissions($processable, true, $this->repair_probe(
                 "SELECT s.id AS subid, cm.id AS cmid, cm.course AS courseid,
                         s.userid, s.groupid, s.attemptnumber
                    FROM {assign_submission} s
-                   JOIN {assign} a ON a.id = s.assignment
-                   JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+                   JOIN {course_modules} cm ON cm.instance = s.assignment AND cm.module = :assignmodule
               LEFT JOIN {block_feedback_tracker_sub} l
                      ON l.cmid = cm.id
                     AND l.teamgroupid = s.groupid
@@ -558,8 +626,8 @@ class reconcile_ledger extends \core\task\scheduled_task {
                   WHERE s.id " . self::WINDOW_TOKEN . "
                     AND l.id IS NULL
                ORDER BY s.id ASC",
-                ['modname' => 'assign']
-            )
+                ['assignmodule' => $this->assign_module_id()]
+            ))
         );
         $this->flush_repairs($key);
         return $acted;
@@ -839,8 +907,9 @@ class reconcile_ledger extends \core\task\scheduled_task {
      *
      * Unenrolment, suspension and user deletion all leave the rows behind, and
      * an unenrolled student's work is nobody's outstanding task. Reuses core's
-     * own `get_enrolled_sql()` definition so the plugin and mod_assign agree
-     * on who counts. Acts directly, like the orphan sweep.
+     * definition of an active participant ({@see self::active_participant_sql()})
+     * so the plugin and mod_assign agree on who counts. Acts directly, like the
+     * orphan sweep.
      *
      * @param array $processable Course ids in scope.
      * @param int $batch Row ceiling per course.
@@ -887,10 +956,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
     /**
      * Delete one course's rows for users who are no longer active participants.
      *
-     * On SITEID `get_enrolled_sql()` degenerates to a scan of {user}, because
-     * `get_enrolled_join()` skips every enrolment join on the front page. That
-     * is why front-page rows are left alone unless the account itself is gone,
-     * and it is not cheap on a large site.
+     * On SITEID only a deleted account counts as departed, as in core.
      *
      * @param int $courseid
      * @param int $batch Row ceiling for this course.
@@ -899,20 +965,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
     private function drain_departed_for_course(int $courseid, int $batch): int {
         global $DB;
 
-        try {
-            $context = \context_course::instance($courseid);
-        } catch (\Throwable $e) {
-            return 0;
-        }
-        [$esql, $eparams] = get_enrolled_sql($context, '', 0, true);
+        [$activesql, $activeparams] = self::active_participant_sql('l.userid', 'l.courseid', self::enrolment_now());
         $rows = $DB->get_records_sql(
             "SELECT l.id, l.groupid
                FROM {block_feedback_tracker_sub} l
-          LEFT JOIN ($esql) e ON e.id = l.userid
               WHERE l.courseid = :courseid
-                AND e.id IS NULL
+                AND NOT $activesql
            ORDER BY l.id ASC",
-            $eparams + ['courseid' => $courseid],
+            $activeparams + ['courseid' => $courseid],
             0,
             $batch
         );
