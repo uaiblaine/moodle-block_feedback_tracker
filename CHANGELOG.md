@@ -30,9 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `main` is now the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`:
   `$plugin->requires` 5.2, `$plugin->supported = [502, 502]`, version
   `2026042000`. `MOODLE_501_STABLE` is the Moodle 5.1 branch, version
-  `2025100600`. Each branch counts up inside its own range from here on.
-  Moodle 4.5 and 5.0 are no longer served by any branch: sites there stay on
-  1.1.0.
+  `2025100600`. `MOODLE_405_STABLE` is the Moodle 4.5 branch, version
+  `2024100700`, cut from `main` after the read-only session change. Each
+  branch counts up inside its own range from here on. Moodle 5.0 is no longer
+  served by any branch: sites there stay on 1.1.0.
 - **The upgrade steps of 1.0.0 to 1.1.0 were removed.** They were numbered by
   date, above every per-version range, so a site lowering its version to
   switch would have run them all again. 1.1.0 (version `2026100902`) is the
@@ -53,6 +54,8 @@ as a downgrade until the stored version is lowered:
      `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2026041999`
    - Moodle 5.1 (`MOODLE_501_STABLE`):
      `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2025100599`
+   - Moodle 4.5 (`MOODLE_405_STABLE`):
+     `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2024100699`
 4. Run `php admin/cli/upgrade.php`, then disable maintenance mode.
 
 Do step 3 only after step 2: with the 1.1.0 files still in place, a lowered
