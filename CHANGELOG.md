@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Changed
+- **The twelve read web services no longer hold the session lock** (version
+  `2025100601`). Every `type => read` function in `db/services.php` now declares
+  `'readonlysession' => true`, as core does for its own reads. The dashboard's
+  three loads (`get_dashboard`, `get_grader_priority_list`, `get_insights`), the
+  report page's and the block's no longer wait for one another, or for the
+  page's other requests of the same session.
+  - It takes effect only on a site that sets `$CFG->enable_read_only_sessions`.
+    Such a site must map its session-mode caches outside the session store, and
+    this plugin has two: `responsiveness_payload` and `dashboard_payload`.
+  - Nothing on these paths writes `$SESSION`, `$USER` or the database: the
+    recompute writers run only from tasks and the calendar observer.
+    `tests/external/readonly_session_test.php` checks each service on a tracked
+    course with a pending and a graded submission, and that every read and no
+    write carries the flag.
+  - Measured on Moodle 5.2 with the site flag on, four simultaneous calls of one
+    service took 4.9 to 13.1 times one call before the change and 1.3 to 2.4
+    times after it. The dashboard's three loads fired together went from 263-292 ms
+    to 48-63 ms.
 - **One branch per Moodle version, each numbered in that version's range.**
   `main` is now the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`:
   `$plugin->requires` 5.2, `$plugin->supported = [502, 502]`, version
