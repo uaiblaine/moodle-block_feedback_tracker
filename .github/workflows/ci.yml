@@ -25,11 +25,12 @@ concurrency:
 
 jobs:
   # Single reusable-workflow call for this branch's one Moodle version
-  # (version.php $plugin->supported). main is the 5.2 branch, the same commit
-  # as MOODLE_502_STABLE; each MOODLE_XX_STABLE branch names its own core.
-  # Keep each branch's own form when resolving merges and cherry-picks.
-  ci-502:
-    name: Moodle 5.02
+  # (version.php $plugin->supported). Named explicitly rather than detected
+  # from the branch name, so a pull request from any branch tests the right
+  # core. Every branch has this form with its own core; keep each branch's
+  # own when resolving merges and cherry-picks.
+  ci-405:
+    name: Moodle 4.05
     uses: moodle-an-hochschulen/moodle-workflows/.github/workflows/moodle-plugin-ci.yml@main
     with:
-      moodle-core-branch: MOODLE_502_STABLE
+      moodle-core-branch: MOODLE_405_STABLE

@@ -32,8 +32,8 @@ There is one exception, and it is deliberate: **a mark made inside the assignmen
 
 ## Requirements
 
-- Moodle 5.2 (this branch, the same as `MOODLE_502_STABLE`; `MOODLE_501_STABLE` is the Moodle 5.1 release)
-- PHP 8.3 or later
+- Moodle 4.5 (this branch, `MOODLE_405_STABLE`; `main` and `MOODLE_502_STABLE` are the Moodle 5.2 release, `MOODLE_501_STABLE` the Moodle 5.1 one)
+- PHP 8.1 or later
 - PostgreSQL or MariaDB
 
 ## Installation
