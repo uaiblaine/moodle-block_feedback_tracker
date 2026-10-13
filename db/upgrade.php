@@ -26,7 +26,7 @@
  * Upgrade steps for block_feedback_tracker.
  *
  * Versions are numbered in the range of the Moodle version a branch requires
- * (5.2: 20260420XX, 5.1: 20251006XX), so a release for one Moodle version
+ * (5.2: 20260420XX, 5.1: 20251006XX, 4.5: 20241007XX), so a release for one Moodle version
  * never carries the number of another. The steps of 1.0.0 to 1.1.0 were
  * numbered by date, above every such range: a site that lowered its version
  * to switch numbering would have run them all again, so they were removed.
