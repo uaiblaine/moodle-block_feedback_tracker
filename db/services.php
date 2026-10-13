@@ -30,6 +30,7 @@ $functions = [
         'description' => 'Course-scoped responsiveness payload for the block / report.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_pending_submissions' => [
@@ -37,6 +38,7 @@ $functions = [
         'description' => 'Paginated drilldown of pending submissions.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_graded_submissions' => [
@@ -44,6 +46,7 @@ $functions = [
         'description' => 'Paginated list of already-graded submissions.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_report_scopes' => [
@@ -51,6 +54,7 @@ $functions = [
         'description' => 'Per-group hero scopes + class-filter list for the report page (rollup-only read).',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_academic_days' => [
@@ -58,6 +62,7 @@ $functions = [
         'description' => 'Last 30 academic days heatmap series for the report page.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_pause_timeline' => [
@@ -65,6 +70,7 @@ $functions = [
         'description' => 'Per-submission pause timeline.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewresponsiveness',
     ],
     'block_feedback_tracker_get_calendar' => [
@@ -72,6 +78,7 @@ $functions = [
         'description' => 'Read the platform academic calendar for a date range.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:managecalendar',
     ],
     'block_feedback_tracker_save_calendar_day' => [
@@ -114,6 +121,7 @@ $functions = [
         'description' => 'Site-level dashboard summary.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewdashboard',
     ],
     'block_feedback_tracker_get_school_comparison' => [
@@ -121,6 +129,7 @@ $functions = [
         'description' => 'Site-wide median + percentile benchmarks for the last N days.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewschoolcomparison',
     ],
     'block_feedback_tracker_get_grader_priority_list' => [
@@ -128,6 +137,7 @@ $functions = [
         'description' => 'Top-N most-urgent pending submissions across all courses the caller can view.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewdashboard',
     ],
     'block_feedback_tracker_get_insights' => [
@@ -135,6 +145,7 @@ $functions = [
         'description' => 'Dashboard insights: bright spot, most improved, gentle watch.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewdashboard',
     ],
     'block_feedback_tracker_get_audit_log' => [
@@ -142,6 +153,7 @@ $functions = [
         'description' => 'Paginated recompute-audit log entries.',
         'type'        => 'read',
         'ajax'        => true,
+        'readonlysession' => true,
         'capabilities' => 'block/feedback_tracker:viewaudit',
     ],
 ];
