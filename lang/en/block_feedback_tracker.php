@@ -268,6 +268,7 @@ $string['feedback_tracker:viewresponsiveness'] = 'View Academic Responsiveness i
 $string['feedback_tracker:viewschoolcomparison'] = 'View school comparison overlay';
 $string['gauge_aria'] = 'Responsiveness score {$a}';
 $string['gradenow_loading'] = 'Loading priority list…';
+$string['graderfilters_cleared'] = 'Your saved filters or selected group were hiding this student in the grader, so they were adjusted to show them.';
 $string['hero_effective_eyebrow'] = 'Effective feedback time';
 $string['hero_effective_unit'] = 'business hrs';
 $string['hero_effective_unit_days'] = 'business days';

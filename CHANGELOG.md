@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Changed
-- **Bulk removal shows its queue and works in batches** (version `2026042001`).
+- **Bulk removal shows its queue and works in batches** (version `2026042003`).
   `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
   run, so the courses used to stay on the list and could be queued again.
   - Courses waiting in a removal are listed in a "Waiting for removal" panel
@@ -33,13 +33,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     found the history already gone.
   - Measured on Moodle 5.2 with PostgreSQL: 500 courses leave in 3 s, and
     10 s when `discardnow` also deletes a million ledger rows, at 22 MB.
+- **The twelve read web services no longer hold the session lock** (version
+  `2026042001`). Every `type => read` function in `db/services.php` now declares
+  `'readonlysession' => true`, as core does for its own reads. The dashboard's
+  three loads (`get_dashboard`, `get_grader_priority_list`, `get_insights`), the
+  report page's and the block's no longer wait for one another, or for the
+  page's other requests of the same session.
+  - It takes effect only on a site that sets `$CFG->enable_read_only_sessions`.
+    Such a site must map its session-mode caches outside the session store, and
+    this plugin has two: `responsiveness_payload` and `dashboard_payload`.
+  - Nothing on these paths writes `$SESSION`, `$USER` or the database: the
+    recompute writers run only from tasks and the calendar observer.
+    `tests/external/readonly_session_test.php` checks each service on a tracked
+    course with a pending and a graded submission, and that every read and no
+    write carries the flag.
+  - Measured on Moodle 5.2 with the site flag on, four simultaneous calls of one
+    service took 4.9 to 13.1 times one call before the change and 1.3 to 2.4
+    times after it. The dashboard's three loads fired together went from 263-292 ms
+    to 48-63 ms.
 - **One branch per Moodle version, each numbered in that version's range.**
   `main` is now the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`:
   `$plugin->requires` 5.2, `$plugin->supported = [502, 502]`, version
   `2026042000`. `MOODLE_501_STABLE` is the Moodle 5.1 branch, version
-  `2025100600`. Each branch counts up inside its own range from here on.
-  Moodle 4.5 and 5.0 are no longer served by any branch: sites there stay on
-  1.1.0.
+  `2025100600`. `MOODLE_405_STABLE` is the Moodle 4.5 branch, version
+  `2024100700`, cut from `main` after the read-only session change. Each
+  branch counts up inside its own range from here on. Moodle 5.0 is no longer
+  served by any branch: sites there stay on 1.1.0.
 - **The upgrade steps of 1.0.0 to 1.1.0 were removed.** They were numbered by
   date, above every per-version range, so a site lowering its version to
   switch would have run them all again. 1.1.0 (version `2026100902`) is the
@@ -56,6 +75,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deleted on its next run. The cursor still walks the whole course, so a course
   backfilled while retention was on is walked again in full only after
   `cli/backfill_course.php --reset`.
+- **A grade link no longer opens another student** (version `2026042002`).
+  mod_assign's grader lists only the students the teacher's saved filters let
+  through (status, marking workflow, marker, the name initials of that
+  assignment's grading table) and the active group; when the linked student is
+  not among them, it opens the first student of the list instead. The grade
+  links of the pending report and the dashboard's priority cards now go through
+  `pages/open_grader.php` when the teacher may carry such state, which clears
+  the saved filters, or switches the grader's group, only when they hide the
+  student, and says so on the grader. A filter that keeps the student listed is
+  left alone.
+  - Cost: a teacher with no saved filter and no selected group, in an activity
+    without groups or with access to all groups, still gets the direct link;
+    the decision reads only the preferences already in the session.
+    `config.grader_gate` and the rows' new `gradergate` field carry it.
+  - The page asks core's own grading table, restricted to the one student by
+    its `userid` parameter: measured at 8-10 ms and 21 queries for a class of
+    200 or 2,000 students, against 12-116 ms for the whole-class table.
+  - When the active group already hides the student, the saved filters are
+    cleared as well, without telling whether they alone would have hidden
+    them: core's check reads the group too.
+  - The page needs the grader's own capability (`mod/assign:grade` or
+    `mod/assign:viewgrades`) and changes nothing without the user's sesskey:
+    the link then opens the grader as before.
 
 ### Upgrading from 1.1.0 or earlier
 The new version numbers are lower than 1.1.0's, so Moodle refuses the new code
@@ -70,6 +112,8 @@ as a downgrade until the stored version is lowered:
      `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2026041999`
    - Moodle 5.1 (`MOODLE_501_STABLE`):
      `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2025100599`
+   - Moodle 4.5 (`MOODLE_405_STABLE`):
+     `php admin/cli/cfg.php --component=block_feedback_tracker --name=version --set=2024100699`
 4. Run `php admin/cli/upgrade.php`, then disable maintenance mode.
 
 Do step 3 only after step 2: with the 1.1.0 files still in place, a lowered

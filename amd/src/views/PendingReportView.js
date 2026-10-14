@@ -54,6 +54,7 @@ import {aggregate, perceivedLabel} from 'block_feedback_tracker/lib/aggregate';
 import {getPendingSubmissions, getGradedSubmissions, getAcademicDays, getReportScopes}
     from 'block_feedback_tracker/lib/api';
 import {formatHours, formatDays, formatDate, usesDays, formatCount} from 'block_feedback_tracker/lib/format';
+import {graderUrl} from 'block_feedback_tracker/lib/grader';
 import {setUserPreference} from 'core_user/repository';
 import Notification from 'core/notification';
 
@@ -554,16 +555,6 @@ export default function PendingReportView({initial}) {
         setPage(0);
     };
 
-    /**
-     * Deep-link to the single-student grader for one submission.
-     *
-     * @param {object} row
-     * @returns {string}
-     */
-    const graderUrl = (row) => wwwroot + '/mod/assign/view.php?id='
-        + encodeURIComponent(String(row.cmid))
-        + '&action=grader&userid=' + encodeURIComponent(String(row.userid));
-
     // --- Hero scope. ---
     const scope = computeScope(groupScopes, groupid);
     const scopeScore = scope && scope.score !== null && scope.score !== undefined
@@ -892,7 +883,7 @@ export default function PendingReportView({initial}) {
                                                 tip=${i18n.alloc_split_tip || ''} />
                                         </td>
                                         <td class="bft-report-col-action">
-                                            <a class="bft-report-action-grade" href=${graderUrl(row)}>
+                                            <a class="bft-report-action-grade" href=${graderUrl(row, config)}>
                                                 ${graded
                                                     ? (i18n.pendingreport_action_review || 'Review')
                                                     : (i18n.pendingreport_action_grade || 'Grade')}
