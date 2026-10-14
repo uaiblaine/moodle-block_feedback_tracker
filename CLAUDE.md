@@ -1179,9 +1179,12 @@ zone would move it by a day far from UTC.
 
 Moodle 4.5 and 5.1 don't ship React. The plugin vendors **Preact + htm**
 (API-compatible with React, no JSX build step) and exposes them through
-a single AMD shim, so moving to Moodle 5.2's native React subsystem touches
-the shim, the vendor bundle and its loading, not the components (see
-*Forward migration*).
+a single AMD shim. **Every branch keeps Preact while `MOODLE_405_STABLE` is
+supported** (Moodle 4.5 LTS security support runs to October 2027), even the
+5.2+ branches whose core ships React: one JS tree on every branch is what lets
+a UI fix merge or cherry-pick from `main` to 501 and 405 unchanged. The shim
+hides where Preact comes from; it does not make a move to core React a
+shim-only change (see *Forward migration*).
 
 ### Vendor layout
 
@@ -1367,19 +1370,40 @@ amd/build/...` is a valid way to restore it.
 
 ### Forward migration (Moodle 5.2+)
 
-When the plugin's required Moodle version bumps to 5.2+ (which ships
-React natively via `react`/`react-dom` import-map specifiers), the
-migration is mechanical but touches more than the shim:
+Not before every supported branch is 5.2+, i.e. after `MOODLE_405_STABLE`
+and `MOODLE_501_STABLE` stop taking fixes; then do it once, on every 5.2+
+branch together. It is a port of the client, not a shim swap, because the
+two module systems cannot see each other in either direction:
 
-- `js/vendor/bft-vendor-*.min.js` → delete.
-- `amd/src/lib/preact.js` → re-export from `react` / `react/jsx-runtime`.
-- Move `amd/src/components/*.js` → `js/esm/src/components/*.tsx`,
-  optionally rename `html\`...\`` to JSX (htm still works in 5.2).
-- `local\output\vendor_bundle` and its `load()` calls (the block and four
-  pages) → remove, with `vendor_bundle_test` and `vendor_bundle_smoke.feature`.
-- Spike page's raw mount-point divs → `{{#react}}` Mustache helper.
+- **An AMD module cannot import `react`.** Core's React reaches the page
+  through the import map (`lib/classes/output/requirements/import_map.php`),
+  which RequireJS never consults, so `amd/src/lib/preact.js` cannot
+  re-export it. The shim goes with the bundle.
+- **A React module cannot import an AMD one.** The import map has no AMD
+  key, so `components/`, `views/`, `lib/` and the four `*_app.js` entry points
+  move to `js/esm/src/**/*.tsx|ts`, built into `js/esm/build/` by
+  `mdl grunt` and committed like `amd/build/`. The three core services the
+  client uses (`core/ajax` in `lib/api.js`, `core/notification` and
+  `core_user/repository` in the dashboard and report views) go through one
+  `window.require` wrapper; the reference is `block_compass`
+  (`js/esm/src/amd.ts`, `docs/adr/006-react-client.md`).
+- **Mounting changes.** The `*_app.js` initialisers and the bootstrap
+  payloads become `{{#react}}` Mustache blocks whose props carry the payload;
+  core auto-mounts every `[data-react-component]`, including the spike
+  page's roots.
+- **The markup changes.** htm is part of the vendored bundle, so the 177
+  `html\`...\`` templates become JSX, and Preact's DOM spellings become
+  React's: 422 `class=` attributes to `className`, the 7 `onInput` handlers
+  re-checked against React's `onChange`.
+- **The gates change.** `tsc --noEmit` becomes a gate, and leaving `amd/src`
+  drops core's `jsdoc/require-jsdoc` override, so the docblock rule needs its
+  own enforcement.
+- **Removed:** `js/vendor/`, its `thirdpartylibs.xml` entry,
+  `local\output\vendor_bundle` and its `load()` calls (the block and four
+  pages), `vendor_bundle_test`; `vendor_bundle_smoke.feature` is rewritten to
+  assert the React roots mounted.
 
-Component logic, hook usage, props shapes, and CSS classes stay the same.
+Component logic, hook usage, props shapes and CSS classes carry over.
 
 ## CI workflow
 
