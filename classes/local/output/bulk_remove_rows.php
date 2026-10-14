@@ -78,6 +78,35 @@ final class bulk_remove_rows {
     }
 
     /**
+     * Name the courses waiting for removal, sorted by full name.
+     *
+     * A queued course may have been deleted since it was queued; it is left
+     * out, as the task skips it.
+     *
+     * @param array $courseids Ids from {@see \block_feedback_tracker\local\sla\bulk_removal_queue::course_ids()}.
+     * @return array<int, array{fullname:string, shortname:string}>
+     */
+    public static function queued_for_template(array $courseids): array {
+        global $DB;
+        if (empty($courseids)) {
+            return [];
+        }
+        [$insql, $params] = $DB->get_in_or_equal(array_map('intval', $courseids));
+        $rows = $DB->get_records_select('course', "id $insql", $params, 'fullname ASC', 'id, fullname, shortname, category');
+        self::preload_contexts($rows);
+
+        $out = [];
+        foreach ($rows as $row) {
+            $courseoptions = ['context' => \context_course::instance((int) $row->id), 'escape' => false];
+            $out[] = [
+                'fullname' => format_string((string) $row->fullname, true, $courseoptions),
+                'shortname' => format_string((string) $row->shortname, true, $courseoptions),
+            ];
+        }
+        return $out;
+    }
+
+    /**
      * Load the course and category contexts of the rows into the context
      * cache in one query, so formatting a name does not fetch its context
      * alone.
