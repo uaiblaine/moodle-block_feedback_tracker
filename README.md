@@ -32,13 +32,27 @@ One page across every course the teacher teaches. The top card gives their Acade
 
 ### The block in a course
 
-<p>
-<img src="docs/screenshots/course-page.png" alt="A course page with the Feedback Flow block open in the block drawer" width="68%">
-&nbsp;
-<img src="docs/screenshots/course-block.png" alt="Close-up of the block: course score, upcoming pause and the card of one group" width="28%">
-</p>
+![A course page with the Feedback Flow block open in the block drawer](docs/screenshots/course-page.png)
 
-Added to a course, the block shows the course score and one card per group. A card holds the group's score, effective and perceived feedback time, the share answered within the goal, the 14-day trend, and the waiting, attention and priority counts. Below them are the group's assignments with their open and due dates; a teacher who can manage overrides gets a link to give the group dates of its own. **Peer context** compares the group's score with the median of every group on the site and with the top 10%, and **Open pending list** leads to the course report.
+<table>
+<tr>
+<td valign="top" width="260"><img src="docs/screenshots/course-block.png" alt="Close-up of the block: course score, upcoming pause and the card of one group" width="240"></td>
+<td valign="top">
+
+Added to a course, the block shows the course score and one card per group, read from top to bottom:
+
+- **Course score** and its band, with any pause the academic calendar has coming up.
+- **Group score** for the class.
+- **Effective** feedback time in working hours, the **perceived** wait in calendar days, and the share answered within the goal (**SLA**).
+- **Last 14 days**: the trend, faster or slower than before.
+- **Waiting, Attention, Priority**: how many submissions sit in each band of waiting time.
+- **Activities**: each assignment's open and due dates for the group. A teacher who can manage overrides gets a link to give the group dates of its own.
+- **Peer context**: the group's score next to the median of every group on the site and the top 10%.
+- **Open pending list**: the course report below, filtered to the group.
+
+</td>
+</tr>
+</table>
 
 ### Course report
 
