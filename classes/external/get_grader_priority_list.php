@@ -32,6 +32,7 @@ use core_external\external_multiple_structure;
 use core_external\external_single_structure;
 use core_external\external_value;
 use block_feedback_tracker\local\calendar\day_counter;
+use block_feedback_tracker\local\grading\grader_filters;
 
 /**
  * Returns the top-N pending submissions by effective wait across every course
@@ -168,6 +169,8 @@ class get_grader_priority_list extends external_api {
                        sub.timesubmitted, sub.waitinghours, sub.effectivehours,
                        sub.effectivedays, sub.slabucket,
                        c.fullname AS coursename,
+                       cm.groupmode AS cmgroupmode, c.groupmode AS coursegroupmode,
+                       c.groupmodeforce AS coursegroupmodeforce,
                        $ctxfields
                        $namefields
                   FROM {block_feedback_tracker_sub} sub
@@ -220,6 +223,13 @@ class get_grader_priority_list extends external_api {
                 'coursename'     => $coursename,
                 'groupid'        => (int) $r->groupid,
                 'groupname'      => (string) ($groupnames[(int) $r->groupid] ?? ''),
+                'gradergate'     => (int) grader_filters::row_needs_gate(
+                    (int) $r->courseid,
+                    (int) $r->cmgroupmode,
+                    (int) $r->coursegroupmode,
+                    (int) $r->coursegroupmodeforce,
+                    \context_module::instance((int) $r->cmid)
+                ),
                 'activityname'   => (string) ($activitynames[(int) $r->cmid] ?? ''),
                 'timesubmitted'  => (int) $r->timesubmitted,
                 'waitinghours'   => (float) $r->waitinghours,
@@ -304,6 +314,11 @@ class get_grader_priority_list extends external_api {
                 'coursename'     => new external_value(PARAM_TEXT, ''),
                 'groupid'        => new external_value(PARAM_INT, ''),
                 'groupname'      => new external_value(PARAM_TEXT, ''),
+                'gradergate'     => new external_value(
+                    PARAM_INT,
+                    '1 when the grade link must pass through pages/open_grader.php: the activity is in a group mode '
+                        . 'and the viewer cannot access all groups'
+                ),
                 'activityname'   => new external_value(PARAM_TEXT, ''),
                 'timesubmitted'  => new external_value(PARAM_INT, ''),
                 'waitinghours'   => new external_value(PARAM_FLOAT, ''),
