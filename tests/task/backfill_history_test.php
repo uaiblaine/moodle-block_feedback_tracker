@@ -394,6 +394,55 @@ final class backfill_history_test extends \advanced_testcase {
         $this->assertSame($courseids[1], $tick2last, 'Tick 2 should process course 4 + wrap to 1, 2 and stop at 2.');
     }
 
+    /**
+     * With retention on, a submission older than the window is not dispatched,
+     * so the backfill does not ingest history prune_ledger would delete; the
+     * floor is the one reconcile_ledger uses
+     * ({@see \block_feedback_tracker\local\sla\retention::cutoff()}).
+     */
+    public function test_retention_floor_skips_submissions_older_than_the_window(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $courseid = $this->build_submissions(3);
+        $oldid = (int) $DB->get_field_sql('SELECT MIN(id) FROM {assign_submission}');
+        $DB->set_field('assign_submission', 'timemodified', time() - 400 * 86400, ['id' => $oldid]);
+        set_config('retention_active', '1', 'block_feedback_tracker');
+        set_config('retention_days', '365', 'block_feedback_tracker');
+        set_config('backfill_active', '1', 'block_feedback_tracker');
+        set_config('backfill_chunk', '10', 'block_feedback_tracker');
+
+        (new backfill_history())->execute();
+        $this->run_queued_adhocs();
+
+        $this->assertSame(2, (int) $DB->count_records('block_feedback_tracker_sub'));
+        $olduserid = (int) $DB->get_field('assign_submission', 'userid', ['id' => $oldid]);
+        $this->assertFalse($DB->record_exists('block_feedback_tracker_sub', ['userid' => $olduserid]));
+        // The cursor still walks the whole course, so the course completes.
+        $row = $DB->get_record('block_feedback_tracker_bfcursor', ['courseid' => $courseid]);
+        $this->assertSame(0, (int) $row->active);
+    }
+
+    /**
+     * The control for the floor: with retention off, the same old submission
+     * is dispatched like any other.
+     */
+    public function test_without_retention_every_age_is_dispatched(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $this->build_submissions(3);
+        $oldid = (int) $DB->get_field_sql('SELECT MIN(id) FROM {assign_submission}');
+        $DB->set_field('assign_submission', 'timemodified', time() - 400 * 86400, ['id' => $oldid]);
+        set_config('backfill_active', '1', 'block_feedback_tracker');
+        set_config('backfill_chunk', '10', 'block_feedback_tracker');
+
+        (new backfill_history())->execute();
+        $this->run_queued_adhocs();
+
+        $this->assertSame(3, (int) $DB->count_records('block_feedback_tracker_sub'));
+    }
+
     // Helpers.
 
     /**
