@@ -41,6 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the schema instead, and stops with instructions on a site that never
   reached 1.1.0.
 
+### Fixed
+- **A grade link no longer opens another student** (version `2025100602`).
+  mod_assign's grader lists only the students the teacher's saved filters let
+  through (status, marking workflow, marker, the name initials of that
+  assignment's grading table) and the active group; when the linked student is
+  not among them, it opens the first student of the list instead. The grade
+  links of the pending report and the dashboard's priority cards now go through
+  `pages/open_grader.php` when the teacher may carry such state, which clears
+  the saved filters, or switches the grader's group, only when they hide the
+  student, and says so on the grader. A filter that keeps the student listed is
+  left alone.
+  - Cost: a teacher with no saved filter and no selected group, in an activity
+    without groups or with access to all groups, still gets the direct link;
+    the decision reads only the preferences already in the session.
+    `config.grader_gate` and the rows' new `gradergate` field carry it.
+  - The page asks core's own grading table, restricted to the one student by
+    its `userid` parameter: measured at 8-10 ms and 21 queries for a class of
+    200 or 2,000 students, against 12-116 ms for the whole-class table.
+  - When the active group already hides the student, the saved filters are
+    cleared as well, without telling whether they alone would have hidden
+    them: core's check reads the group too.
+  - The page needs the grader's own capability (`mod/assign:grade` or
+    `mod/assign:viewgrades`) and changes nothing without the user's sesskey:
+    the link then opens the grader as before.
+
 ### Upgrading from 1.1.0 or earlier
 The new version numbers are lower than 1.1.0's, so Moodle refuses the new code
 as a downgrade until the stored version is lowered:
