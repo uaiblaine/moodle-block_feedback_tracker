@@ -3655,3 +3655,38 @@ button.bft-badge-resubmitted:focus-visible {
     max-width: 22rem;
     margin: 1rem 0;
 }
+
+/* The queue and recent-runs panels sit above the filter, so an administrator
+ * sees what is already on its way before choosing anything new. */
+.bft-bulk .bft-bulk-panel {
+    border: 1px solid var(--bft-border);
+    border-radius: 0.5rem;
+    background: var(--bft-surface-alt);
+    color: var(--bft-text);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.bft-bulk .bft-bulk-queue {
+    border-left: 4px solid var(--bft-band-pending-edge);
+}
+
+.bft-bulk .bft-bulk-panel-title {
+    font-size: 1rem;
+    font-weight: 700;
+    margin: 0 0 0.35rem;
+}
+
+.bft-bulk .bft-bulk-panel p {
+    margin-bottom: 0.35rem;
+}
+
+.bft-bulk .bft-bulk-queue-list,
+.bft-bulk .bft-bulk-recent-list {
+    margin: 0.35rem 0 0;
+    padding-left: 1.25rem;
+}
+
+.bft-bulk .bft-bulk-selectall {
+    margin: 0.5rem 0;
+}

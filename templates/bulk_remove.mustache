@@ -1,11 +1,19 @@
 {{!
     @template    block_feedback_tracker/bulk_remove
 
-    Bulk block-removal tool: a filter form, then the matching courses with a
-    progressive-reveal list and a typed confirmation.
+    Bulk block-removal tool: the courses waiting for removal and the latest
+    finished runs, a filter form, then the matching courses with a
+    progressive-reveal list and a typed confirmation. At most maxresults
+    courses are listed and queued at a time; queued courses are left out of
+    the list, so the next batch shows once one is queued.
 
     Context variables required:
     * formhtml      string  Rendered filter moodleform (trusted server HTML).
+    * hasqueue      bool    Whether any course is waiting for removal.
+    * queuecount    int     Courses waiting for removal.
+    * queued        array   Waiting courses: fullname and shortname, plain text.
+    * hasrecent     bool    Whether any bulk removal has finished.
+    * recent        array   One plain-text summary per finished run, newest first.
     * filtered      bool    Whether a filter has been applied yet.
     * hasrows       bool    Whether the filter matched anything.
     * rows          array   Candidate courses; names are plain text, escaped here.
@@ -14,6 +22,7 @@
     * total         int     Rows matching the filter overall.
     * truncated     bool    Whether total exceeds loaded.
     * pagesize      int     Rows revealed per click.
+    * maxresults    int     Most courses listed and queued at a time.
     * actionurl     string  Form target.
     * sesskey       string  Session key.
     * filtervalues  object  Filter values echoed back for the removal POST.
@@ -22,6 +31,15 @@
     Example context (json):
     {
         "formhtml": "<form></form>",
+        "hasqueue": true,
+        "queuecount": 1,
+        "queued": [
+            {"fullname": "Chemistry 200", "shortname": "CHEM200"}
+        ],
+        "hasrecent": true,
+        "recent": [
+            "14/10/26, 15:02: 100 course(s), 100 block(s) removed, 0 skipped."
+        ],
         "filtered": true,
         "hasrows": true,
         "rows": [
@@ -63,7 +81,12 @@
             "loadmore": "Load 25 more",
             "showingprefix": "Showing",
             "showingmiddle": "of",
-            "truncated": "Showing 1 of 1",
+            "truncated": "This tool removes up to 100 courses per request.",
+            "queueheading": "Waiting for removal",
+            "queueintro": "1 course(s) are queued and will lose the block at the next cron run.",
+            "queueshow": "Show the queued courses",
+            "recentheading": "Recently completed",
+            "selectall": "Select all 1 listed courses",
             "discardnow": "Discard the data immediately",
             "discardnowhelp": "Skips the grace period.",
             "confirmlabel": "Type the number of selected courses",
@@ -74,6 +97,32 @@
 }}
 <div class="bft-bulk">
     <p class="bft-bulk-intro">{{str.intro}}</p>
+
+    {{#hasqueue}}
+        <section class="bft-bulk-panel bft-bulk-queue" role="status">
+            <h3 class="bft-bulk-panel-title">{{str.queueheading}}</h3>
+            <p>{{str.queueintro}}</p>
+            <details>
+                <summary>{{str.queueshow}} ({{queuecount}})</summary>
+                <ul class="bft-bulk-queue-list">
+                    {{#queued}}
+                        <li>{{fullname}} <span class="bft-bulk-shortname">{{shortname}}</span></li>
+                    {{/queued}}
+                </ul>
+            </details>
+        </section>
+    {{/hasqueue}}
+
+    {{#hasrecent}}
+        <section class="bft-bulk-panel bft-bulk-recent">
+            <h3 class="bft-bulk-panel-title">{{str.recentheading}}</h3>
+            <ul class="bft-bulk-recent-list">
+                {{#recent}}
+                    <li>{{.}}</li>
+                {{/recent}}
+            </ul>
+        </section>
+    {{/hasrecent}}
 
     {{{formhtml}}}
 
@@ -100,6 +149,11 @@
                 {{#truncated}}
                     <div class="alert alert-warning" role="status">{{str.truncated}}</div>
                 {{/truncated}}
+
+                <div class="form-check bft-bulk-selectall">
+                    <input type="checkbox" class="form-check-input" id="bftbulkall" data-bft-bulk-all>
+                    <label class="form-check-label" for="bftbulkall">{{str.selectall}}</label>
+                </div>
 
                 <div class="bft-bulk-tablewrap">
                     <table class="generaltable bft-bulk-table">
