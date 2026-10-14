@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use block_feedback_tracker\local\grading\grader_filters;
+
 /**
  * One query family powering the report page's submission tables. Both the
  * pending (`get_pending_submissions`) and graded (`get_graded_submissions`)
@@ -223,9 +225,12 @@ class submission_browser {
                           sub.waitinghours, sub.effectivehours, sub.effectivedays,
                           sub.slabucket, sub.submissionstatus,
                           a.name AS activityname, g.name AS groupname,
+                          cm.groupmode AS cmgroupmode, c.groupmode AS coursegroupmode,
+                          c.groupmodeforce AS coursegroupmodeforce,
                           $ctxfields
                           $namefields";
-        $ctxjoin = "LEFT JOIN {context} ctx ON ctx.instanceid = sub.cmid AND ctx.contextlevel = :bftctxmodule";
+        $ctxjoin = "JOIN {course} c ON c.id = cm.course
+               LEFT JOIN {context} ctx ON ctx.instanceid = sub.cmid AND ctx.contextlevel = :bftctxmodule";
         $orderby = self::order_by($mode, $sort, $order, $now);
         $rows = $DB->get_records_sql(
             "$select $from $ctxjoin WHERE $rowswhere ORDER BY $orderby",
@@ -289,6 +294,13 @@ class submission_browser {
                 'activityname'     => $names['activities'][(int) $r->cmid] ?? '',
                 'groupid'          => (int) $r->groupid,
                 'groupname'        => $names['groups'][(int) $r->groupid] ?? '',
+                'gradergate'       => (int) grader_filters::row_needs_gate(
+                    $courseid,
+                    (int) $r->cmgroupmode,
+                    (int) $r->coursegroupmode,
+                    (int) $r->coursegroupmodeforce,
+                    \context_module::instance((int) $r->cmid)
+                ),
                 'timesubmitted'    => (int) $r->timesubmitted,
                 'timegraded'       => $r->timegraded !== null ? (int) $r->timegraded : 0,
                 'waitinghours'     => $r->waitinghours !== null ? (float) $r->waitinghours : 0.0,

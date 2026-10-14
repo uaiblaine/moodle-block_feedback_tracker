@@ -209,6 +209,11 @@ class get_pending_submissions extends external_api {
             'activityname'   => new external_value(PARAM_TEXT, 'Activity name as plain text, not HTML-escaped'),
             'groupid'        => new external_value(PARAM_INT, ''),
             'groupname'      => new external_value(PARAM_TEXT, 'Group name as plain text, not HTML-escaped; empty when ungrouped'),
+            'gradergate'     => new external_value(
+                PARAM_INT,
+                '1 when the grade link must pass through pages/open_grader.php: the activity is in a group mode '
+                    . 'and the viewer cannot access all groups'
+            ),
             'timesubmitted'  => new external_value(PARAM_INT, ''),
             'timegraded'     => new external_value(PARAM_INT, '0 while pending'),
             'waitinghours'   => new external_value(PARAM_FLOAT, ''),
