@@ -20,6 +20,32 @@ Feedback Flow measures the turnaround time between a student submitting work and
 
 Only work that students have explicitly **submitted** triggers the system, and Feedback Flow only runs in courses where you have added the block — giving you total control over when to opt in.
 
+## Screenshots
+
+*Moodle with the Boost theme and a demo term: five courses, one teacher, about four hundred submissions.*
+
+### Teacher dashboard
+
+![Teacher dashboard: overall score, upcoming pause, insights, the three submissions to grade first and a table of the teacher's courses](docs/screenshots/teacher-dashboard.png)
+
+One page across every course the teacher teaches. The top card gives their Academic Responsiveness Score with the typical feedback time in working hours, the wait as students perceive it in calendar days, and the trend against the previous week. A pause from the academic calendar is announced a few days ahead. **Insights** name the group doing best, the one improving fastest and the one that needs a look; **Grade now** picks the three submissions that have waited longest in working time, each with a link straight to it. The course table ends in a 14-day sparkline per course.
+
+### The block in a course
+
+<p>
+<img src="docs/screenshots/course-page.png" alt="A course page with the Feedback Flow block open in the block drawer" width="68%">
+&nbsp;
+<img src="docs/screenshots/course-block.png" alt="Close-up of the block: course score, upcoming pause and the card of one group" width="28%">
+</p>
+
+Added to a course, the block shows the course score and one card per group. A card holds the group's score, effective and perceived feedback time, the share answered within the goal, the 14-day trend, and the waiting, attention and priority counts. Below them are the group's assignments with their open and due dates; a teacher who can manage overrides gets a link to give the group dates of its own. **Peer context** compares the group's score with the median of every group on the site and with the top 10%, and **Open pending list** leads to the course report.
+
+### Course report
+
+![Pending grading report for one course: score with SLA chips, the last 30 academic days, distribution by status and the list of submissions waiting](docs/screenshots/course-report.png)
+
+The pending-grading report for one course or group. The score card adds how many submissions were answered within the goal and how many are at risk or critical; the strip of the last 30 academic days shows which days met the goal and which were paused (weekends, holidays, recesses). The status bands filter the table, which lists every submission still waiting, longest wait first, with its effective and perceived time and a **Grade** button. **Graded** switches the table to the work already answered.
+
 ## What counts as a response
 
 The clock stops when the feedback **reaches the student**, not when a teacher types it. Two things follow from that, and both are worth knowing before you read the numbers.
