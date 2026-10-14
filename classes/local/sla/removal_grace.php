@@ -59,6 +59,13 @@ final class removal_grace {
     private static $uninstalling = false;
 
     /**
+     * Set while a bulk removal discards the history itself.
+     *
+     * @var bool
+     */
+    private static $discardinginline = false;
+
+    /**
      * Record that every block instance is being deleted by an uninstall.
      *
      * Static because the two halves of the signal reach different objects:
@@ -98,6 +105,53 @@ final class removal_grace {
      */
     public static function reset_uninstalling(): void {
         self::$uninstalling = false;
+    }
+
+    /**
+     * Run a block deletion whose course history the caller discards at once.
+     *
+     * instance_delete() then schedules no deferred discard, which would only
+     * find the history already gone. Static for the reason given at
+     * {@see self::mark_uninstalling()}: core builds a new block object per
+     * instance it deletes.
+     *
+     * @param callable $deletion Deletes the block instance.
+     * @return void
+     */
+    public static function delete_discarding_inline(callable $deletion): void {
+        self::$discardinginline = true;
+        try {
+            $deletion();
+        } finally {
+            self::$discardinginline = false;
+        }
+    }
+
+    /**
+     * Whether the block being deleted has its history discarded by the caller.
+     *
+     * @return bool
+     */
+    public static function is_discarding_inline(): bool {
+        return self::$discardinginline;
+    }
+
+    /**
+     * Schedule the discard of a course's history once the grace period ends.
+     *
+     * A course whose block is removed, put back and removed again inside one
+     * window keeps one task, moved to the latest removal's deadline:
+     * queue_adhoc_task() with its duplicate check would keep the first
+     * removal's run time, which core reserves that check for ASAP tasks.
+     *
+     * @param int $courseid
+     * @return void
+     */
+    public static function schedule_discard(int $courseid): void {
+        $task = new \block_feedback_tracker\task\discard_course_data();
+        $task->set_custom_data(['courseid' => $courseid]);
+        $task->set_next_run_time(time() + self::seconds());
+        \core\task\manager::reschedule_or_queue_adhoc_task($task);
     }
 
     /**

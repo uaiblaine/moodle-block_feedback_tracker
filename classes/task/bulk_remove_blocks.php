@@ -29,6 +29,7 @@ namespace block_feedback_tracker\task;
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\process_memos;
+use block_feedback_tracker\local\sla\removal_grace;
 use block_feedback_tracker\local\sla\submission_ledger;
 
 /**
@@ -45,6 +46,14 @@ use block_feedback_tracker\local\sla\submission_ledger;
  * finished year, deletes the history at once instead and cannot be undone;
  * pages/bulk_remove.php queues either mode only after the administrator types
  * the number of selected courses.
+ *
+ * In `discardnow` mode the blocks are deleted under
+ * {@see removal_grace::delete_discarding_inline()}, so no deferred discard is
+ * scheduled for history this task deletes itself; if that deletion fails, a
+ * discard_course_data task is queued to retry it, so the history the
+ * administrator chose to discard is still cleared.
+ * Every step of a course is caught, so one failing course is counted as
+ * skipped and the rest of the batch still runs.
  */
 class bulk_remove_blocks extends \core\task\adhoc_task {
     /**
@@ -103,30 +112,23 @@ class bulk_remove_blocks extends \core\task\adhoc_task {
             ]);
             foreach ($instances as $instance) {
                 try {
-                    blocks_delete_instance($instance);
+                    if ($discardnow) {
+                        removal_grace::delete_discarding_inline(static fn() => blocks_delete_instance($instance));
+                    } else {
+                        blocks_delete_instance($instance);
+                    }
                     $removed++;
                 } catch (\Throwable $e) {
                     /* One bad course must not abort the batch — the rest of an
                      * end-of-year sweep still needs to happen, and the count
                      * below is what tells an administrator it was partial. */
                     $skipped++;
-                    debugging(sprintf(
-                        'bulk_remove_blocks: course %d failed: %s',
-                        $courseid,
-                        $e->getMessage()
-                    ));
+                    $this->report_failure($courseid, $e);
                 }
             }
 
             if ($discardnow) {
-                course_access::reset_memo();
-                if (!course_access::block_present_for_course($courseid)) {
-                    $discarded += $DB->count_records(
-                        'block_feedback_tracker_sub',
-                        ['courseid' => $courseid]
-                    );
-                    submission_ledger::delete_for_course($courseid);
-                }
+                $discarded += $this->discard_course($courseid);
             }
         }
 
@@ -151,6 +153,46 @@ class bulk_remove_blocks extends \core\task\adhoc_task {
             $removed,
             $discarded,
             $skipped
+        ));
+    }
+
+    /**
+     * Delete one course's measured history now, once its block is gone.
+     *
+     * @param int $courseid
+     * @return int Ledger rows deleted.
+     */
+    private function discard_course(int $courseid): int {
+        global $DB;
+        course_access::reset_memo();
+        if (course_access::block_present_for_course($courseid)) {
+            return 0;
+        }
+        try {
+            $rows = $DB->count_records('block_feedback_tracker_sub', ['courseid' => $courseid]);
+            submission_ledger::delete_for_course($courseid);
+            return $rows;
+        } catch (\Throwable $e) {
+            $this->report_failure($courseid, $e);
+            $retry = new discard_course_data();
+            $retry->set_custom_data(['courseid' => $courseid]);
+            \core\task\manager::queue_adhoc_task($retry, true);
+            return 0;
+        }
+    }
+
+    /**
+     * Report a course the batch could not finish, without stopping the batch.
+     *
+     * @param int $courseid
+     * @param \Throwable $e
+     * @return void
+     */
+    private function report_failure(int $courseid, \Throwable $e): void {
+        debugging(sprintf(
+            'bulk_remove_blocks: course %d failed: %s',
+            $courseid,
+            $e->getMessage()
         ));
     }
 }

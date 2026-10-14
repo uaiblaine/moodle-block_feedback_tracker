@@ -193,6 +193,9 @@ class block_feedback_tracker extends block_base {
         if (\block_feedback_tracker\local\sla\removal_grace::is_uninstalling()) {
             return true;
         }
+        if (\block_feedback_tracker\local\sla\removal_grace::is_discarding_inline()) {
+            return true;
+        }
         if (!\block_feedback_tracker\local\sla\removal_grace::is_active()) {
             return true;
         }
@@ -200,17 +203,7 @@ class block_feedback_tracker extends block_base {
         if ($courseid <= 0) {
             return true;
         }
-
-        $task = new \block_feedback_tracker\task\discard_course_data();
-        $task->set_custom_data(['courseid' => $courseid]);
-        $task->set_next_run_time(
-            time() + \block_feedback_tracker\local\sla\removal_grace::seconds()
-        );
-        /* A course whose block is removed, put back and removed again inside
-         * one window keeps one task, moved to the latest removal's deadline:
-         * queue_adhoc_task() with its duplicate check would keep the first
-         * removal's run time, which core reserves that check for ASAP tasks. */
-        \core\task\manager::reschedule_or_queue_adhoc_task($task);
+        \block_feedback_tracker\local\sla\removal_grace::schedule_discard($courseid);
         return true;
     }
 
