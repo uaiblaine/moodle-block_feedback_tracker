@@ -22,13 +22,34 @@ Only work that students have explicitly **submitted** triggers the system, and F
 
 ## What counts as a response
 
-The clock stops when the feedback **reaches the student**, not when a teacher types it. Two things follow from that, and both are worth knowing before you read the numbers.
+The clock stops when the teacher's response is **recorded for the student**: a mark saved in the assignment, or a grade the student can see in the gradebook. For activities that use marking workflow, whether an unreleased mark already counts is an admin setting (see *What counts as pending* below). Two things follow, and both are worth knowing before you read the numbers.
 
 **Grading in the gradebook counts.** A mark entered straight into the grader report, single view, or a grade import closes the clock just as marking inside the assignment does — the student sees it either way. Whichever came first is the one recorded, and it is never taken back: deleting the grade afterwards does not re-open a response the student already received. Rows answered this way carry a **"Graded in gradebook"** tag on the pending report, because the assignment's own grading screen shows nothing that would explain them.
 
 **A hidden grade has not reached anybody.** If the gradebook hides the grade — the item hidden, or a *hidden until* date still in the future — the student sees no grade, no feedback, and gets no notification. So a grade entered in the gradebook while hidden does not count as a response at all.
 
 There is one exception, and it is deliberate: **a mark made inside the assignment still stops the clock even while the gradebook hides it.** That is how the plugin has always behaved, and changing it would move figures that have already been reported. Instead those rows are flagged on the pending report with a **"Hidden from student"** tag telling you the grade still needs to be released. If your courses hold results back by hiding a column, expect to see that tag — it is pointing at real work left to do, not at an error.
+
+## What counts as pending
+
+A submission is **pending** — the "awaiting review" number on the block, the dashboard and the pending-grading report — when the student has **submitted** it (drafts never count), it is their **latest attempt**, and no response to that hand-in has been recorded yet: no mark saved in the assignment after the work came in, and no visible gradebook grade as described above.
+
+- **Marking workflow.** By default a saved mark ends the wait even before it is released; the report tags such rows **"Awaiting release"**. With the admin setting *Stop the clock at release, not at marking* turned on, an unreleased mark keeps the submission pending.
+- **Resubmission.** When a student changes work that was already marked (Moodle's *Graded - resubmitted*), it is pending again with a fresh clock, and the earlier response keeps its recorded time. Each hand-in is measured on its own because a revision after feedback is a new request for a response: folding it into the old one would either erase a turnaround the teacher already achieved or charge them for days the work spent with the student.
+- **Timing.** The block and the dashboard show a summary the plugin refreshes in the background, so it can trail a change by a few minutes; the report lists the submissions themselves.
+
+The assignment's own **"Needs grading"** count (its grading summary and the *Requires grading* filter) agrees on drafts, latest attempts and empty or unset grades, but the two numbers can still differ:
+
+| Situation | Feedback Flow | Assignment "Needs grading" |
+|---|---|---|
+| Grade entered only in the gradebook | Answered (tagged "Graded in gradebook") | Still needs grading |
+| Team assignment | One pending item per team member | Not shown on the assignment page; one per team on the course's activity overview |
+| Student in several groups | Counted once, under the group joined most recently | Counted in each of their groups, filtered by the group you select |
+| Submitted by someone who can grade (a teacher using *Switch role*, a TA) | Not counted, unless *Exclude grader submissions* is turned off | Counted |
+| Enrolment suspended or ended | Dropped by a background sweep that runs every two hours, so it can still count for a while | Dropped at once |
+| Marked, not yet released, with *Stop the clock at release* on | Pending | No longer needs grading |
+| Old rows an administrator dismissed with `cli/dismiss_legacy_pending.php` | Not counted | Still needs grading |
+| Scope | Every assignment in courses that have the block on the course page itself, visible courses only unless *Process hidden courses* is on | One assignment at a time |
 
 ## Requirements
 
