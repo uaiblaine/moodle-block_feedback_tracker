@@ -61,6 +61,8 @@ class behat_block_feedback_tracker extends behat_base {
                 return new moodle_url('/blocks/feedback_tracker/pages/score_simulator.php');
             case 'Calendar editor':
                 return new moodle_url('/blocks/feedback_tracker/pages/calendar_editor.php');
+            case 'Bulk removal':
+                return new moodle_url('/blocks/feedback_tracker/pages/bulk_remove.php');
         }
         throw new Exception("Unrecognised block_feedback_tracker page: '{$page}'.");
     }

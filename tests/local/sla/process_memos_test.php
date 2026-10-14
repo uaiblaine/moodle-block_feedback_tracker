@@ -70,6 +70,7 @@ final class process_memos_test extends \basic_testcase {
      */
     private const NOT_MEMOS = [
         removal_grace::class . '::uninstalling' => 'Not a cached answer: it records that this request uninstalls the plugin.',
+        removal_grace::class . '::discardinginline' => 'Not a cached answer: set only for the span of one block deletion.',
     ];
 
     /**
