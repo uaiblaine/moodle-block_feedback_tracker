@@ -29,6 +29,7 @@ namespace block_feedback_tracker\task;
 use block_feedback_tracker\local\sla\backfill_cursor;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\process_memos;
+use block_feedback_tracker\local\sla\retention;
 
 /**
  * Inactive unless `backfill_active` is 1. Walks every block-enabled course
@@ -46,6 +47,13 @@ use block_feedback_tracker\local\sla\process_memos;
  *
  * Per tick, dispatch is capped at `backfill_chunk` rows in total and
  * `backfill_chunk_per_course` per course, under the shared soft time cap.
+ *
+ * Submissions older than the retention floor are not dispatched: the same
+ * {@see retention::cutoff()} on `timemodified` that reconcile_ledger's
+ * row-creating sweeps apply, so a backfill does not ingest closed history
+ * that prune_ledger would delete on its next run. The cursor walks past those
+ * rows for good; a course walked while retention was on is re-walked in full
+ * only after `cli/backfill_course.php --reset`.
  */
 class backfill_history extends \core\task\scheduled_task {
     /** Default per-tick total dispatch cap (rows across all courses). */
@@ -89,6 +97,7 @@ class backfill_history extends \core\task\scheduled_task {
         }
         $timecap = (int) (get_config('block_feedback_tracker', 'drain_time_cap_seconds') ?: self::DEFAULT_TIME_CAP);
         $deadline = time() + $timecap;
+        $floor = retention::cutoff() ?? 0;
 
         // Create a cursor at 0 for every processable course that has none, so
         // a course that gains the block is picked up on the next tick.
@@ -167,7 +176,8 @@ class backfill_history extends \core\task\scheduled_task {
                 $courseid,
                 $coursecursor,
                 $remainingquota,
-                $subchunk
+                $subchunk,
+                $floor
             );
             $dispatchedtotal += $dispatched;
             $lastprocessed = $courseid;
@@ -214,9 +224,10 @@ class backfill_history extends \core\task\scheduled_task {
      * @param int $cursor    Current cursor value (rows with id > cursor are eligible).
      * @param int $quota     Maximum rows to fetch this tick.
      * @param int $subchunk  Adhoc-task batch size.
+     * @param int $floor     Oldest `timemodified` dispatched, 0 for no floor.
      * @return array{0:int, 1:int, 2:bool}
      */
-    private function dispatch_course_chunk(int $courseid, int $cursor, int $quota, int $subchunk): array {
+    private function dispatch_course_chunk(int $courseid, int $cursor, int $quota, int $subchunk, int $floor): array {
         global $DB;
         if ($quota < 1) {
             return [0, $cursor, false];
@@ -228,8 +239,9 @@ class backfill_history extends \core\task\scheduled_task {
                JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
               WHERE s.id > :cursor AND cm.course = :cid
+                AND s.timemodified >= :floor
            ORDER BY s.id ASC",
-            ['modname' => 'assign', 'cursor' => $cursor, 'cid' => $courseid],
+            ['modname' => 'assign', 'cursor' => $cursor, 'cid' => $courseid, 'floor' => $floor],
             0,
             $quota
         );
