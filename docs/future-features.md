@@ -76,12 +76,13 @@ cleanly.
 
 ## Migration to Moodle 5.2's native React subsystem
 
-**Design intent.** Once `$plugin->requires` advances past 5.2, the
-vendored Preact + htm bundle can be retired and components can import
-directly from the `react` / `react/jsx-runtime` import-map specifiers
-Moodle 5.2 ships.
+**Design intent.** Once every supported branch is Moodle 5.2 or later, the
+vendored Preact + htm bundle can be retired and the client rebuilt on the
+React that core ships through its import map.
 
-**Status.** Deferred. The migration path is mechanical and documented in
-[CLAUDE.md](../CLAUDE.md) under "Forward migration (Moodle 5.2+)". Trigger
-when the supported-version range tightens, not as part of any MVP3
-milestone.
+**Status.** Deferred while `MOODLE_405_STABLE` is supported (Moodle 4.5 LTS
+security support runs to October 2027) and `MOODLE_501_STABLE` takes fixes:
+until then every branch keeps Preact, so one JS tree serves them all and UI
+fixes carry across branches unchanged. The migration is a port of the client
+from AMD to `js/esm`, not a change to the shim; what it involves is in
+[CLAUDE.md](../CLAUDE.md) under "Forward migration (Moodle 5.2+)".
