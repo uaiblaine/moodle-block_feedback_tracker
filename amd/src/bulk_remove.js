@@ -19,7 +19,9 @@
  * Every loaded candidate (up to course_finder::MAX_RESULTS) is already in the
  * DOM; this only uncollapses the next batch, so the ticks already made on a
  * destructive tool survive paging. The "showing N of M" counter keeps a
- * partly revealed list from reading as the complete one.
+ * partly revealed list from reading as the complete one. "Select all" ticks
+ * every loaded row and reveals the collapsed ones, so nothing is selected out
+ * of sight; the list never holds more rows than one request may queue.
  *
  * @module     block_feedback_tracker/bulk_remove
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -35,6 +37,7 @@ const SELECTORS = {
     count: '[data-bft-bulk-selected]',
     confirm: '[data-bft-bulk-confirm]',
     submit: '[data-bft-bulk-submit]',
+    all: '[data-bft-bulk-all]',
 };
 
 /**
@@ -50,6 +53,8 @@ const wire = (root) => {
     const countel = root.querySelector(SELECTORS.count);
     const confirmel = root.querySelector(SELECTORS.confirm);
     const submitel = root.querySelector(SELECTORS.submit);
+    const allel = root.querySelector(SELECTORS.all);
+    const boxes = rows.map((r) => r.querySelector(SELECTORS.checkbox)).filter((box) => box);
     const pagesize = parseInt(root.dataset.bftBulkPagesize, 10) || 25;
 
     let visible = rows.filter((r) => !r.classList.contains('bft-bulk-row-collapsed')).length;
@@ -72,10 +77,11 @@ const wire = (root) => {
      * @returns {void}
      */
     const refreshSelection = () => {
-        const selected = rows.filter((r) => {
-            const box = r.querySelector(SELECTORS.checkbox);
-            return box && box.checked;
-        }).length;
+        const selected = boxes.filter((box) => box.checked).length;
+        if (allel) {
+            allel.checked = selected > 0 && selected === boxes.length;
+            allel.indeterminate = selected > 0 && selected < boxes.length;
+        }
         if (countel) {
             countel.textContent = String(selected);
         }
@@ -85,24 +91,34 @@ const wire = (root) => {
         }
     };
 
+    const revealUpTo = (target) => {
+        for (let i = visible; i < target; i++) {
+            rows[i].classList.remove('bft-bulk-row-collapsed');
+        }
+        visible = Math.max(visible, target);
+        refreshShown();
+    };
+
     if (more) {
         more.addEventListener('click', (e) => {
             e.preventDefault();
-            const target = Math.min(visible + pagesize, rows.length);
-            for (let i = visible; i < target; i++) {
-                rows[i].classList.remove('bft-bulk-row-collapsed');
-            }
-            visible = target;
-            refreshShown();
+            revealUpTo(Math.min(visible + pagesize, rows.length));
         });
     }
 
-    rows.forEach((r) => {
-        const box = r.querySelector(SELECTORS.checkbox);
-        if (box) {
-            box.addEventListener('change', refreshSelection);
-        }
-    });
+    if (allel) {
+        allel.addEventListener('change', () => {
+            boxes.forEach((box) => {
+                box.checked = allel.checked;
+            });
+            if (allel.checked) {
+                revealUpTo(rows.length);
+            }
+            refreshSelection();
+        });
+    }
+
+    boxes.forEach((box) => box.addEventListener('change', refreshSelection));
     if (confirmel) {
         confirmel.addEventListener('input', refreshSelection);
     }

@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Changed
+- **Bulk removal shows its queue and works in batches** (version `2024100702`).
+  `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
+  run, so the courses used to stay on the list and could be queued again.
+  - Courses waiting in a removal are listed in a "Waiting for removal" panel
+    and left out of the course list, its total and the server-side check, so
+    a course cannot be queued twice.
+  - The list holds at most 100 courses, the most one request may queue, and
+    says so when more match. After queuing, the page keeps the filter and
+    lists the next batch at once.
+  - "Select all N listed courses" ticks every loaded row and reveals the
+    collapsed ones; "Recently completed" lists the last five finished runs
+    from the audit log, with their counts.
+  - The selection is checked on the server against the filter without the
+    100-row ceiling (`course_finder::matching_ids()`), a request with more
+    than 100 courses or no filter question answered queues nothing, and the
+    administrator is told how many selected courses were skipped.
+  - The measured-rows column is counted for the listed courses only, not for
+    every course the filter matches: about a second per million ledger rows
+    on each listing before.
+  - In `discardnow` mode a course's discard failure no longer stops the batch:
+    it is reported and retried by a `discard_course_data` task. The mode no
+    longer leaves a deferred discard task behind for every course, which only
+    found the history already gone.
+  - Measured on Moodle 5.2 with PostgreSQL: 500 courses leave in 3 s, and
+    10 s when `discardnow` also deletes a million ledger rows, at 22 MB.
 - **The twelve read web services no longer hold the session lock** (version
   `2024100700`). Every `type => read` function in `db/services.php` now declares
   `'readonlysession' => true`, as core does for its own reads. The dashboard's
