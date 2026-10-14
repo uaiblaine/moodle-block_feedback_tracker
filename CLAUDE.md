@@ -9,12 +9,13 @@ for `mod_assign` submissions using business/academic time. **One branch per
 Moodle version**: `main` is the Moodle 5.2 branch, the same commit as
 `MOODLE_502_STABLE` (`$plugin->requires = 2026042000`,
 `$plugin->supported = [502, 502]`); `MOODLE_501_STABLE` is 5.1;
+`MOODLE_405_STABLE` is 4.5 (`20241007XX`);
 `MOODLE_503_DEV` awaits a 5.3 compatibility review. CI is the
 **moodle-an-hochschulen/moodle-workflows** reusable workflow, one call in
 each branch's `.github/workflows/ci.yml` naming that branch's core.
 
 **Version numbers live in the range of the Moodle version a branch requires**
-(5.1 `20251006XX`, 5.2 `20260420XX`, 5.3 `20261005XX`), the fleet rule: the
+(4.5 `20241007XX`, 5.1 `20251006XX`, 5.2 `20260420XX`, 5.3 `20261005XX`), the fleet rule: the
 first release is the `requires` value and each change on that branch counts up
 inside it. 1.1.0 (`2026100902`) was the last date-numbered release; its upgrade
 steps were removed in 1.2.0, and `CHANGELOG.md` says how a site switches.
@@ -1429,7 +1430,7 @@ repo's; git run from a stack checkout never sees plugin changes.
 
 `version.php` **diverges by branch on purpose**: each branch carries its own
 `$plugin->version`, `requires` and `supported` (`main` and
-`MOODLE_502_STABLE`: 5.2; `MOODLE_501_STABLE`: 5.1). A fix lands on `main`
+`MOODLE_502_STABLE`: 5.2; `MOODLE_501_STABLE`: 5.1; `MOODLE_405_STABLE`: 4.5). A fix lands on `main`
 and is merged or cherry-picked into the other branches; keep each branch's own
 `version.php` lines when resolving, then bump that branch's counter. Check all
 five `$plugin->` lines afterwards. **`.github/workflows/ci.yml` and the

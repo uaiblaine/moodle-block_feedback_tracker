@@ -161,6 +161,9 @@ class bootstrap {
             'timezone' => \core_date::get_user_timezone(),
             // Whether the teacher dashboard offers this viewer the site benchmarks.
             'school_comparison' => self::can_view_school_comparison(),
+            // Whether every grade link passes through pages/open_grader.php:
+            // this viewer has saved grader state that may hide the student.
+            'grader_gate' => \block_feedback_tracker\local\grading\grader_filters::viewer_has_saved_state(),
         ];
     }
 

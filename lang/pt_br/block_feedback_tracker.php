@@ -268,6 +268,7 @@ $string['feedback_tracker:viewresponsiveness'] = 'Visualizar a responsividade ac
 $string['feedback_tracker:viewschoolcomparison'] = 'Visualizar sobreposição de comparação da escola';
 $string['gauge_aria'] = 'Pontuação de responsividade {$a}';
 $string['gradenow_loading'] = 'Carregando lista de prioridades…';
+$string['graderfilters_cleared'] = 'Seus filtros salvos ou o grupo selecionado ocultavam este estudante na tela de avaliação e foram ajustados para exibi-lo.';
 $string['hero_effective_eyebrow'] = 'Tempo efetivo de retorno';
 $string['hero_effective_unit'] = 'horas úteis';
 $string['hero_effective_unit_days'] = 'dias úteis';
