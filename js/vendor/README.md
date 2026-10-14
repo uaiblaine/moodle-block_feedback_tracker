@@ -127,8 +127,11 @@ file (more divergence from upstream) or non-standard inline script tricks.
 
 ## Forward migration
 
-When the plugin's required Moodle version bumps to 5.2+ (which ships React
-natively via the `react`/`react-dom` import-map specifiers), the bundle is
-deleted entirely and [`amd/src/lib/preact.js`](../../amd/src/lib/preact.js)
-re-exports from `react` instead of `window.bftPreact`. See the migration
-table in the project's MVP-2 plan.
+The bundle stays on every branch, the 5.2+ ones included, while
+`MOODLE_405_STABLE` is supported (Moodle 4.5 LTS security support runs to
+October 2027). After that it is deleted together with
+[`amd/src/lib/preact.js`](../../amd/src/lib/preact.js): core's React reaches
+the page through the import map, which an AMD module cannot import from, so
+the shim cannot simply re-export it and the client moves to `js/esm`. The
+steps are in the plugin's [`CLAUDE.md`](../../CLAUDE.md) under "Forward
+migration (Moodle 5.2+)".
