@@ -199,6 +199,47 @@ final class course_finder_test extends \advanced_testcase {
     }
 
     /**
+     * A course waiting in a bulk removal is left out of the list and the
+     * total, so the next batch is reachable and nothing is queued twice.
+     *
+     * @return void
+     */
+    public function test_queued_courses_are_not_offered_again(): void {
+        $this->resetAfterTest();
+        $queued = $this->course_with_block(['enddate' => 0]);
+        $waiting = $this->course_with_block(['enddate' => 0]);
+        $filter = ['noenddate' => 1];
+        $this->assertSame(2, course_finder::count_candidates($filter), 'Control: both match before queuing.');
+
+        bulk_removal_queue::enqueue($filter, [$queued->id], false, 2);
+
+        $this->assertSame([(int) $waiting->id], array_map('intval', array_keys(course_finder::candidates($filter))));
+        $this->assertSame(1, course_finder::count_candidates($filter));
+    }
+
+    /**
+     * The request check keeps only the given courses that match the filter,
+     * carry the block and are not queued.
+     *
+     * @return void
+     */
+    public function test_matching_ids_keeps_only_offered_courses(): void {
+        $this->resetAfterTest();
+        $match = $this->course_with_block(['enddate' => 0]);
+        $ended = $this->course_with_block(['startdate' => time() - 10 * 86400, 'enddate' => time() - 86400]);
+        $noblock = $this->getDataGenerator()->create_course(['enddate' => 0]);
+        $queued = $this->course_with_block(['enddate' => 0]);
+        bulk_removal_queue::enqueue(['noenddate' => 1], [$queued->id], false, 2);
+
+        $found = course_finder::matching_ids(
+            ['noenddate' => 1],
+            [$match->id, $ended->id, $noblock->id, $queued->id, $match->id]
+        );
+
+        $this->assertSame([(int) $match->id], $found);
+    }
+
+    /**
      * A course carrying the block, with the given overrides.
      *
      * @param array $opts Passed to create_course().

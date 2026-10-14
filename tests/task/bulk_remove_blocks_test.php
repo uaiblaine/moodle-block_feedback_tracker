@@ -154,6 +154,28 @@ final class bulk_remove_blocks_test extends \advanced_testcase {
     }
 
     /**
+     * With the delayed cleanup on, discardnow deletes the history itself and
+     * leaves no deferred discard behind; the default mode, the control, does
+     * schedule one.
+     *
+     * @return void
+     */
+    public function test_discard_now_schedules_no_deferred_discard(): void {
+        $this->resetAfterTest();
+        set_config('removal_cleanup_active', '1', 'block_feedback_tracker');
+        $now = $this->course_with_block_and_data();
+        $later = $this->course_with_block_and_data();
+
+        $this->run_task([(int) $now->id], true);
+        $this->assertCount(0, \core\task\manager::get_adhoc_tasks(discard_course_data::class));
+
+        $this->run_task([(int) $later->id], false);
+        $tasks = \core\task\manager::get_adhoc_tasks(discard_course_data::class);
+        $this->assertCount(1, $tasks, 'Control: the default mode defers the discard.');
+        $this->assertSame((int) $later->id, (int) reset($tasks)->get_custom_data()->courseid);
+    }
+
+    /**
      * Run the task over a set of course ids.
      *
      * @param array $courseids
