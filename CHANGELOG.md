@@ -42,6 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached 1.1.0.
 
 ### Fixed
+- **The historical backfill honours the retention window.** With
+  `retention_active` on, `backfill_history` no longer dispatches submissions
+  last modified before `retention::cutoff()`, the floor `reconcile_ledger`'s
+  row-creating sweeps already apply. Before, a backfill walked every
+  submission of the course and ingested closed history that `prune_ledger`
+  deleted on its next run. The cursor still walks the whole course, so a course
+  backfilled while retention was on is walked again in full only after
+  `cli/backfill_course.php --reset`.
 - **A grade link no longer opens another student** (version `2026042002`).
   mod_assign's grader lists only the students the teacher's saved filters let
   through (status, marking workflow, marker, the name initials of that
