@@ -152,6 +152,28 @@ final class bulk_remove_rows_test extends \advanced_testcase {
     }
 
     /**
+     * Queued courses are named by full name, sorted, and a course deleted since
+     * it was queued is left out.
+     *
+     * @return void
+     */
+    public function test_queued_courses_are_named_in_order_without_deleted_ones(): void {
+        $this->resetAfterTest();
+        $b = $this->getDataGenerator()->create_course(['fullname' => 'B & C', 'shortname' => 'BC']);
+        $a = $this->getDataGenerator()->create_course(['fullname' => 'A course', 'shortname' => 'AC']);
+        $gone = $this->getDataGenerator()->create_course();
+        $goneid = (int) $gone->id;
+        delete_course($gone, false);
+
+        $rows = bulk_remove_rows::queued_for_template([(int) $b->id, $goneid, (int) $a->id]);
+
+        $this->assertSame([
+            ['fullname' => 'A course', 'shortname' => 'AC'],
+            ['fullname' => 'B & C', 'shortname' => 'BC'],
+        ], $rows);
+    }
+
+    /**
      * Create a course carrying the block.
      *
      * @param array $opts Course generator options.

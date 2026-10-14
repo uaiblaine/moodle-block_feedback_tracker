@@ -38,6 +38,10 @@ namespace block_feedback_tracker\local\sla;
  * often 0 on older courses, so "started before" and "has no end date" are
  * explicit filters rather than a silent fallback for a missing end date,
  * which would either miss most of an old archive or sweep in running courses.
+ *
+ * A course already waiting in a bulk removal ({@see bulk_removal_queue}) is no
+ * longer a candidate: it still carries the block until cron runs, and offering
+ * it again would let it be queued twice and keep the next batch out of reach.
  */
 final class course_finder {
     /** Rows revealed at a time by the "load more" control. */
@@ -51,6 +55,25 @@ final class course_finder {
      * match; with a ceiling it has one meaning.
      */
     public const MAX_RESULTS = 100;
+
+    /**
+     * Whether at least one filter question is answered.
+     *
+     * The form refuses an empty filter so the tool never offers the whole site;
+     * the removal request repeats the check on the server. Each value is read
+     * as {@see self::build_filter()} reads it: a date or category of 0 or less
+     * adds no clause there, so it does not count as an answer here.
+     *
+     * @param array $filters Same keys as {@see self::candidates()}.
+     * @return bool
+     */
+    public static function has_filter(array $filters): bool {
+        return (int) ($filters['endedbefore'] ?? 0) > 0
+            || (int) ($filters['startedbefore'] ?? 0) > 0
+            || (int) ($filters['categoryid'] ?? 0) > 0
+            || !empty($filters['noenddate'])
+            || !empty($filters['hiddenonly']);
+    }
 
     /**
      * Courses carrying the block that match the given filters.
@@ -71,19 +94,13 @@ final class course_finder {
     public static function candidates(array $filters): array {
         global $DB;
 
-        [$wheresql, $params] = self::build_filter($filters);
+        [$wheresql, $params] = self::build_filter($filters, bulk_removal_queue::course_ids());
         if ($wheresql === null) {
             return [];
         }
 
-        /* The ledger count is what makes the confirmation informed: an
-         * administrator should see how much measured history each course would
-         * eventually lose, not just how many courses they ticked. */
         $sql = "SELECT c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate,
-                       cat.name AS categoryname,
-                       (SELECT COUNT(1)
-                          FROM {block_feedback_tracker_sub} l
-                         WHERE l.courseid = c.id) AS ledgerrows
+                       cat.name AS categoryname
                   FROM {course} c
                   JOIN {course_categories} cat ON cat.id = c.category
                   JOIN {context} ctx ON ctx.instanceid = c.id AND ctx.contextlevel = :ctxlevel
@@ -92,12 +109,66 @@ final class course_finder {
                  WHERE $wheresql
               GROUP BY c.id, c.fullname, c.shortname, c.category, c.visible, c.startdate, c.enddate, cat.name
               ORDER BY c.fullname ASC";
+        $rows = $DB->get_records_sql($sql, $params, 0, self::MAX_RESULTS);
+        if (empty($rows)) {
+            return [];
+        }
 
-        return $DB->get_records_sql($sql, $params, 0, self::MAX_RESULTS);
+        /* The ledger count is what makes the confirmation informed: an
+         * administrator should see how much measured history each course would
+         * eventually lose, not just how many courses they ticked. It is counted
+         * for the listed rows only, not for every course the filter matches. */
+        [$insql, $inparams] = $DB->get_in_or_equal(array_keys($rows), SQL_PARAMS_NAMED, 'lc');
+        $counts = $DB->get_records_sql_menu(
+            "SELECT courseid, COUNT(1)
+               FROM {block_feedback_tracker_sub}
+              WHERE courseid $insql
+           GROUP BY courseid",
+            $inparams
+        );
+        foreach ($rows as $id => $row) {
+            $row->ledgerrows = (int) ($counts[$id] ?? 0);
+        }
+        return $rows;
     }
 
     /**
-     * How many courses match, ignoring the ceiling.
+     * Which of the given courses the filter still offers.
+     *
+     * Validates a removal request: unlike {@see self::candidates()} it has no
+     * row ceiling, so a course that moved past the first {@see self::MAX_RESULTS}
+     * by name while the page was open is still recognised.
+     *
+     * @param array $filters Same keys as {@see self::candidates()}.
+     * @param array $courseids Course ids to check.
+     * @return int[] The ids that match, carry the block and are not queued.
+     */
+    public static function matching_ids(array $filters, array $courseids): array {
+        global $DB;
+
+        $courseids = array_values(array_unique(array_map('intval', $courseids)));
+        if (empty($courseids)) {
+            return [];
+        }
+        [$wheresql, $params] = self::build_filter($filters, bulk_removal_queue::course_ids());
+        if ($wheresql === null) {
+            return [];
+        }
+        [$insql, $inparams] = $DB->get_in_or_equal($courseids, SQL_PARAMS_NAMED, 'only');
+        $sql = "SELECT DISTINCT c.id
+                  FROM {course} c
+                  JOIN {course_categories} cat ON cat.id = c.category
+                  JOIN {context} ctx ON ctx.instanceid = c.id AND ctx.contextlevel = :ctxlevel
+                  JOIN {block_instances} bi ON bi.parentcontextid = ctx.id
+                                           AND bi.blockname = :blockname
+                 WHERE $wheresql AND c.id $insql";
+        $found = array_map('intval', $DB->get_fieldset_sql($sql, $params + $inparams));
+        sort($found);
+        return $found;
+    }
+
+    /**
+     * How many courses match, ignoring the ceiling; queued courses excluded.
      *
      * Reported beside the visible rows so an administrator can tell a complete
      * selection from one truncated at {@see self::MAX_RESULTS}.
@@ -108,7 +179,7 @@ final class course_finder {
     public static function count_candidates(array $filters): int {
         global $DB;
 
-        [$wheresql, $params] = self::build_filter($filters);
+        [$wheresql, $params] = self::build_filter($filters, bulk_removal_queue::course_ids());
         if ($wheresql === null) {
             return 0;
         }
@@ -128,12 +199,20 @@ final class course_finder {
      * Shared by the list and its total so the two can never disagree.
      *
      * @param array $filters Same keys as {@see self::candidates()}.
+     * @param array $excludeids Course ids to leave out: the queued ones.
      * @return array{0:string|null, 1:array} Null clause when the filter can
      *                                       match nothing at all.
      */
-    private static function build_filter(array $filters): array {
+    private static function build_filter(array $filters, array $excludeids = []): array {
+        global $DB;
+
         $where = ['c.id <> :siteid'];
         $params = ['siteid' => SITEID, 'blockname' => 'feedback_tracker'];
+        if (!empty($excludeids)) {
+            [$exsql, $exparams] = $DB->get_in_or_equal($excludeids, SQL_PARAMS_NAMED, 'ex', false);
+            $where[] = "c.id $exsql";
+            $params += $exparams;
+        }
 
         $endedbefore = (int) ($filters['endedbefore'] ?? 0);
         $startedbefore = (int) ($filters['startedbefore'] ?? 0);
