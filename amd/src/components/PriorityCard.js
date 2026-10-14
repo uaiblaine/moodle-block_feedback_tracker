@@ -28,6 +28,7 @@
 import {html} from 'block_feedback_tracker/lib/preact';
 import Badge from 'block_feedback_tracker/components/Badge';
 import {formatHours, formatDays, formatDate, usesDays} from 'block_feedback_tracker/lib/format';
+import {graderUrl} from 'block_feedback_tracker/lib/grader';
 
 /**
  * Initials from a full name; falls back to "??" on empty input.
@@ -99,7 +100,7 @@ const resubmittedTip = (previousmarktime, i18n) => {
  * @param {number} props.idx          1-based rank shown in the header.
  * @param {object} props.submission   Row from get_grader_priority_list.
  * @param {object} props.i18n         Label bundle.
- * @param {object} [props.config]     Config bundle (effective-time display unit).
+ * @param {object} [props.config]     Config bundle (effective-time display unit, grader_gate).
  * @returns {object} vnode
  */
 export default function PriorityCard({idx, submission, i18n, config}) {
@@ -108,17 +109,9 @@ export default function PriorityCard({idx, submission, i18n, config}) {
     const studentname = submission.studentname || '';
     const initials = initialsOf(studentname);
     const eff = Number(submission.effectivehours) || 0;
-    const cmid = Number(submission.cmid) || 0;
-    const userid = Number(submission.userid) || 0;
-
-    const wwwroot = (typeof M !== 'undefined' && M.cfg && M.cfg.wwwroot) || '';
-    // Deep-link straight to the single-student grader (action=grader&userid),
-    // not the generic grading list (action=grading), so the teacher lands on
-    // the grade form for this exact submission in one click.
-    const gradeUrl = cmid > 0 && userid > 0
-        ? wwwroot + '/mod/assign/view.php?id=' + encodeURIComponent(String(cmid))
-            + '&action=grader&userid=' + encodeURIComponent(String(userid))
-        : '#';
+    // Deep-link to the single-student grader, not the generic grading list,
+    // so the teacher lands on the grade form for this exact submission.
+    const gradeUrl = graderUrl(submission, config);
 
     return html`
         <article class="bft-priority-card">
