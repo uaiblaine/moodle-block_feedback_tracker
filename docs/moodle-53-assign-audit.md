@@ -351,10 +351,9 @@ covers every new guard.
   and `all_markers_marked()`, cites each with `{@see}`, and reads with set-based SQL for a
   page of rows (never one `\assign` per row).
 - The progress line in the pending report and the drill-down, through allowlisted fields
-  on `get_pending_submissions` (bump its cache key); lang strings en + pt_br.
-- `submission_marked` and `agreed_grade_calculated` subscribed to queue `recompute_one`
-  for the row's tuple, so the line refreshes when a marker finishes. Both are gated on
-  `is_processable()`.
+  on `get_pending_submissions` (it has no cache key to bump); lang strings en + pt_br.
+- No event subscription: superseded at implementation, because the progress is read from
+  core's tables when the page is built, so nothing stored goes stale when a marker finishes.
 - Tests on 5.3 core through `update_mark()` / `update_marker_allocations()`: 0 of 2,
   1 of 2, 2 of 2 under `average` (agreed grade, wait `none`), 2 of 2 under `manual`
   (wait `agreed`), an optional slot enabled (expected goes 2 → 3), disabled again (3 → 2,
