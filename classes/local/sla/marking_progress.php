@@ -164,29 +164,36 @@ final class marking_progress {
     /**
      * SQL condition: this ledger row is pending for the viewer as a marker.
      *
-     * A row of an activity that does not use multiple marking
-     * ({@see \assign::is_using_multiple_marking()}) always passes, so callers
-     * can AND it into any ledger query. On a multi-marking activity it passes
-     * only when both hold:
-     * - the viewer holds an active slot for the student, a required slot or an
-     *   optional one with enabled = 1 ({@see \assign::get_marker_allocations()}
-     *   with placeholders left out);
-     * - the viewer's own mark on the row's attempt is not complete, the negation
-     *   of {@see \assign::mark_is_marked()}: workflow state readyforreview and a
-     *   mark that is set and not negative.
+     * A row passes when any of these holds:
+     * - the activity does not use marker allocation (marking workflow or marker
+     *   allocation off), so nobody is its marker and every teacher sees it;
+     * - the student has no active allocation, a required slot or an optional one
+     *   with enabled = 1 holding a marker ({@see \assign::get_marker_allocations()}
+     *   with placeholders left out): the row is unallocated, the coordinator's
+     *   queue, and every teacher sees it. This also lists, for every teacher, a
+     *   multi-marking row with no allocation at all, which the earlier
+     *   slot-only rule hid from everyone; that is intended;
+     * - the viewer holds an active slot for the student, the viewer's own mark
+     *   on the row's attempt is not complete (the negation of
+     *   {@see \assign::mark_is_marked()}: workflow state readyforreview and a
+     *   mark that is set and not negative), and no agreed grade exists for that
+     *   attempt (an {assign_grades} row with grade >= 0). Once the agreed grade
+     *   exists the remaining wait, release, belongs to no marker. A
+     *   single-marker activity stores its grade there directly, so a graded row
+     *   leaves its marker's list too.
      *
      * Core's third condition for "still waiting", completed marks fewer than
      * expected ({@see \assign::all_markers_marked()}), needs no clause of its
      * own: while the viewer's active slot is incomplete the completed count
      * cannot reach the expected count.
      *
-     * Consequences: a teacher with no slot (a coordinator, an admin) passes no
-     * multi-marking row; and "awaiting allocation" and "awaiting agreed grade"
-     * ({@see self::WAIT_ALLOCATION}, {@see self::WAIT_AGREED}) belong to no
-     * marker. The condition is correlated, so it adds no join and the caller's
-     * LIMIT applies to rows that already satisfy it. It must agree with
-     * for_rows(): a row is listed for V exactly when V holds an active slot whose
-     * state is not MARK_COMPLETE.
+     * Consequences: on an allocated student a teacher with no slot (not the
+     * coordinator's queue) passes nothing, and "awaiting agreed grade"
+     * ({@see self::WAIT_AGREED}) belongs to no marker. The condition is
+     * correlated, so it adds no join and the caller's LIMIT applies to rows
+     * that already satisfy it. Whenever the student is allocated it must agree
+     * with for_rows(): a row is listed for V exactly when V holds an active slot
+     * whose state is not MARK_COMPLETE.
      *
      * @param int $viewerid The marker the list is for.
      * @param string $itemcolumn Column holding the assign id, e.g. "sub.iteminstance".
@@ -206,8 +213,13 @@ final class marking_progress {
                                FROM {assign} {$prefix}a
                               WHERE {$prefix}a.id = $itemcolumn
                                 AND {$prefix}a.markingworkflow = 1
-                                AND {$prefix}a.markingallocation = 1
-                                AND {$prefix}a.markercount + {$prefix}a.optionalmarkercount > 1)
+                                AND {$prefix}a.markingallocation = 1)
+                 OR NOT EXISTS (SELECT 1
+                                  FROM {assign_allocated_marker} {$prefix}n
+                                 WHERE {$prefix}n.assignment = $itemcolumn
+                                   AND {$prefix}n.student = $usercolumn
+                                   AND {$prefix}n.marker > 0
+                                   AND ({$prefix}n.optional = 0 OR {$prefix}n.enabled = 1))
                  OR (EXISTS (SELECT 1
                                FROM {assign_allocated_marker} {$prefix}s
                               WHERE {$prefix}s.assignment = $itemcolumn
@@ -223,7 +235,13 @@ final class marking_progress {
                                         AND {$prefix}m.marker = :{$prefix}mark
                                         AND {$prefix}m.workflowstate = 'readyforreview'
                                         AND {$prefix}m.mark IS NOT NULL
-                                        AND {$prefix}m.mark >= 0)))";
+                                        AND {$prefix}m.mark >= 0)
+                     AND NOT EXISTS (SELECT 1
+                                       FROM {assign_grades} {$prefix}y
+                                      WHERE {$prefix}y.assignment = $itemcolumn
+                                        AND {$prefix}y.userid = $usercolumn
+                                        AND {$prefix}y.attemptnumber = $attemptcolumn
+                                        AND {$prefix}y.grade >= 0)))";
         return [$sql, [$prefix . 'slot' => $viewerid, $prefix . 'mark' => $viewerid]];
     }
 

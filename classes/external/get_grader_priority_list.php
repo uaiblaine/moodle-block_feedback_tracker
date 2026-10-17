@@ -41,14 +41,16 @@ use block_feedback_tracker\local\grading\grader_filters;
  *
  * Authorisation and scope are get_dashboard's, from {@see \block_feedback_tracker\local\sla\dashboard_scope}.
  *
- * A submission of a multi-marking activity is listed only for a viewer it is
- * pending for as a marker ({@see \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql()}):
- * the viewer holds an active slot and their own mark is not complete. So a
- * teacher with no slot (a coordinator, an admin) no longer sees those rows
- * here, and "awaiting allocation" and "awaiting agreed grade" rows, which
- * belong to no marker, stay in the course views (pending report, drill-down),
- * which list every pending row with its progress line. Other activities are
- * unchanged.
+ * A submission of an activity that uses marker allocation is listed for a viewer
+ * when it is pending for them as a marker, or when it is nobody's yet
+ * ({@see \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql()}):
+ * the student has no active allocation (the coordinator's queue, every teacher
+ * sees it), or the viewer holds an active slot, their own mark is not complete
+ * and no agreed grade exists. So a teacher with no slot no longer sees an
+ * allocated student's row here, whether the activity has one marker or several,
+ * and "awaiting agreed grade" rows, which belong to no marker, stay in the
+ * course views (pending report, drill-down), which list every pending row with
+ * its progress line. Activities without marker allocation are unchanged.
  */
 class get_grader_priority_list extends external_api {
     /** Default number of submissions to return. */
@@ -132,7 +134,7 @@ class get_grader_priority_list extends external_api {
             . ' AND sub.islatest = 1 AND sub.iscurrent = 1'
             . ' AND ' . $viswhere;
         $sqlparams['substatus'] = \block_feedback_tracker\local\sla\submission_status::SUBMITTED;
-        /* Multi-marking: only what is pending for the viewer as a marker, decided in
+        /* Marker allocation: only what is pending for the viewer as a marker, decided in
          * the SQL so the LIMIT below takes the top N of the viewer's own queue. */
         [$pendsql, $pendparams] = \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql(
             $userid,
