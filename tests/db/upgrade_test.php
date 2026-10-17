@@ -43,8 +43,34 @@ final class upgrade_test extends \advanced_testcase {
     public function test_a_site_that_reached_1_1_0_upgrades(): void {
         $this->load_upgrade_lib();
         $this->resetAfterTest();
+        // The installed version as such a site has it, or every savepoint reads as a downgrade.
+        set_config('version', 2026041999, 'block_feedback_tracker');
 
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026041999));
+    }
+
+    /**
+     * The 2026042005 step adds the attribution label to the ledger on a site
+     * that lacks it, and records its savepoint.
+     *
+     * @return void
+     */
+    public function test_the_attribution_step_adds_the_column(): void {
+        global $DB;
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $dbman = $DB->get_manager();
+        $table = new \xmldb_table('block_feedback_tracker_sub');
+        $field = new \xmldb_field('allocattrib', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocsource');
+        $dbman->drop_field($table, $field);
+        $this->assertFalse($dbman->field_exists($table, $field), 'Control: the column is gone.');
+        set_config('version', 2026042004, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042004));
+
+        $this->assertTrue($dbman->field_exists($table, $field));
+        $this->assertSame('2026042005', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

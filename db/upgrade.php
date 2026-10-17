@@ -61,5 +61,18 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         );
     }
 
+    if ($oldversion < 2026042005) {
+        /* How the responsible marker of a multi-marking cycle was decided
+         * (owner decision D1). Null on every existing row: nothing was decided
+         * by these rules before this version. */
+        $table = new xmldb_table('block_feedback_tracker_sub');
+        $field = new xmldb_field('allocattrib', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocsource');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_block_savepoint(true, 2026042005, 'feedback_tracker');
+    }
+
     return true;
 }

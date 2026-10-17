@@ -94,6 +94,15 @@ $i18n['status_resubmitted'] = get_string('status_resubmitted', 'block_feedback_t
 $i18n['status_resubmitted_help'] = get_string('status_resubmitted_help', 'block_feedback_tracker', '{$a}');
 $i18n['status_resubmitted_help_nodate'] = get_string('status_resubmitted_help_nodate', 'block_feedback_tracker');
 $i18n['alloc_split_tip'] = get_string('alloc_split_tip', 'block_feedback_tracker');
+/* Multi-marker progress line. The counted variant keeps its placeholders; the
+ * view puts each row's figures in them. */
+$i18n['marking_progress'] = get_string(
+    'marking_progress',
+    'block_feedback_tracker',
+    (object) ['completed' => '{$a->completed}', 'expected' => '{$a->expected}']
+);
+$i18n['marking_wait_agreed'] = get_string('marking_wait_agreed', 'block_feedback_tracker');
+$i18n['marking_wait_allocation'] = get_string('marking_wait_allocation', 'block_feedback_tracker');
 
 // Collapse state for the hero + academic-days container (per-user pref).
 $reportcollapsed = (bool) get_user_preferences(

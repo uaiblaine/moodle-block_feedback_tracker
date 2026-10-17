@@ -2114,6 +2114,16 @@ button.bft-badge-resubmitted:focus-visible {
     font-weight: 700;
 }
 
+/* Multi-marker progress under a row's status ("1 of 2 markers"), in the
+ * pending report and the drill-down. A line of its own, so it never wraps
+ * between the badges. */
+.bft-row-marking {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    color: var(--bft-text-muted);
+}
+
 .bft-row-release-pop {
     position: absolute;
     bottom: calc(100% + 6px);

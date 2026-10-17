@@ -82,6 +82,11 @@ foreach ($result['submissions'] as $s) {
         'bucket'       => $band,
         'resubmitted'  => (int) $s['resubmitted'] === 1,
         'resubmittedtip' => drilldown_cells::resubmitted_tip((int) $s['previousmarktime']),
+        'markingline'  => drilldown_cells::marking_line(
+            (string) $s['marking_wait'],
+            (int) $s['markers_completed'],
+            (int) $s['markers_expected']
+        ),
     ];
 }
 

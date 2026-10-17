@@ -223,9 +223,10 @@ final class observer_coverage_test extends \advanced_testcase {
     /**
      * Moodle 5.2 fires one marker_updated per marker, so allocating two markers
      * in one call reaches the observer twice. The row is still stamped once, as
-     * observed, and the marker is the one submission_ledger resolves from core
-     * (the lowest id on an activity that does not use multiple marking), not
-     * whichever event came last.
+     * observed, and on a multi-marking activity the marker is the one in
+     * position 1, the first allocation row core writes
+     * ({@see \assign::update_allocated_markers()}), not the lowest user id and
+     * not whichever event came last.
      *
      * @return void
      */
@@ -237,7 +238,7 @@ final class observer_coverage_test extends \advanced_testcase {
         [$student, $cm, $assign, $context] = $this->build_environment([
             'markingworkflow' => 1,
             'markingallocation' => 1,
-            'markercount' => 1,
+            'markercount' => 2,
         ]);
         $this->submit_student($assign, $student);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
@@ -249,9 +250,10 @@ final class observer_coverage_test extends \advanced_testcase {
             [(int) $second->id, (int) $first->id]
         );
 
+        $this->assertLessThan((int) $second->id, (int) $first->id, 'Control: position 1 is not the lowest id.');
         $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
-        $this->assertSame(min((int) $first->id, (int) $second->id), (int) $row->allocmarkerid);
+        $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
         $this->assertNotNull($row->timeallocated);
         $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
     }

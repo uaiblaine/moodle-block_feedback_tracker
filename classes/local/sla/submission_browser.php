@@ -254,6 +254,10 @@ class submission_browser {
         [$daygoal, $daycrit] = self::band_bounds_days();
         $hiddennow = self::hidden_from_student($rows);
         $previousmarks = resubmission::previous_marks($rows);
+        /* Multi-marker progress is a secondary line of open work only: a graded
+         * row is answered and a draft is not handed in, so both keep the
+         * neutral values. */
+        $progress = $mode === self::MODE_PENDING ? marking_progress::for_rows($rows) : [];
         $out = [];
         foreach ($rows as $r) {
             $eff = $r->effectivehours !== null ? (float) $r->effectivehours : 0.0;
@@ -341,6 +345,12 @@ class submission_browser {
                  * the row has no measurement. */
                 'queuehours'       => $r->queuehours !== null ? (float) $r->queuehours : null,
                 'allochours'       => $r->allochours !== null ? (float) $r->allochours : null,
+                /* Disclosed like awaitingrelease: under multiple marking one
+                 * marker's work does not answer the student, and the row says
+                 * which wait it is in. The headline counts are unchanged. */
+                'markers_expected' => (int) ($progress[(int) $r->id]['expected'] ?? 0),
+                'markers_completed' => (int) ($progress[(int) $r->id]['completed'] ?? 0),
+                'marking_wait'     => (string) ($progress[(int) $r->id]['wait'] ?? ''),
             ];
         }
 
