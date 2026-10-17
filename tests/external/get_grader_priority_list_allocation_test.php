@@ -125,6 +125,26 @@ final class get_grader_priority_list_allocation_test extends \advanced_testcase 
     }
 
     /**
+     * Control: marking workflow on but allocation switched off after allocating
+     * lists the student for everyone; the allocation half of arm (a) is what
+     * lets the second teacher see it.
+     *
+     * @return void
+     */
+    public function test_allocation_switched_off_lists_for_everyone(): void {
+        global $DB;
+        $env = $this->build_environment(true);
+        [$a, $b] = $env->teachers;
+        $this->allocate($env, $env->student, $a);
+        $this->assertFalse($this->listed($env, $b), 'Control: allocated to A, hidden from B.');
+
+        $DB->set_field('assign', 'markingallocation', 0, ['id' => $env->assign->get_instance()->id]);
+
+        $this->assertTrue($this->listed($env, $a));
+        $this->assertTrue($this->listed($env, $b));
+    }
+
+    /**
      * The limit applies to the viewer's own queue, not to a list filtered afterwards:
      * rows hidden from the viewer do not use up the limit.
      *
