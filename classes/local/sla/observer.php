@@ -463,11 +463,21 @@ class observer {
      * Allocated marker changed for one student.
      *
      * Records when marking responsibility landed, which mod_assign never
-     * stores. On Moodle 4.5 and 5.1 only the batch "Set allocated marker"
-     * operation fires this (the grading form and quick grading write the flag
-     * with no event), so coverage is partial and the stored `allocsource`
-     * says so. Moodle 5.2 fires it from every allocation path
-     * ({@see \assign::update_allocated_markers()}).
+     * stores. The event differs by Moodle version:
+     * - 4.5 and 5.1: only the batch "Set allocated marker" operation fires
+     *   `marker_updated` (the grading form and quick grading write the flag
+     *   with no event), so coverage is partial and the stored `allocsource`
+     *   says so.
+     * - 5.2: every allocation path goes through
+     *   {@see \assign::update_allocated_markers()}, which fires `marker_updated`
+     *   once per marker. A de-allocation fires nothing.
+     * - 5.3: `marker_added` and `marker_removed` per slot change replace it
+     *   (`marker_updated` survives only for the deprecated method). Those
+     *   classes do not exist before 5.3, so their subscriptions are inert here.
+     *
+     * Every event is only a cue: the marker is re-read from core, so the
+     * payload's marker id and the order of several events for one student do
+     * not matter.
      *
      * @param \core\event\base $event
      * @return void
