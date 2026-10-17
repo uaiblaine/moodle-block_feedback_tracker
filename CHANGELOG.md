@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Changed
+- **Grade Now list honours marker allocation** (version `2025100605`).
+  On an activity with marking workflow and marker allocation, the teacher
+  dashboard's cross-course Grade Now list shows a student who is unallocated or
+  allocated to the viewer, and drops the allocated student once the attempt is
+  graded. The rule is decided in the SQL, so the limit counts only the
+  viewer's own rows. Other activities are unchanged.
 - **Bulk removal shows its queue and works in batches** (version `2025100603`).
   `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
   run, so the courses used to stay on the list and could be queued again.
