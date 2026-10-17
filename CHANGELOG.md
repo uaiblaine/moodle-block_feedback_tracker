@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
+### Fixed
+- **Marker allocations are stamped again on Moodle 5.3** (version
+  `2026100501`). 5.3 no longer triggers `mod_assign\event\marker_updated`;
+  every allocation path fires `marker_added` / `marker_removed` instead, so the
+  observer never ran and allocation instants came only from the reconciliation
+  sweep, accurate to its period. Both events are now subscribed (the old one
+  stays for the deprecated `assign::update_allocated_markers()`), and removing
+  a marker clears `allocmarkerid` at once instead of on the next sweep. The
+  tests allocate through `assign::update_marker_allocations()`: the old one
+  fired the event by hand and stayed green while production lost every stamp.
+
 ### Changed
 - **This branch is the Moodle 5.3 branch** (version `2026100500`):
   `$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`, one CI

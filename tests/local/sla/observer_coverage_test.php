@@ -186,42 +186,103 @@ final class observer_coverage_test extends \advanced_testcase {
      * Allocating a marker records when marking responsibility landed, which
      * mod_assign keeps no column for, so it can only be captured from the event.
      *
+     * The allocation goes through core's own API, so the test proves that the
+     * event core sends today reaches the observer: Moodle 5.3 fires
+     * marker_added and no longer triggers marker_updated, and a test that fired
+     * the event by hand stayed green while production lost every stamp.
+     *
      * @return void
      */
     public function test_marker_allocation_stamps_the_allocation_instant(): void {
         global $DB;
         $this->resetAfterTest();
+        $this->setAdminUser();
         $this->seed_calendar();
         [$student, $cm, $assign, $context] = $this->build_environment([
             'markingworkflow' => 1,
             'markingallocation' => 1,
+            'markercount' => 1,
         ]);
-
-        $t1 = $this->ts('2026-05-11 09:00:00');
-        $DB->insert_record('assign_submission', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
-            'timecreated' => $t1, 'timemodified' => $t1,
-            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
-        ]);
-        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $this->submit_and_track($cm, $assign, $student);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNull($row->timeallocated);
         $this->assertSame(0, (int) $row->allocmarkerid);
 
-        $marker = $this->getDataGenerator()->create_and_enrol(
-            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
-            'editingteacher'
+        $marker = $this->create_marker($cm);
+        $this->assign_object($cm, $context)->update_marker_allocations(
+            (int) $student->id,
+            [1 => [(int) $marker->id, null]]
         );
-        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
-            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
-        $user = $DB->get_record('user', ['id' => $student->id], '*', MUST_EXIST);
-        $assignobj = $this->assign_object($cm, $context);
-        \mod_assign\event\marker_updated::create_from_marker($assignobj, $user, $marker)->trigger();
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNotNull($row->timeallocated, 'The allocation instant exists nowhere in core.');
         $this->assertNotNull($row->timeallocmarker);
+        $this->assertSame((int) $marker->id, (int) $row->allocmarkerid);
+        $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
+    }
+
+    /**
+     * Removing the only marker is seen at once: Moodle 5.3 fires marker_removed,
+     * where 5.2 deleted the allocation in silence. The first-allocation instant
+     * stays, because it closed the coordination queue.
+     *
+     * @return void
+     */
+    public function test_marker_removal_clears_the_allocated_marker(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $this->seed_calendar();
+        [$student, $cm, $assign, $context] = $this->build_environment([
+            'markingworkflow' => 1,
+            'markingallocation' => 1,
+            'markercount' => 1,
+        ]);
+        $this->submit_and_track($cm, $assign, $student);
+        $marker = $this->create_marker($cm);
+        $this->assign_object($cm, $context)->update_marker_allocations(
+            (int) $student->id,
+            [1 => [(int) $marker->id, null]]
+        );
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame((int) $marker->id, (int) $row->allocmarkerid, 'Control: the allocation was stamped.');
+        $allocated = (int) $row->timeallocated;
+
+        $this->assign_object($cm, $context)->update_marker_allocations((int) $student->id, [1 => [0, null]]);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(0, (int) $row->allocmarkerid, 'A removed marker must not stay attributed.');
+        $this->assertSame($allocated, (int) $row->timeallocated);
+    }
+
+    /**
+     * A marker allocated to an optional slot (Moodle 5.3) is stamped like a
+     * required one: enabling the slot and naming the marker fire
+     * marker_enabled_updated and marker_added.
+     *
+     * @return void
+     */
+    public function test_optional_marker_allocation_is_stamped(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $this->seed_calendar();
+        [$student, $cm, $assign, $context] = $this->build_environment([
+            'markingworkflow' => 1,
+            'markingallocation' => 1,
+            'markercount' => 1,
+            'optionalmarkercount' => 1,
+        ]);
+        $this->submit_and_track($cm, $assign, $student);
+        $marker = $this->create_marker($cm);
+
+        $this->assign_object($cm, $context)->update_marker_allocations(
+            (int) $student->id,
+            [2 => [(int) $marker->id, 1]]
+        );
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertSame((int) $marker->id, (int) $row->allocmarkerid);
         $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
     }
@@ -275,6 +336,39 @@ final class observer_coverage_test extends \advanced_testcase {
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $course = $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST);
         return new \assign($context, $cm, $course);
+    }
+
+    /**
+     * Hand in one submission for the student and create its ledger row.
+     *
+     * @param \stdClass $cm
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $student
+     * @return void
+     */
+    private function submit_and_track(\stdClass $cm, \stdClass $assign, \stdClass $student): void {
+        global $DB;
+        $t1 = $this->ts('2026-05-11 09:00:00');
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
+            'timecreated' => $t1, 'timemodified' => $t1,
+            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+    }
+
+    /**
+     * Create a teacher in the activity's course to allocate as a marker.
+     *
+     * @param \stdClass $cm
+     * @return \stdClass The user record.
+     */
+    private function create_marker(\stdClass $cm): \stdClass {
+        global $DB;
+        return $this->getDataGenerator()->create_and_enrol(
+            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
+            'editingteacher'
+        );
     }
 
     /**
