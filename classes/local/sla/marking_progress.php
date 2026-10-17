@@ -162,6 +162,72 @@ final class marking_progress {
     }
 
     /**
+     * SQL condition: this ledger row is pending for the viewer as a marker.
+     *
+     * A row of an activity that does not use multiple marking
+     * ({@see \assign::is_using_multiple_marking()}) always passes, so callers
+     * can AND it into any ledger query. On a multi-marking activity it passes
+     * only when both hold:
+     * - the viewer holds an active slot for the student, a required slot or an
+     *   optional one with enabled = 1 ({@see \assign::get_marker_allocations()}
+     *   with placeholders left out);
+     * - the viewer's own mark on the row's attempt is not complete, the negation
+     *   of {@see \assign::mark_is_marked()}: workflow state readyforreview and a
+     *   mark that is set and not negative.
+     *
+     * Core's third condition for "still waiting", completed marks fewer than
+     * expected ({@see \assign::all_markers_marked()}), needs no clause of its
+     * own: while the viewer's active slot is incomplete the completed count
+     * cannot reach the expected count.
+     *
+     * Consequences: a teacher with no slot (a coordinator, an admin) passes no
+     * multi-marking row; and "awaiting allocation" and "awaiting agreed grade"
+     * ({@see self::WAIT_ALLOCATION}, {@see self::WAIT_AGREED}) belong to no
+     * marker. The condition is correlated, so it adds no join and the caller's
+     * LIMIT applies to rows that already satisfy it. It must agree with
+     * for_rows(): a row is listed for V exactly when V holds an active slot whose
+     * state is not MARK_COMPLETE.
+     *
+     * @param int $viewerid The marker the list is for.
+     * @param string $itemcolumn Column holding the assign id, e.g. "sub.iteminstance".
+     * @param string $usercolumn Column holding the student id, e.g. "sub.userid".
+     * @param string $attemptcolumn Column holding the attempt number, e.g. "sub.attemptnumber".
+     * @param string $prefix Prefix of the inner aliases and placeholders; each placeholder is used once.
+     * @return array [SQL condition in parentheses, named parameters].
+     */
+    public static function pending_for_viewer_sql(
+        int $viewerid,
+        string $itemcolumn,
+        string $usercolumn,
+        string $attemptcolumn,
+        string $prefix = 'mpv'
+    ): array {
+        $sql = "(NOT EXISTS (SELECT 1
+                               FROM {assign} {$prefix}a
+                              WHERE {$prefix}a.id = $itemcolumn
+                                AND {$prefix}a.markingworkflow = 1
+                                AND {$prefix}a.markingallocation = 1
+                                AND {$prefix}a.markercount + {$prefix}a.optionalmarkercount > 1)
+                 OR (EXISTS (SELECT 1
+                               FROM {assign_allocated_marker} {$prefix}s
+                              WHERE {$prefix}s.assignment = $itemcolumn
+                                AND {$prefix}s.student = $usercolumn
+                                AND {$prefix}s.marker = :{$prefix}slot
+                                AND ({$prefix}s.optional = 0 OR {$prefix}s.enabled = 1))
+                     AND NOT EXISTS (SELECT 1
+                                       FROM {assign_grades} {$prefix}g
+                                       JOIN {assign_mark} {$prefix}m ON {$prefix}m.gradeid = {$prefix}g.id
+                                      WHERE {$prefix}g.assignment = $itemcolumn
+                                        AND {$prefix}g.userid = $usercolumn
+                                        AND {$prefix}g.attemptnumber = $attemptcolumn
+                                        AND {$prefix}m.marker = :{$prefix}mark
+                                        AND {$prefix}m.workflowstate = 'readyforreview'
+                                        AND {$prefix}m.mark IS NOT NULL
+                                        AND {$prefix}m.mark >= 0)))";
+        return [$sql, [$prefix . 'slot' => $viewerid, $prefix . 'mark' => $viewerid]];
+    }
+
+    /**
      * Whether an activity row uses multiple marking.
      *
      * {@see \assign::is_using_multiple_marking()}: marking workflow and marker

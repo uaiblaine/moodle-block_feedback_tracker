@@ -40,6 +40,15 @@ use block_feedback_tracker\local\grading\grader_filters;
  * one query instead of a get_pending_submissions call per course.
  *
  * Authorisation and scope are get_dashboard's, from {@see \block_feedback_tracker\local\sla\dashboard_scope}.
+ *
+ * A submission of a multi-marking activity is listed only for a viewer it is
+ * pending for as a marker ({@see \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql()}):
+ * the viewer holds an active slot and their own mark is not complete. So a
+ * teacher with no slot (a coordinator, an admin) no longer sees those rows
+ * here, and "awaiting allocation" and "awaiting agreed grade" rows, which
+ * belong to no marker, stay in the course views (pending report, drill-down),
+ * which list every pending row with its progress line. Other activities are
+ * unchanged.
  */
 class get_grader_priority_list extends external_api {
     /** Default number of submissions to return. */
@@ -123,6 +132,16 @@ class get_grader_priority_list extends external_api {
             . ' AND sub.islatest = 1 AND sub.iscurrent = 1'
             . ' AND ' . $viswhere;
         $sqlparams['substatus'] = \block_feedback_tracker\local\sla\submission_status::SUBMITTED;
+        /* Multi-marking: only what is pending for the viewer as a marker, decided in
+         * the SQL so the LIMIT below takes the top N of the viewer's own queue. */
+        [$pendsql, $pendparams] = \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql(
+            $userid,
+            'sub.iteminstance',
+            'sub.userid',
+            'sub.attemptnumber'
+        );
+        $where .= ' AND ' . $pendsql;
+        $sqlparams += $pendparams;
         $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         if ($bucket !== '') {
             if ($usedays) {

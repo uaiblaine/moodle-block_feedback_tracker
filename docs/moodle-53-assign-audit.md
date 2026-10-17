@@ -278,8 +278,10 @@ submission of their courses, whatever the allocation.
   pending for them, mirroring core. Disabling the slot ends that wait in both places.
 - The **course-level** pending figures (block, dashboard, rollup, score) do not change: a
   submission stays pending for the course until its agreed grade, and under marking
-  workflow until release. "Pending for me" is a filter over the marker views (Grade Now,
-  pending report, drill-down), not a second definition of pending.
+  workflow until release. "Pending for me" is a filter over the marker views, not a second
+  definition of pending. Grade Now (P3a) applies it; the course views (pending report,
+  drill-down) keep listing every pending row, each with the P2 progress line, rather than
+  filtering.
 - Two waits belong to no marker, and the views say so instead of hiding them:
   - "awaiting allocation": a required slot with no marker, which is the coordinator's
     queue;
@@ -359,7 +361,18 @@ covers every new guard.
   (wait `agreed`), an optional slot enabled (expected goes 2 → 3), disabled again (3 → 2,
   its mark kept and no longer counted), a required slot left empty (wait `allocation`).
 
-### P3 — Per-slot table and "pending for me" (D3)
+### P3a — Pending for me in Grade Now (D3)
+
+In the cross-course Grade Now list (`get_grader_priority_list`), a submission of a
+multi-marking activity is listed only for a viewer it is pending for as a marker: an
+active slot for the student and the viewer's own mark not complete. The rule is SQL
+(`marking_progress::pending_for_viewer_sql()`), inside the query, so the limit takes the
+top N of the viewer's own queue. A teacher with no slot no longer sees those rows; rows
+awaiting allocation or the agreed grade stay in the course views. Needs no table, so it
+ships before the per-slot work. Tests: the owner's example, an enabled optional slot, a
+single-marker control, and agreement with `for_rows()`.
+
+### P3b — Per-slot table, per-marker figures, privacy (D3)
 
 - Table `block_feedback_tracker_alloc`, one row per ledger cycle and slot: ledger row id,
   position, marker, `optional`, `enabled`, `timeallocated`, `allocsource`, `timemarked`
@@ -370,8 +383,8 @@ covers every new guard.
   - A new reconcile sweep through `walk()` rebuilds it from `{assign_allocated_marker}`
     and `{assign_mark}` (`timemodified` as the reconciled completion instant), with
     `allocsource = reconciled`.
-- "Pending for me" in Grade Now, the pending report and the drill-down, by the D3
-  predicate, read from `marking_progress` (P2), never from the table alone. The table is
+- Any further "pending for me" surface, by the D3 predicate, read from `marking_progress`
+  (P2), never from the table alone. The table is
   history; core is the truth about who holds a slot now. The course-level figures stay as
   they are.
 - Per-marker medians and coverage for other markers behind
@@ -427,8 +440,8 @@ covers every new guard.
 2. P1.
 3. P5 and P6, which can run in parallel.
 4. P2.
-5. P3, which reads P2.
-6. P4, which needs P3's per-slot instants.
+5. P3a, then P3b, which read P2.
+6. P4, which needs P3b's per-slot instants.
 
 ## 5. Future work: what can go back to 5.2, 5.1 and 4.5
 
