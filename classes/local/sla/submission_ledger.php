@@ -597,6 +597,7 @@ class submission_ledger {
             $record->allocsource = self::ALLOC_SOURCE_LATE;
         }
 
+        $inserted = false;
         if ($existing !== null) {
             if (!$alloc['known']) {
                 /* This snapshot saw no allocation, so leave the four measures
@@ -620,6 +621,7 @@ class submission_ledger {
         } else {
             $record->timecreated = $now;
             $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle, $retrying);
+            $inserted = $subid !== null;
             if ($subid === null) {
                 /* A concurrent writer inserted this cycle after the read at the
                  * top of this method: re-derive against its row, bounded to one
@@ -649,6 +651,13 @@ class submission_ledger {
                     AND attemptnumber = :att AND cycle < :cycle',
                 ['cmid' => $cmid, 'userid' => $userid, 'att' => $attemptnumber, 'cycle' => $cycle]
             );
+        }
+
+        /* A new cycle inherits the markers already allocated
+         * ({@see slot_ledger::carry_onto_new_cycle()}). After the iscurrent
+         * update above, so only the new cycle is synced. */
+        if ($inserted && marking_progress::uses_multiple_marking($assign)) {
+            slot_ledger::carry_onto_new_cycle($cmid, $userid, $timesubmitted, $now);
         }
 
         dirty_queue::enqueue(
@@ -1476,6 +1485,7 @@ class submission_ledger {
             ];
         }
 
+        slot_ledger::delete_for_ledger_where($where, $params);
         $DB->delete_records_select('block_feedback_tracker_sub', $where, $params);
 
         foreach ($tuples as [$courseid, $groupid]) {
@@ -1518,7 +1528,8 @@ class submission_ledger {
      * For a deleted account. Rows where the deleted user is only the
      * allocated marker (`allocmarkerid`) are the students' and keep that id,
      * as core keeps `assign_user_flags.allocatedmarker` when it deletes an
-     * account. An erasure request clears it through
+     * account; their slot rows as a marker stay with those students' cycles
+     * for the same reason. An erasure request clears both through
      * {@see \block_feedback_tracker\privacy\provider::delete_data_for_user()}.
      *
      * @param int $userid
@@ -1540,8 +1551,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger rows for one course-module and re-enqueue the tuples
-     * they belonged to.
+     * Delete all ledger and slot rows for one course-module and re-enqueue the
+     * tuples they belonged to.
      *
      * @param int $cmid
      * @return void
@@ -1554,6 +1565,7 @@ class submission_ledger {
             '',
             'id, courseid, groupid'
         );
+        slot_ledger::delete_for_cm($cmid);
         if (empty($rows)) {
             return;
         }
@@ -1571,8 +1583,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger, rollup, trend, queue and backfill-cursor rows for one
-     * course.
+     * Delete all ledger, slot, rollup, trend, queue and backfill-cursor rows
+     * for one course.
      *
      * @param int $courseid
      * @return void
@@ -1580,6 +1592,7 @@ class submission_ledger {
     public static function delete_for_course(int $courseid): void {
         global $DB;
 
+        slot_ledger::delete_for_course($courseid);
         $DB->delete_records('block_feedback_tracker_sub', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_group', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_trend', ['courseid' => $courseid]);

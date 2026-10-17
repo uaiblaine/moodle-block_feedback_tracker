@@ -106,6 +106,15 @@ $observers = [
         'eventname' => '\mod_assign\event\marker_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::marker_changed',
     ],
+    /* A marker's own mark or workflow state (Moodle 5.3, update_mark()). The
+     * per-marker slot table records each marker's first "Marking completed".
+     * marker_enabled_updated is not observed: ticking an optional slot with no
+     * marker changes no slot row, and naming or unticking its marker fires
+     * marker_added / marker_removed. */
+    [
+        'eventname' => '\mod_assign\event\submission_marked',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_marked',
+    ],
     /* Blind marking suppresses submission_graded until identities are revealed.
      * See observer::identities_revealed(). */
     [

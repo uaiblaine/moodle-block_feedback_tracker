@@ -260,5 +260,33 @@
         <INDEX NAME="idx_active" UNIQUE="false" FIELDS="active"/>
       </INDEXES>
     </TABLE>
+    <TABLE NAME="block_feedback_tracker_alloc" COMMENT="Per-marker attribution on multi-marking activities (Moodle 5.3): one row per ledger cycle and marker slot, so each marker's own turnaround (allocation to their own Marking completed) is measured. History, not the truth about who holds a slot now: that is read from core. Written only by local\sla\slot_ledger.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="true"/>
+        <FIELD NAME="subid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" COMMENT="The ledger cycle this slot belongs to, block_feedback_tracker_sub.id; every path that deletes a ledger row deletes its slot rows." SEQUENCE="false"/>
+        <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="false"/>
+        <FIELD NAME="cmid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" SEQUENCE="false"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" COMMENT="The student." SEQUENCE="false"/>
+        <FIELD NAME="marker" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" COMMENT="The marker holding the slot." SEQUENCE="false"/>
+        <FIELD NAME="position" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" COMMENT="Slot position as core numbers it (assign::get_marker_allocations()), when last seen active." SEQUENCE="false"/>
+        <FIELD NAME="optional" TYPE="int" LENGTH="1" NOTNULL="true" UNSIGNED="true" DEFAULT="0" COMMENT="1 when the slot is an optional one, when last seen active." SEQUENCE="false"/>
+        <FIELD NAME="timeallocated" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="When the marker became responsible for this cycle; null when unknown. A re-allocation after a removal restarts it." SEQUENCE="false"/>
+        <FIELD NAME="allocsource" TYPE="char" LENGTH="12" NOTNULL="true" COMMENT="How timeallocated was obtained: observed (an allocation event), carried (allocated before the cycle's hand-in, so the hand-in instant, exact by construction) or reconciled (discovered by a sweep, so later than the real allocation)." SEQUENCE="false"/>
+        <FIELD NAME="timemarked" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="The marker's first Marking completed on this cycle; never cleared by a later edit." SEQUENCE="false"/>
+        <FIELD NAME="markhours" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="false" COMMENT="Effective hours from the marker becoming responsible to timemarked; null when that interval is unknown or not positive." SEQUENCE="false"/>
+        <FIELD NAME="markdays" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="Business days over the same interval as markhours, counted by day_counter, never derived from the hours." SEQUENCE="false"/>
+        <FIELD NAME="timeremoved" TYPE="int" LENGTH="10" NOTNULL="false" UNSIGNED="true" COMMENT="When the marker stopped holding the slot; null while they hold it." SEQUENCE="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" UNSIGNED="true" DEFAULT="0" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="uq_sub_marker" UNIQUE="true" FIELDS="subid, marker"/>
+        <INDEX NAME="idx_marker" UNIQUE="false" FIELDS="marker" COMMENT="The privacy provider finds a marker's rows by it."/>
+        <INDEX NAME="idx_course_cm" UNIQUE="false" FIELDS="courseid, cmid"/>
+      </INDEXES>
+    </TABLE>
   </TABLES>
 </XMLDB>

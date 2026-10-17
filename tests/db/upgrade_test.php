@@ -43,8 +43,34 @@ final class upgrade_test extends \advanced_testcase {
     public function test_a_site_that_reached_1_1_0_upgrades(): void {
         $this->load_upgrade_lib();
         $this->resetAfterTest();
+        // The installed version as such a site has it, or every savepoint reads as a downgrade.
+        set_config('version', 2026041999, 'block_feedback_tracker');
 
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026041999));
+    }
+
+    /**
+     * The 2026100505 step creates the per-marker slot table on a site that
+     * lacks it, and records its savepoint.
+     *
+     * @return void
+     */
+    public function test_the_slot_table_step_creates_the_table(): void {
+        global $DB;
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $dbman = $DB->get_manager();
+        $table = new \xmldb_table('block_feedback_tracker_alloc');
+        $dbman->drop_table($table);
+        $this->assertFalse($dbman->table_exists($table), 'Control: the table is gone.');
+        set_config('version', 2026100504, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100504));
+
+        $this->assertTrue($dbman->table_exists($table));
+        $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
+        $this->assertSame('2026100505', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

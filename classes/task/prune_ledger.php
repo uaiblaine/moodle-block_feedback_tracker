@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\retention;
+use block_feedback_tracker\local\sla\slot_ledger;
 
 /**
  * Bounds the ledger's growth by dropping closed measurements older than the
@@ -141,6 +142,7 @@ class prune_ledger extends \core\task\scheduled_task {
         if (empty($ids)) {
             return 0;
         }
+        slot_ledger::delete_for_subids($ids);
         [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
         $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
         return count($ids);
@@ -174,6 +176,7 @@ class prune_ledger extends \core\task\scheduled_task {
         if (empty($ids)) {
             return 0;
         }
+        slot_ledger::delete_for_subids($ids);
         [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'p');
         $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
         return count($ids);

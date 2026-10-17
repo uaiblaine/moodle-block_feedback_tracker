@@ -1247,7 +1247,7 @@ final class reconcile_ledger_test extends \advanced_testcase {
             $details['order'][0],
             'The registry lists latest straight after gradebook, so that is where this tick starts.'
         );
-        $this->assertCount(9, $details['order'], 'Rotation reorders the registry; it never shrinks it.');
+        $this->assertCount(10, $details['order'], 'Rotation reorders the registry; it never shrinks it.');
         $this->assertSame(
             'gradebook',
             get_config('block_feedback_tracker', 'reconcile_last_sweep'),
@@ -1289,7 +1289,7 @@ final class reconcile_ledger_test extends \advanced_testcase {
             true
         );
         $this->assertTrue($details['timecapped'], 'Control: the cap is what stopped this tick.');
-        $this->assertCount(9, $details['skipped'], 'Every sweep was skipped, and every one is named.');
+        $this->assertCount(10, $details['skipped'], 'Every sweep was skipped, and every one is named.');
         $this->assertSame('participant', $details['skipped'][0], 'Skipped is sliced from the rotated order.');
     }
 
