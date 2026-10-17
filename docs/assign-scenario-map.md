@@ -1,5 +1,7 @@
 # mod_assign → block_feedback_tracker: Scenario Matrix and Remediation Design (rev. 2)
 
+**Branch note.** This checkout is the Moodle 5.2 branch (`$plugin->supported = [502, 502]`); the matrix below was written when the plugin declared `[405, 502]`. Moodle 4.5 and 5.1 have their own branches.
+
 **Scope:** `/Users/uaiblaine/dev/moodle-block_feedback_tracker` audited against `mod_assign` in Moodle 4.5 (`/Users/uaiblaine/dev/moodle-405/mod/assign`), 5.1 (`/Users/uaiblaine/dev/moodle-501/public/mod/assign`) and 5.3-dev (`/Users/uaiblaine/dev/moodle/public/mod/assign`). Nothing was edited. Core line numbers are the **4.5** checkout unless stated.
 
 **Revision note.** Three adversarial reviews were applied. The single decisive correction: rev. 1's replacement predicate **deleted** the `grade.timemodified >= submission.timemodified` comparison, which caused a freshly-opened resubmission cycle to be born *graded* with a fabricated 0-hour turnaround — strictly worse than the bug it replaced. The comparison is not the defect; applying it to a **single mutable row** is. Rev. 2 scopes it **per cycle**, where the reference (`timesubmitted`) is immutable once a cycle closes. Every other accepted correction is folded in; disagreements are recorded in **Disputed** notes and were re-verified against the checkouts before being rejected.

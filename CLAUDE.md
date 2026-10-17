@@ -792,7 +792,7 @@ Drafts are surfaced read-only and de-emphasised (report + drilldown only) via
   its own: the privacy provider finds, exports and, on an erasure request,
   clears it while the student's row stays. `submission_ledger::delete_for_user()`
   (account deletion) keeps it, as core keeps
-  `assign_user_flags.allocatedmarker`.
+  the allocation row in {assign_allocated_marker}.
 
 ## Files `moodle-plugin-ci validate` parses
 
