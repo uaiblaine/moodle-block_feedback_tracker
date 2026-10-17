@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\event;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Tests for the tool_page_viewed access event.
- *
- * @covers \block_feedback_tracker\event\tool_page_viewed
  */
+#[CoversClass(tool_page_viewed::class)]
 final class tool_page_viewed_test extends \advanced_testcase {
     /**
      * An admin tool-page view triggers exactly one read event at the

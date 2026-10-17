@@ -29,15 +29,15 @@ namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\sla\group_access;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for get_pause_timeline.
  *
  * Submission ids are sequential, so anything this function fails to gate is
  * enumerable by a caller who holds viewresponsiveness.
- *
- * @covers \block_feedback_tracker\external\get_pause_timeline
  */
+#[CoversClass(get_pause_timeline::class)]
 final class get_pause_timeline_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

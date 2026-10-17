@@ -28,15 +28,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\form;
 
 use block_feedback_tracker\local\calendar\calendar;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Two independent checks live here: the date is real, and the optional
  * sub-day window is coherent. The date check has two distinct failure modes —
  * out of range, and well-formed but non-existent — which need separate cases
  * because only one of them goes through checkdate().
- *
- * @covers \block_feedback_tracker\form\calendar_day_form
  */
+#[CoversClass(calendar_day_form::class)]
 final class calendar_day_form_test extends \advanced_testcase {
     /**
      * Validate a day definition.

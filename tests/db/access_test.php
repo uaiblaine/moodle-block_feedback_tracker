@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\db;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
+
 /**
  * Pins the capability declarations in db/access.php.
  *
@@ -35,9 +37,8 @@ namespace block_feedback_tracker\db;
  * guards the irreversible wipe of every ledger, rollup, trend and queue row, so
  * its declaration is asserted here: the likely regression is a widened
  * archetype list or a dropped risk flag, not a deleted require_capability().
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class access_test extends \advanced_testcase {
     /**
      * Load db/access.php.

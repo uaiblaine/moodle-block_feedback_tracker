@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The batch runs unattended over courses an administrator picked minutes or
  * hours earlier, so it has to cope with the world having moved: a course
  * deleted in between, one whose block was already taken off, one that simply
  * fails. None of those may abort the sweep.
- *
- * @covers \block_feedback_tracker\task\bulk_remove_blocks
  */
+#[CoversClass(bulk_remove_blocks::class)]
 final class bulk_remove_blocks_test extends \advanced_testcase {
     /**
      * Swallow the task's mtrace() output, which Moodle's PHPUnit configuration

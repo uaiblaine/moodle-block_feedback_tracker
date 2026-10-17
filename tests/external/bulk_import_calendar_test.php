@@ -26,14 +26,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\external;
 
+use block_feedback_tracker\local\calendar\csv_importer;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for the bulk_import_calendar external function and CSV importer.
- *
- * @covers \block_feedback_tracker\external\bulk_import_calendar
- * @covers \block_feedback_tracker\local\calendar\csv_importer
  */
+#[CoversClass(bulk_import_calendar::class)]
+#[CoversClass(csv_importer::class)]
 final class bulk_import_calendar_test extends \advanced_testcase {
     /**
      * A pasted CSV with mixed valid and malformed rows: valid rows save,

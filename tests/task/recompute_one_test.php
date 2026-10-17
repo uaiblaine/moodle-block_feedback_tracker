@@ -29,14 +29,14 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\rollup_service;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The task retires a queue row after recomputing, so the interesting cases are
  * the ones where it must not: a lock-skipped recompute did no work, and a
  * re-enqueue arriving mid-recompute is fresh dirt that has to survive.
- *
- * @covers \block_feedback_tracker\task\recompute_one
  */
+#[CoversClass(recompute_one::class)]
 final class recompute_one_test extends \advanced_testcase {
     /**
      * Run the task for one tuple directly, without queueing it.

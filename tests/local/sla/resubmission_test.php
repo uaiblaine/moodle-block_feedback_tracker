@@ -29,17 +29,17 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\external\get_grader_priority_list;
 use block_feedback_tracker\external\get_pending_submissions;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Work handed in again after a mark (core's "Graded - resubmitted") is flagged
  * with the earlier mark's time, from the previous cycle when the ledger
  * recorded one and from the live grade when it did not; nothing else is.
- *
- * @covers \block_feedback_tracker\local\sla\resubmission
- * @covers \block_feedback_tracker\local\sla\submission_browser
- * @covers \block_feedback_tracker\external\get_pending_submissions
- * @covers \block_feedback_tracker\external\get_grader_priority_list
  */
+#[CoversClass(resubmission::class)]
+#[CoversClass(submission_browser::class)]
+#[CoversClass(get_pending_submissions::class)]
+#[CoversClass(get_grader_priority_list::class)]
 final class resubmission_test extends \advanced_testcase {
     /**
      * Flush the static memos resetAfterTest() leaves behind.

@@ -27,13 +27,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for retrieving academic calendar data via external functions.
- *
- * @covers \block_feedback_tracker\external\get_calendar
- * @covers \block_feedback_tracker\external\save_calendar_day
  */
+#[CoversClass(get_calendar::class)]
+#[CoversClass(save_calendar_day::class)]
 final class get_calendar_test extends \advanced_testcase {
     /**
      * Reading the calendar returns the seeded day rows and the business

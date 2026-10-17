@@ -31,15 +31,15 @@ use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\group_resolver;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The reconciler is the only repair path for the mod_assign mutations that
  * emit no usable event. These tests pin one representative of each class, plus
  * the convergence property: a second sweep over an already-correct ledger must
  * find nothing, or the task would re-dispatch the same repair for ever.
- *
- * @covers \block_feedback_tracker\task\reconcile_ledger
  */
+#[CoversClass(reconcile_ledger::class)]
 final class reconcile_ledger_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest(), and buffer the

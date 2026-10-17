@@ -28,6 +28,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\output;
 
 use block_feedback_tracker\local\score\responsiveness_calculator;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Pins the reads in bootstrap::config_bundle() and what the i18n bundle carries.
@@ -36,9 +37,8 @@ use block_feedback_tracker\local\score\responsiveness_calculator;
  * checkbox is switched off, which is falsy in PHP, so a `?: 1` read would make
  * the toggle impossible to turn off. Only an explicit '0' means off; an unset
  * value means on.
- *
- * @covers \block_feedback_tracker\local\output\bootstrap
  */
+#[CoversClass(bootstrap::class)]
 final class bootstrap_test extends \advanced_testcase {
     /**
      * Drop a mocked string manager, which would otherwise outlive the test

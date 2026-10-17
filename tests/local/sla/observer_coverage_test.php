@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers the observers for subplugin submission edits (whose event carries the
  * subplugin row id, not the submission id), marking-workflow release, marker
  * allocation and the blind-marking identity reveal.
- *
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
 final class observer_coverage_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().

@@ -27,8 +27,11 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\grading;
 
+use block_feedback_tracker\external\get_grader_priority_list;
 use block_feedback_tracker\local\output\bootstrap;
+use block_feedback_tracker\local\sla\submission_browser;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 defined('MOODLE_INTERNAL') || die();
 
@@ -38,12 +41,11 @@ require_once($CFG->dirroot . '/mod/assign/locallib.php');
 /**
  * Pins when a grade link passes through pages/open_grader.php, and that the
  * page clears a teacher's grader state only when it hides the linked student.
- *
- * @covers \block_feedback_tracker\local\grading\grader_filters
- * @covers \block_feedback_tracker\local\output\bootstrap
- * @covers \block_feedback_tracker\local\sla\submission_browser
- * @covers \block_feedback_tracker\external\get_grader_priority_list
  */
+#[CoversClass(grader_filters::class)]
+#[CoversClass(bootstrap::class)]
+#[CoversClass(submission_browser::class)]
+#[CoversClass(get_grader_priority_list::class)]
 final class grader_filters_test extends \advanced_testcase {
     /**
      * resetAfterTest() does not restore superglobals: drop the parameters the tests plant.

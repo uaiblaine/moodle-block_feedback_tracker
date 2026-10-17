@@ -27,13 +27,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Direct calls to upsert / re-resolve / re-attribute / delete-cm /
  * delete-course paths.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(submission_ledger::class)]
 final class submission_ledger_test extends \advanced_testcase {
     /**
      * Reset the static memos the ledger upsert path consults.

@@ -29,6 +29,7 @@ namespace block_feedback_tracker\external;
 use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\rollup_service;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A service declared 'readonlysession' runs without the session lock, so nothing it writes to
@@ -50,19 +51,19 @@ use core_external\external_api;
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- * @covers \block_feedback_tracker\external\get_responsiveness
- * @covers \block_feedback_tracker\external\get_pending_submissions
- * @covers \block_feedback_tracker\external\get_graded_submissions
- * @covers \block_feedback_tracker\external\get_report_scopes
- * @covers \block_feedback_tracker\external\get_academic_days
- * @covers \block_feedback_tracker\external\get_pause_timeline
- * @covers \block_feedback_tracker\external\get_calendar
- * @covers \block_feedback_tracker\external\get_dashboard
- * @covers \block_feedback_tracker\external\get_school_comparison
- * @covers \block_feedback_tracker\external\get_grader_priority_list
- * @covers \block_feedback_tracker\external\get_insights
- * @covers \block_feedback_tracker\external\get_audit_log
  */
+#[CoversClass(get_responsiveness::class)]
+#[CoversClass(get_pending_submissions::class)]
+#[CoversClass(get_graded_submissions::class)]
+#[CoversClass(get_report_scopes::class)]
+#[CoversClass(get_academic_days::class)]
+#[CoversClass(get_pause_timeline::class)]
+#[CoversClass(get_calendar::class)]
+#[CoversClass(get_dashboard::class)]
+#[CoversClass(get_school_comparison::class)]
+#[CoversClass(get_grader_priority_list::class)]
+#[CoversClass(get_insights::class)]
+#[CoversClass(get_audit_log::class)]
 final class readonly_session_test extends \advanced_testcase {
     /** @var string The one $SESSION key core forbids on a read-only site, and the only one not compared. */
     private const SESSION_STORE_KEY = 'cachestore_session';

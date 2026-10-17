@@ -26,13 +26,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The candidate list decides what an administrator is offered for mass
  * removal, so a wrong row here is a course cleared by mistake and a missing
  * row is an archive that never gets tidied.
- *
- * @covers \block_feedback_tracker\local\sla\course_finder
  */
+#[CoversClass(course_finder::class)]
 final class course_finder_test extends \advanced_testcase {
     /**
      * Flush the block-presence memo between tests.

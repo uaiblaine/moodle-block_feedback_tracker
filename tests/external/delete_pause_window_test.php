@@ -28,15 +28,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for delete_pause_window.
  *
  * The capability gate is evaluated at the stored row's context, never at
  * anything the caller supplies; these tests pin that.
- *
- * @covers \block_feedback_tracker\external\delete_pause_window
  */
+#[CoversClass(delete_pause_window::class)]
 final class delete_pause_window_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

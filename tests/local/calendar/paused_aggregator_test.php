@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Verifies the weekend / holiday / recess bucket counts of the paused-periods
  * summary on the teacher dashboard and the academic-days strip.
- *
- * @covers \block_feedback_tracker\local\calendar\paused_aggregator
  */
+#[CoversClass(paused_aggregator::class)]
 final class paused_aggregator_test extends \advanced_testcase {
     public function test_window_with_no_overrides_counts_weekends_only(): void {
         $this->resetAfterTest();

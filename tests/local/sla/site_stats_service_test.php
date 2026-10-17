@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Tests that the site aggregate counts only genuinely "submitted" graded work.
- *
- * @covers \block_feedback_tracker\local\sla\site_stats_service
  */
+#[CoversClass(site_stats_service::class)]
 final class site_stats_service_test extends \advanced_testcase {
     /**
      * A graded draft on the same day is excluded from the site aggregate.

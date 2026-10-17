@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\score;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Boundary checks for each term, band thresholds, and weights normalisation.
- *
- * @covers \block_feedback_tracker\local\score\responsiveness_calculator
  */
+#[CoversClass(responsiveness_calculator::class)]
 final class responsiveness_calculator_test extends \advanced_testcase {
     /**
      * A group with no submitted work at all (nothing graded, nothing

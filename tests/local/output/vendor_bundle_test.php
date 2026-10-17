@@ -26,15 +26,16 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\output;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * A page that loads a bundle file which is not there renders nothing and
  * reports nothing server-side: the 404 leaves window.bftPreact unset and
  * amd/src/lib/preact.js throws in the browser. These tests keep the file name
  * in one class, keep that file on disk, and keep thirdpartylibs.xml and
  * js/vendor/README.md describing the same file.
- *
- * @covers \block_feedback_tracker\local\output\vendor_bundle
  */
+#[CoversClass(vendor_bundle::class)]
 final class vendor_bundle_test extends \basic_testcase {
     /** Matches a spelled-out bundle file name (a version digit after the prefix). */
     private const SPELLED = '/bft-vendor-\d/';

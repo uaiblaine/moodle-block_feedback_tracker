@@ -29,14 +29,14 @@ namespace block_feedback_tracker\external;
 use block_feedback_tracker\local\sla\group_access;
 use block_feedback_tracker\local\sla\rollup_service;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The report-scopes endpoint feeds the pending report's hero + class filter
  * straight from the materialised rollup — no per-group trend/peer/activity
  * assembly. It must honour the same group visibility as the full payload.
- *
- * @covers \block_feedback_tracker\external\get_report_scopes
  */
+#[CoversClass(get_report_scopes::class)]
 final class get_report_scopes_test extends \advanced_testcase {
     /**
      * Plugin + calendar config, mirroring get_responsiveness_test.

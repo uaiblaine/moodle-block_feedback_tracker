@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Interval math unit tests.
- *
- * @covers \block_feedback_tracker\local\calendar\interval_math
  */
+#[CoversClass(interval_math::class)]
 final class interval_math_test extends \advanced_testcase {
     public function test_union_empty(): void {
         $this->assertSame([], interval_math::union([]));

@@ -32,16 +32,16 @@ use block_feedback_tracker\local\sla\group_resolver;
 use block_feedback_tracker\local\sla\retention;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The ledger has no natural ceiling, so retention is what bounds it. These
  * tests pin the two rules that make deleting data unattended defensible — only
  * closed measurements are touched, and the reconciler agrees on the boundary
  * so it cannot resurrect what was just deleted.
- *
- * @covers \block_feedback_tracker\task\prune_ledger
- * @covers \block_feedback_tracker\local\sla\retention
  */
+#[CoversClass(prune_ledger::class)]
+#[CoversClass(retention::class)]
 final class prune_ledger_test extends \advanced_testcase {
     /**
      * Flush per-request statics and swallow the task's mtrace() output, which

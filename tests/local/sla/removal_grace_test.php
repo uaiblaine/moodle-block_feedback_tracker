@@ -26,13 +26,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The "follow the recycle bin" toggle is a default-ON checkbox. Until an admin
  * saves the new settings after an upgrade its key is unset, and that must read
  * as the declared default, not as off.
- *
- * @covers \block_feedback_tracker\local\sla\removal_grace
  */
+#[CoversClass(removal_grace::class)]
 final class removal_grace_test extends \advanced_testcase {
     /**
      * A plugin grace of one day and a single enabled recycle bin that keeps

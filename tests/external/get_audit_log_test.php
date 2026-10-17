@@ -29,6 +29,7 @@ namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for get_audit_log.
@@ -36,9 +37,8 @@ use core_external\external_api;
  * The course filter matches a fragment of the JSON `details` column in SQL;
  * the contract pinned here is that `total` and the returned page describe the
  * same set, so paging to `total` yields every match exactly once.
- *
- * @covers \block_feedback_tracker\external\get_audit_log
  */
+#[CoversClass(get_audit_log::class)]
 final class get_audit_log_test extends \advanced_testcase {
     /**
      * Record one audit row for a course at a fixed time.

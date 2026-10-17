@@ -27,14 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers submission-status filtering: the default listing returns only
  * genuinely "submitted" work, the draft listing returns only drafts, and
  * new / reopened attempts never surface in either.
- *
- * @covers \block_feedback_tracker\external\get_pending_submissions
  */
+#[CoversClass(get_pending_submissions::class)]
 final class get_pending_submissions_test extends \advanced_testcase {
     /**
      * The default (submitted) listing excludes draft / new / reopened rows and

@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Pins the measurement model: a response is what reached the student, from
  * either surface (the activity or the gradebook), dated when it landed, and
  * never withdrawn.
- *
- * @covers \block_feedback_tracker\local\sla\gradebook_response
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(gradebook_response::class)]
+#[CoversClass(submission_ledger::class)]
 final class gradebook_response_test extends \advanced_testcase {
     /**
      * Flush per-request memos that survive resetAfterTest().

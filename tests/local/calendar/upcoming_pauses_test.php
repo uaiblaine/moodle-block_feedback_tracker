@@ -26,13 +26,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Verifies the visibility window (3 days before → day after), sub-day vs
  * full-day handling, span collapsing, manual-pause scoping, the result cap,
  * and the for_display() decoration.
- *
- * @covers \block_feedback_tracker\local\calendar\upcoming_pauses
  */
+#[CoversClass(upcoming_pauses::class)]
 final class upcoming_pauses_test extends \advanced_testcase {
     /**
      * A sub-day optional event exactly 3 days out is visible (lead boundary).

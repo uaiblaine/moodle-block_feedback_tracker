@@ -16,6 +16,8 @@
 
 namespace block_feedback_tracker;
 
+use PHPUnit\Framework\Attributes\CoversFunction;
+
 /**
  * Tests for Feedback Flow
  *
@@ -24,11 +26,10 @@ namespace block_feedback_tracker;
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+#[CoversFunction('block_feedback_tracker_reset_data')]
 final class lib_test extends \advanced_testcase {
     /**
      * Plugin installs and exposes its version in config.
-     *
-     * @coversNothing
      */
     public function test_plugin_installed(): void {
         $this->assertNotEmpty(get_config('block_feedback_tracker', 'version'));
@@ -37,8 +38,6 @@ final class lib_test extends \advanced_testcase {
     /**
      * The reset empties the ledger and keeps the recompute audit log, adding
      * its own entry, and reports as removed only what it removed.
-     *
-     * @covers ::block_feedback_tracker_reset_data
      */
     public function test_reset_keeps_the_audit_log_and_reports_only_what_it_removed(): void {
         global $CFG, $DB;

@@ -31,6 +31,7 @@ use block_feedback_tracker\local\calendar\business_hours_lookup;
 use block_feedback_tracker\local\calendar\day_rule_resolver;
 use block_feedback_tracker\local\calendar\pause_lookup;
 use block_feedback_tracker\local\score\peer_stats;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A memo left out of {@see process_memos::reset()} leaks one cron task's
@@ -38,9 +39,8 @@ use block_feedback_tracker\local\score\peer_stats;
  * notice. The first test fills every memo and checks the reset empties it; the
  * second fails when a static property or a memo-reset method appears in
  * classes/ without being listed in the first.
- *
- * @covers \block_feedback_tracker\local\sla\process_memos
  */
+#[CoversClass(process_memos::class)]
 final class process_memos_test extends \basic_testcase {
     /**
      * Every static memo in classes/, by class, as property names. The three

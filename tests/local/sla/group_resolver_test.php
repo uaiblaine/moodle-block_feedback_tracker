@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Decides which group a submission is attributed to, which in turn decides
  * which rollup row it lands in. A user in several groups gets the most
  * recently joined one — a deterministic tie-break, not an arbitrary pick.
- *
- * @covers \block_feedback_tracker\local\sla\group_resolver
  */
+#[CoversClass(group_resolver::class)]
 final class group_resolver_test extends \advanced_testcase {
     /**
      * Add a user to a group with an explicit join time, so ordering is

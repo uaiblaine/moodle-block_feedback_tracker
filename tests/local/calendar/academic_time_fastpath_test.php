@@ -26,6 +26,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Holds elapsed_effective_hours() (fast path) and elapsed_with_audit()
  * (day-by-day walker) to the same value on the same inputs.
@@ -36,9 +38,8 @@ namespace block_feedback_tracker\local\calendar;
  * exact without re-deriving expected values. A few absolute pins guard the
  * one blind spot of a differential test — both paths being wrong the same
  * way on plain ranges.
- *
- * @covers \block_feedback_tracker\local\calendar\academic_time
  */
+#[CoversClass(academic_time::class)]
 final class academic_time_fastpath_test extends \advanced_testcase {
     /**
      * Eight whole plain weeks pin an absolute value through the fast path.

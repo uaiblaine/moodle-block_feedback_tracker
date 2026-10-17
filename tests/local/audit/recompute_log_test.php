@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\audit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Pins what record() stores and the boundary of the retention cutoff in
  * prune_older_than(), where an off-by-one would delete one row too many or
  * too few without any other test noticing.
- *
- * @covers \block_feedback_tracker\local\audit\recompute_log
  */
+#[CoversClass(recompute_log::class)]
 final class recompute_log_test extends \advanced_testcase {
     /**
      * A row is written with the fields the caller supplied, and details are

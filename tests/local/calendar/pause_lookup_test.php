@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Scoping rules: site applies everywhere, course matches courseid, group
  * matches groupid AND must belong to courseid.
- *
- * @covers \block_feedback_tracker\local\calendar\pause_lookup
  */
+#[CoversClass(pause_lookup::class)]
 final class pause_lookup_test extends \advanced_testcase {
     public function test_site_pause_applies_to_any_course(): void {
         $this->resetAfterTest();
