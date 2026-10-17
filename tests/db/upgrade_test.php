@@ -51,7 +51,7 @@ final class upgrade_test extends \advanced_testcase {
 
     /**
      * The 2026042005 step adds the attribution label to the ledger on a site
-     * that lacks it, and records its savepoint.
+     * that lacks it; the steps after it run too, so the last savepoint is recorded.
      *
      * @return void
      */
@@ -70,7 +70,35 @@ final class upgrade_test extends \advanced_testcase {
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042004));
 
         $this->assertTrue($dbman->field_exists($table, $field));
-        $this->assertSame('2026042005', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
+    }
+
+    /**
+     * The 2026042006 step creates the per-marker slot table on a site that
+     * lacks it, with its unique index, and records its savepoint; on a site
+     * that has it (as the 5.3 branch's own step finds it) it changes nothing.
+     *
+     * @return void
+     */
+    public function test_the_slot_table_step_creates_the_table(): void {
+        global $DB;
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $dbman = $DB->get_manager();
+        $table = new \xmldb_table('block_feedback_tracker_alloc');
+        $dbman->drop_table($table);
+        $this->assertFalse($dbman->table_exists($table), 'Control: the table is gone.');
+        set_config('version', 2026042005, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042005));
+
+        $this->assertTrue($dbman->table_exists($table));
+        $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
+        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
+
+        set_config('version', 2026042005, 'block_feedback_tracker');
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042005), 'An existing table is left as it is.');
     }
 
     /**

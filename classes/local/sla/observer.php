@@ -479,6 +479,12 @@ class observer {
      * payload's marker id and the order of several events for one student do
      * not matter.
      *
+     * On a multi-marking activity the per-marker slot rows follow too
+     * ({@see slot_ledger::sync_for_user()}), each marker's clock starting at
+     * the event's instant. Only additions are recorded here: the event fires
+     * between one marker's insert and the next, so the reconcile sweep closes
+     * the slots of removed markers.
+     *
      * @param \core\event\base $event
      * @return void
      */
@@ -495,11 +501,9 @@ class observer {
             return;
         }
 
-        submission_ledger::stamp_allocation_for_user(
-            $cmid,
-            $userid,
-            (int) ($event->timecreated ?: time())
-        );
+        $when = (int) ($event->timecreated ?: time());
+        submission_ledger::stamp_allocation_for_user($cmid, $userid, $when);
+        slot_ledger::sync_for_user($cmid, $userid, $when, slot_ledger::SOURCE_OBSERVED, false);
     }
 
     /**

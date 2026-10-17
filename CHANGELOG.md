@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Added
+- **Per-marker figures on multi-marking activities** (version `2026042006`, new
+  table `block_feedback_tracker_alloc`). One row per ledger cycle and marker
+  records when the marker became responsible and when they first set
+  "Marking completed", with their own turnaround in effective hours and
+  business days. Moodle 5.2 reports allocations (`marker_updated`) but neither
+  removals nor a marker's completion, so the new `slots` reconcile sweep closes
+  a removed marker's slot when it finds it and stamps a completion from the
+  last change to the marker's mark: every completion instant on 5.2 is an
+  upper bound, accurate to the sweep period. A marker already allocated when
+  a cycle opens is carried onto it at its hand-in. The drill-down shows a
+  Markers section (open slots, completed marks, median own turnaround,
+  coverage), per activity, to a viewer who may manage marker allocations there
+  and can see the activity, over the groups they can see. The table is the
+  5.3 branch's, so a site moving there keeps it. Privacy: the student and the
+  marker are both data subjects; a marker's erasure deletes their rows and
+  keeps the student's, and only the marker's own export carries their
+  turnaround. Every path that deletes ledger rows deletes their slot rows.
+- **Grade Now lists an allocated submission only for its markers** (version
+  `2026042006`). On an activity with marker allocation, a submission with
+  allocated markers appears on an allocated marker's list until that marker's
+  own mark is "Marking completed" with a mark and while no agreed grade exists,
+  and on nobody else's; an unallocated submission stays on every teacher's
+  list, as the coordinator's queue. The rule is part of the query, so the
+  limit counts only the viewer's own rows. The pending report, the drill-down
+  and every course-level figure are unchanged.
 - **Multi-marker progress in the pending report and the drill-down** (version
   `2026042005`). On an activity that uses multiple marking, a pending row shows
   a secondary line under its status: "1 of 2 markers", "Awaiting marker
@@ -38,7 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   responsible marker whose start nobody recorded (a winner who is not in
   position 1; Moodle 5.2 keeps no allocation instant) gets no turnaround
   figure rather than one borrowed from another marker. Single-marker
-  activities are unchanged.
+  activities are unchanged. From `2026042006` a marker's start is read from
+  their own row in the per-marker slot table when it has one, so a winner in
+  position 2 is measured from their own allocation.
 - **Bulk removal shows its queue and works in batches** (version `2026042003`).
   `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
   run, so the courses used to stay on the list and could be queued again.

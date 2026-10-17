@@ -190,23 +190,41 @@ re-dirty the rollup.
 
 In dependency order:
 
-1. **N-marker support: partly done.** The responsible marker follows the grade
+1. **N-marker support: done.** The responsible marker follows the grade
    method (`2026042005`, audit item B5): position 1 while the cycle is pending,
    then the confirmer, the marker of the highest mark or position 1, stored in
-   `allocattrib` (`submission_ledger::resolve_responsible()`). Per-marker figures
-   are still missing: `allocmarkerid` holds one id, and a responsible marker
-   whose allocation instant nobody recorded has no turnaround. The per-slot
-   table (audit item B6) is what supplies those instants
-   (`submission_ledger::marker_start()` is where they plug in).
+   `allocattrib` (`submission_ledger::resolve_responsible()`). The per-slot
+   table `block_feedback_tracker_alloc` (`2026042006`, audit item B6) holds one
+   row per cycle and marker, written by `local\sla\slot_ledger`:
+   - allocations from `marker_updated` (`observed`), carried onto a new cycle
+     written within 600 s of its hand-in (`carried`), otherwise found by the
+     `slots` reconcile sweep (`reconciled`);
+   - removals, which 5.2 never reports, closed by the sweep at discovery; the
+     observer only adds, because `update_allocated_markers()` fires between one
+     marker's insert and the next;
+   - completions, which 5.2 never reports either, stamped by the sweep from
+     the marker's complete `{assign_mark}` row (readyforreview, mark of 0 or
+     more) at its `timemodified`, so every 5.2 completion instant is an upper
+     bound; a mark last edited before the cycle's hand-in waits for the next
+     edit.
+
+   `submission_ledger::marker_start()` reads a marker's slot allocation first,
+   so a maximum winner in position 2 is measured. The drill-down's Markers
+   section (`local\sla\marker_figures`) shows each marker's open slots,
+   completed marks, median own turnaround and coverage, per activity where the
+   viewer may manage allocations. Grade Now lists an allocated submission only
+   for its allocated markers until their own mark is complete and no agreed
+   grade exists (`marking_progress::pending_for_viewer_sql()`, audit item B4);
+   an unallocated one stays on every teacher's list.
 2. **`$plugin->supported` max to `503`** when 5.3 work starts, with
    `.github/workflows/ci.yml` job list and the README compatibility table in
    the same commit (fleet rule).
-3. **`assign_mark.timecreated` as an allocation lower bound**, raising
-   coverage where `marker_updated` was missed. Absorbed by the per-slot table of audit
-   phase P3.
-4. **A reconciliation sweep over `assign_mark`** for the `manual` / `first`
-   methods, where partial marking leaves no event trail at all. Audit phase P3's
-   reconcile sweep covers it.
+3. **`assign_mark.timecreated` as an allocation lower bound: absorbed** by the
+   per-slot table (item 1): an allocation the observer missed is found by the
+   `slots` sweep at discovery instead, labelled `reconciled`.
+4. **A reconciliation sweep over `assign_mark`: absorbed** by the `slots`
+   sweep (item 1), which reads every marker's own mark row whatever the
+   method, so partial marking under `manual` leaves a per-marker trail.
 5. **Assert, do not fix, partial marking: done** (audit item B8).
    `tests/local/sla/agreed_grade_test.php` drives core 5.2: fewer marks than
    `markercount` stay pending, every mark in under `manual` stays pending, every

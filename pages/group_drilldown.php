@@ -25,6 +25,8 @@
 require(__DIR__ . '/../../../config.php');
 
 use block_feedback_tracker\local\output\drilldown_cells;
+use block_feedback_tracker\local\output\numfmt;
+use block_feedback_tracker\local\sla\marker_figures;
 
 $courseid = required_param('courseid', PARAM_INT);
 $groupid = optional_param('groupid', 0, PARAM_INT);
@@ -114,6 +116,25 @@ foreach ($draftresult['submissions'] as $s) {
     ];
 }
 
+// Per-marker figures (multi-marking activities only), shown to a viewer who
+// manages marker allocations; marker_figures checks the capability itself.
+$markers = marker_figures::for_page(
+    $courseid,
+    $groupid,
+    (int) $USER->id,
+    $usedays
+) ?? [];
+$markerrows = [];
+foreach ($markers as $m) {
+    $markerrows[] = [
+        'name'      => $m['name'],
+        'open'      => numfmt::count($m['open']),
+        'completed' => numfmt::count($m['completed']),
+        'median'    => $m['mediantext'],
+        'coverage'  => $m['coveragetext'],
+    ];
+}
+
 $PAGE->requires->js_call_amd('block_feedback_tracker/pending_table', 'init');
 
 // Log this page view to the standard site log, once per navigation. The web
@@ -154,5 +175,16 @@ echo $OUTPUT->render_from_template('block_feedback_tracker/drilldown', [
         'status'    => get_string('drilldown_col_status', 'block_feedback_tracker'),
     ],
     'draftrows' => $draftrows,
+    'hasmarkers'    => !empty($markerrows),
+    'markerheading' => get_string('drilldown_markers_heading', 'block_feedback_tracker'),
+    'markernote'    => get_string('drilldown_markers_note', 'block_feedback_tracker'),
+    'markercols' => [
+        'marker'    => get_string('drilldown_markers_col_marker', 'block_feedback_tracker'),
+        'open'      => get_string('drilldown_markers_col_open', 'block_feedback_tracker'),
+        'completed' => get_string('drilldown_markers_col_completed', 'block_feedback_tracker'),
+        'median'    => get_string('drilldown_markers_col_median', 'block_feedback_tracker'),
+        'coverage'  => get_string('drilldown_markers_col_coverage', 'block_feedback_tracker'),
+    ],
+    'markerrows' => $markerrows,
 ]);
 echo $OUTPUT->footer();

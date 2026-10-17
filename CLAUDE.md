@@ -577,7 +577,8 @@ writes ledger / rollup data. Don't reimplement the check.
 The gate is applied at every **write-path entry**:
 - Event observers in `classes/local/sla/observer.php`
   (submission_changed / submission_graded / workflow_state_changed /
-  identities_revealed / course_module_updated / marker_changed /
+  identities_revealed / course_module_updated / marker_changed (which also
+  feeds the per-marker slot table) /
   override_changed / user_rule_changed / gradebook_changed /
   group_membership_changed / group_deleted).
 - Batch jobs through `course_access::processable_course_ids()`:
@@ -785,7 +786,7 @@ Drafts are surfaced read-only and de-emphasised (report + drilldown only) via
 ## Data reset and privacy
 
 - The data reset (`block_feedback_tracker_reset_data()` in `lib.php`,
-  behind `pages/reset.php` and `cli/reset.php`) deletes the ledger, rollup,
+  behind `pages/reset.php` and `cli/reset.php`) deletes the ledger, slot, rollup,
   trend, site and queue rows and bumps `calver`. It keeps the calendar
   configuration and the recompute audit log, where it records itself.
 - The allocated marker (`allocmarkerid` on the ledger) is a data subject of
@@ -793,6 +794,14 @@ Drafts are surfaced read-only and de-emphasised (report + drilldown only) via
   clears it while the student's row stays. `submission_ledger::delete_for_user()`
   (account deletion) keeps it, as core keeps
   the allocation row in {assign_allocated_marker}.
+- The per-slot table `block_feedback_tracker_alloc` (multi-marking, written
+  only by `local\sla\slot_ledger`) holds two data subjects: the student
+  (`userid`) and the marker (`marker`). Every path that deletes ledger rows
+  deletes their slot rows in the same place (`slot_cleanup_test` pins the
+  paths); a new ledger delete path must do the same. Erasing a marker deletes
+  the rows where they marked; deleting a marker's account keeps them, as for
+  `allocmarkerid`. On 5.2 the `slots` reconcile sweep, not an event, closes a
+  removed marker's slot and stamps each completion (core reports neither).
 
 ## Files `moodle-plugin-ci validate` parses
 

@@ -28,7 +28,7 @@ namespace block_feedback_tracker\local\sla;
 
 /**
  * One reading of mod_assign's multi-marking state (Moodle 5.2), for every view
- * that shows it.
+ * that shows or filters on it.
  *
  * It mirrors core rule for rule and cites each method it follows, so a change
  * in core has one place to be followed here:
@@ -162,6 +162,91 @@ final class marking_progress {
             );
         }
         return $out;
+    }
+
+    /**
+     * SQL condition: this ledger row belongs on the viewer's own marking queue.
+     *
+     * Owner decision D3 ("pending for me"): once a submission has allocated
+     * markers it is theirs to mark, and nobody else's. A row passes when any
+     * of three arms holds:
+     * - (a) the activity does not use marking allocation (marking workflow or
+     *   marker allocation off, or the activity row gone): there is no
+     *   allocation to filter by, so every teacher sees it, as before;
+     * - (b) nobody is allocated to the student ({assign_allocated_marker} has
+     *   no row with a marker): an unallocated submission is the coordinator's
+     *   queue, and every teacher keeps seeing it until someone is allocated;
+     * - (c) the viewer is allocated to the student, the viewer's own mark on
+     *   the row's attempt is not complete, and no agreed grade exists for that
+     *   attempt. Complete is the marker's own state, readyforreview with a mark
+     *   of 0 or more (the rule {@see self::mark_state()} names MARK_COMPLETE),
+     *   not 5.2 core's counting rule (any mark row, {@see \assign::get_marks()}),
+     *   because a marker who saved "In marking" still has work to do. An agreed
+     *   grade (the attempt's grade set and not negative,
+     *   {@see \assign::is_graded()}) ends every marker's wait: what remains,
+     *   the release, belongs to no marker.
+     *
+     * So an allocated submission is listed only for its allocated markers,
+     * each until their own mark is complete, and on a single-marker activity
+     * with allocation on (markercount 1, {@see \assign::update_allocated_markers()}
+     * writes the same table) only for its marker until the grade exists. A
+     * teacher who is not allocated (a coordinator, an admin) sees only the
+     * rows of arms (a) and (b).
+     *
+     * On a multi-marking activity it agrees with for_rows(): a row passes for V
+     * exactly when its entry has no slot, or V holds a slot whose state is not
+     * MARK_COMPLETE and the wait is not WAIT_NONE.
+     *
+     * Every arm is a correlated EXISTS on the caller's columns, so the
+     * condition adds no join and the caller's LIMIT applies to rows that
+     * already satisfy it; no arm touches {assign_submission}.
+     *
+     * @param int $viewerid The teacher the list is for.
+     * @param string $itemcolumn Column holding the assign id, e.g. "sub.iteminstance".
+     * @param string $usercolumn Column holding the student id, e.g. "sub.userid".
+     * @param string $attemptcolumn Column holding the attempt number, e.g. "sub.attemptnumber".
+     * @param string $prefix Prefix of the inner aliases and placeholders; each placeholder is used once.
+     * @return array [SQL condition in parentheses, named parameters].
+     */
+    public static function pending_for_viewer_sql(
+        int $viewerid,
+        string $itemcolumn,
+        string $usercolumn,
+        string $attemptcolumn,
+        string $prefix = 'mpv'
+    ): array {
+        $sql = "(NOT EXISTS (SELECT 1
+                               FROM {assign} {$prefix}a
+                              WHERE {$prefix}a.id = $itemcolumn
+                                AND {$prefix}a.markingworkflow = 1
+                                AND {$prefix}a.markingallocation = 1)
+                 OR NOT EXISTS (SELECT 1
+                                  FROM {assign_allocated_marker} {$prefix}u
+                                 WHERE {$prefix}u.assignment = $itemcolumn
+                                   AND {$prefix}u.student = $usercolumn
+                                   AND {$prefix}u.marker > 0)
+                 OR (EXISTS (SELECT 1
+                               FROM {assign_allocated_marker} {$prefix}s
+                              WHERE {$prefix}s.assignment = $itemcolumn
+                                AND {$prefix}s.student = $usercolumn
+                                AND {$prefix}s.marker = :{$prefix}slot)
+                     AND NOT EXISTS (SELECT 1
+                                       FROM {assign_grades} {$prefix}g
+                                       JOIN {assign_mark} {$prefix}m ON {$prefix}m.gradeid = {$prefix}g.id
+                                      WHERE {$prefix}g.assignment = $itemcolumn
+                                        AND {$prefix}g.userid = $usercolumn
+                                        AND {$prefix}g.attemptnumber = $attemptcolumn
+                                        AND {$prefix}m.marker = :{$prefix}mark
+                                        AND {$prefix}m.workflowstate = 'readyforreview'
+                                        AND {$prefix}m.mark IS NOT NULL
+                                        AND {$prefix}m.mark >= 0)
+                     AND NOT EXISTS (SELECT 1
+                                       FROM {assign_grades} {$prefix}r
+                                      WHERE {$prefix}r.assignment = $itemcolumn
+                                        AND {$prefix}r.userid = $usercolumn
+                                        AND {$prefix}r.attemptnumber = $attemptcolumn
+                                        AND {$prefix}r.grade >= 0)))";
+        return [$sql, [$prefix . 'slot' => $viewerid, $prefix . 'mark' => $viewerid]];
     }
 
     /**

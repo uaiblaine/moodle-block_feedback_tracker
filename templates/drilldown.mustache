@@ -23,6 +23,14 @@
     * draftbadge    Label for the per-row draft badge
     * draftcols     {student, activity, group, lastsaved, status}
     * draftrows     Array of {student, activity, group, lastsaved, lastsavedts}
+    * hasmarkers    Truthy when the per-marker section is shown (multi-marking rows in scope and a
+                    viewer allowed to manage marker allocations)
+    * markerheading Heading for the per-marker section
+    * markernote    Explanatory note for the per-marker section
+    * markercols    {marker, open, completed, median, coverage}
+    * markerrows    Array of {name, open, completed, median, coverage}: the counts are formatted,
+                    median is the marker's own median turnaround in the display unit, coverage a
+                    percentage; "-" stands for no value
 
     Example context (json):
     {
@@ -61,6 +69,17 @@
                 "student": "Bruno Costa", "activity": "Class log 3", "group": "Class A",
                 "lastsaved": "2026-05-18 21:02", "lastsavedts": 1747602120
             }
+        ],
+        "hasmarkers": true,
+        "markerheading": "Markers",
+        "markernote": "Each marker's own turnaround runs from the moment they became responsible to their own Marking completed.",
+        "markercols": {
+            "marker": "Marker", "open": "Open slots", "completed": "Marks completed",
+            "median": "Median own turnaround", "coverage": "Coverage"
+        },
+        "markerrows": [
+            {"name": "Carla Souza", "open": "2", "completed": "14", "median": "9.5 h", "coverage": "93%"},
+            {"name": "Diego Lima", "open": "0", "completed": "0", "median": "-", "coverage": "-"}
         ]
     }
 }}
@@ -148,3 +167,31 @@
         </table>
     </div>
 {{/hasdrafts}}
+{{#hasmarkers}}
+    <div class="bft-drilldown-markers">
+        <h3>{{markerheading}}</h3>
+        <p class="bft-drilldown-markers-note">{{markernote}}</p>
+        <table class="generaltable bft-drilldown-markers-table">
+            <thead>
+                <tr>
+                    <th scope="col">{{markercols.marker}}</th>
+                    <th scope="col">{{markercols.open}}</th>
+                    <th scope="col">{{markercols.completed}}</th>
+                    <th scope="col">{{markercols.median}}</th>
+                    <th scope="col">{{markercols.coverage}}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{#markerrows}}
+                    <tr>
+                        <td>{{name}}</td>
+                        <td>{{open}}</td>
+                        <td>{{completed}}</td>
+                        <td>{{median}}</td>
+                        <td>{{coverage}}</td>
+                    </tr>
+                {{/markerrows}}
+            </tbody>
+        </table>
+    </div>
+{{/hasmarkers}}
