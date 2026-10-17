@@ -101,6 +101,13 @@ below answers is in `docs/moodle-53-assign-audit.md`.
   fired the event by hand and stayed green while production lost every stamp.
 
 ### Changed
+- **"Pending for me" covers single-marker activities with marker allocation**
+  (version `2026100507`, owner decision D3). In Grade Now an allocated student's
+  row is listed only for the allocated marker, while their own mark is not
+  complete and no agreed grade exists; a student with no active allocation is
+  the coordinator's queue and stays listed for every teacher, including a
+  multi-marking student with no allocation at all, which was hidden from
+  everyone before. Activities without marker allocation are unchanged.
 - **This branch is the Moodle 5.3 branch** (version `2026100500`):
   `$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`, one CI
   job on `MOODLE_503_STABLE`. A site on the 5.2 release (`2026042003`) upgrades

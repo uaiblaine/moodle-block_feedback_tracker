@@ -292,6 +292,11 @@ submission of their courses, whatever the allocation.
 
   Anyone else, a teacher with no slot or a marker whose own mark is done, does not see it
   as pending for them.
+
+  The rule also holds on a **single-marker** activity with marker allocation: the allocated
+  marker is the only one it is pending for, and once the grade exists (`assign_grades.grade
+  >= 0`, the agreed grade) it is nobody's to mark. A student with **no active allocation** is
+  the coordinator's queue and every teacher sees it, a multi-marking one included.
 - With the owner's example (2 required markers, 3 teachers marking in the course): the two
   allocated markers complete their marks, and the third teacher holds no active slot, so it
   is never pending for them. If the third teacher held an **enabled optional** slot, core
@@ -400,7 +405,9 @@ multi-marking activity is listed only for a viewer it is pending for as a marker
 active slot for the student and the viewer's own mark not complete. The rule is SQL
 (`marking_progress::pending_for_viewer_sql()`), inside the query, so the limit takes the
 top N of the viewer's own queue. A teacher with no slot no longer sees those rows; rows
-awaiting allocation or the agreed grade stay in the course views. Needs no table, so it
+awaiting allocation or the agreed grade stay in the course views. The same holds on a single-marker activity with marker allocation, where only the
+allocated marker sees the row until the grade exists; a student with no active allocation is
+the coordinator's queue and stays listed for every teacher. Needs no table, so it
 ships before the per-slot work. Tests: the owner's example, an enabled optional slot, a
 single-marker control, and agreement with `for_rows()`.
 

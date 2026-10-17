@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Tests for the multi-marking "pending for me" rule of the Grade Now list.
+ * Tests for the "pending for me" rule of the Grade Now list.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -36,7 +36,7 @@ use core_external\external_api;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * "Pending for me" in the Grade Now list on a multi-marking activity (Moodle 5.3, owner decision D3).
+ * "Pending for me" in the Grade Now list on an activity with marker allocation (Moodle 5.3, owner decision D3).
  *
  * Allocations go through assign::update_marker_allocations() and marks through
  * assign::update_mark(), so the rows the SQL reads are the ones core writes.
@@ -160,21 +160,85 @@ final class get_grader_priority_list_pending_for_me_test extends \advanced_testc
     }
 
     /**
-     * Control: an activity with one marker is not multiple marking, and every
-     * teacher sees its row, as before.
+     * A single-marker activity with marker allocation: only the allocated marker
+     * is listed; an unallocated student of the same activity is every teacher's.
+     * A single marker grades through update_grade, and the grade row leaves it.
      *
      * @return void
      */
-    public function test_single_marker_activity_is_unchanged(): void {
+    public function test_single_marker_allocated_activity(): void {
         $env = $this->build_environment(1, 0);
         [$a, $b] = $env->teachers;
         $env->assign->update_marker_allocations((int) $env->student->id, [1 => [(int) $a->id, null]]);
+        $other = $this->add_student($env, 2.0);
         $this->assertFalse($env->assign->is_using_multiple_marking(), 'Control: core does not call this multiple marking.');
 
         $this->assertTrue($this->listed($env, $a));
-        $this->assertTrue($this->listed($env, $b), 'A teacher with no slot still sees it.');
+        $this->assertFalse($this->listed($env, $b), 'A teacher with no slot does not see an allocated student.');
+        $this->assertTrue($this->listed($env, $b, $other), 'Control: the unallocated student is listed for everyone.');
+        $this->assertTrue($this->listed($env, $a, $other));
+
+        $this->grade($env, $a, 60);
+        $this->assertFalse($this->listed($env, $a), 'Once graded it is not pending for marking.');
+        $this->assertFalse($this->listed($env, $b));
+    }
+
+    /**
+     * An activity that does not use marker allocation is every teacher's, even
+     * with a stale allocation row left behind by a setting that was switched off.
+     *
+     * @return void
+     */
+    public function test_activity_without_marker_allocation_is_unchanged(): void {
+        global $DB;
+        $env = $this->build_environment(1, 0, 0);
+        [$a, $b] = $env->teachers;
+        $DB->insert_record('assign_allocated_marker', (object) [
+            'assignment' => $env->assign->get_instance()->id, 'student' => $env->student->id,
+            'marker' => $a->id, 'optional' => 0, 'enabled' => 1,
+        ]);
+
+        $this->assertTrue($this->listed($env, $a));
+        $this->assertTrue($this->listed($env, $b), 'Without marker allocation nobody is the marker.');
+    }
+
+    /**
+     * A multi-marking student with no allocation is the coordinator's queue:
+     * every teacher sees it.
+     *
+     * @return void
+     */
+    public function test_multi_marking_without_allocation_is_listed_for_everyone(): void {
+        $env = $this->build_environment(2, 0);
+        foreach ($env->teachers as $teacher) {
+            $this->assertTrue($this->listed($env, $teacher));
+        }
+    }
+
+    /**
+     * Once the agreed grade exists on a multi-marking row, no marker has it
+     * left to mark, even one whose own mark is still in marking.
+     *
+     * @return void
+     */
+    public function test_agreed_grade_ends_pending_for_a_marker(): void {
+        global $DB;
+        $env = $this->build_environment(2, 0);
+        [$a, $b] = $env->teachers;
+        $env->assign->update_marker_allocations((int) $env->student->id, [
+            1 => [(int) $a->id, null],
+            2 => [(int) $b->id, null],
+        ]);
         $this->mark($env, $a, 60);
         $this->assertTrue($this->listed($env, $b));
+
+        // Written straight to the table: the grade event would also close the ledger row, which hides it anyway.
+        $DB->set_field('assign_grades', 'grade', 65, [
+            'assignment' => $env->assign->get_instance()->id,
+            'userid' => $env->student->id,
+        ]);
+        $this->assertSame(0, (int) $DB->get_field('block_feedback_tracker_sub', 'timegraded', ['id' => $this->row($env)->id]));
+        $this->assertFalse($this->listed($env, $b), 'Awaiting release belongs to no marker.');
     }
 
     /**
@@ -235,14 +299,30 @@ final class get_grader_priority_list_pending_for_me_test extends \advanced_testc
     }
 
     /**
+     * Save the agreed (or a single marker's) grade, as the grading form does.
+     *
+     * @param \stdClass $env
+     * @param \stdClass $grader
+     * @param float $value
+     * @return void
+     */
+    private function grade(\stdClass $env, \stdClass $grader, float $value): void {
+        $grade = $env->assign->get_user_grade((int) $env->student->id, true);
+        $grade->grader = (int) $grader->id;
+        $grade->grade = $value;
+        $env->assign->update_grade($grade);
+    }
+
+    /**
      * Build a course with one multi-marking (or single-marker) activity, one
      * submitted student, a ledger row and four teachers.
      *
      * @param int $required Required markers.
      * @param int $optional Optional markers.
+     * @param int $allocation Whether the activity uses marker allocation.
      * @return \stdClass course, cm, assign, student, teachers.
      */
-    private function build_environment(int $required, int $optional): \stdClass {
+    private function build_environment(int $required, int $optional, int $allocation = 1): \stdClass {
         global $CFG;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->setAdminUser();
@@ -258,7 +338,7 @@ final class get_grader_priority_list_pending_for_me_test extends \advanced_testc
         $inst = $this->getDataGenerator()->create_module('assign', [
             'course' => $course->id,
             'markingworkflow' => 1,
-            'markingallocation' => 1,
+            'markingallocation' => $allocation,
             'markercount' => $required,
             'optionalmarkercount' => $optional,
             'multimarkmethod' => 'manual',
@@ -346,15 +426,17 @@ final class get_grader_priority_list_pending_for_me_test extends \advanced_testc
     }
 
     /**
-     * Whether the first student's row is on this teacher's Grade Now list.
+     * Whether a student's row (the first one by default) is on this teacher's Grade Now list.
      *
      * @param \stdClass $env
      * @param \stdClass $teacher
+     * @param \stdClass|null $student
      * @return bool
      */
-    private function listed(\stdClass $env, \stdClass $teacher): bool {
+    private function listed(\stdClass $env, \stdClass $teacher, ?\stdClass $student = null): bool {
+        $student ??= $env->student;
         foreach ($this->run_as($teacher)['submissions'] as $s) {
-            if ((int) $s['userid'] === (int) $env->student->id) {
+            if ((int) $s['userid'] === (int) $student->id) {
                 return true;
             }
         }
