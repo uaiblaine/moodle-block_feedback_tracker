@@ -639,6 +639,7 @@ class submission_ledger {
             $record->allocattrib = $attribution['allocattrib'];
         }
 
+        $inserted = false;
         if ($existing !== null) {
             if (!$alloc['known']) {
                 /* This snapshot saw no allocation, so leave the four measures
@@ -662,6 +663,7 @@ class submission_ledger {
         } else {
             $record->timecreated = $now;
             $subid = self::insert_cycle_row($record, $cmid, $userid, $attemptnumber, $cycle, $retrying);
+            $inserted = $subid !== null;
             if ($subid === null) {
                 /* A concurrent writer inserted this cycle after the read at the
                  * top of this method: re-derive against its row, bounded to one
@@ -691,6 +693,13 @@ class submission_ledger {
                     AND attemptnumber = :att AND cycle < :cycle',
                 ['cmid' => $cmid, 'userid' => $userid, 'att' => $attemptnumber, 'cycle' => $cycle]
             );
+        }
+
+        /* A new cycle inherits the markers already allocated
+         * ({@see slot_ledger::carry_onto_new_cycle()}). After the iscurrent
+         * update above, so only the new cycle is synced. */
+        if ($inserted && marking_progress::uses_multiple_marking($assign)) {
+            slot_ledger::carry_onto_new_cycle($cmid, $userid, $timesubmitted, $now);
         }
 
         dirty_queue::enqueue(
@@ -964,20 +973,39 @@ class submission_ledger {
      * ledger knows it: the one place the start of a marker's clock is looked up.
      *
      * Moodle 5.2 keeps no allocation instant ({assign_allocated_marker} has no
-     * time column) and this branch has no per-slot table yet, so the only
-     * instant on record is the cycle's own `timeallocmarker`, which belongs to
-     * the marker stored in `allocmarkerid`: the provisional marker in position
-     * 1 while the cycle is pending, stamped by stamp_allocation_for_user(). A
-     * confirmer's stored instant is a mark, not an allocation, so it is not
-     * reused. Any other marker's start is unknown, and null makes the row's
-     * turnaround unmeasurable rather than charging that marker from somebody
-     * else's allocation ({@see self::allocation_measures()}).
+     * time column), so the first source is the marker's live row in the slot
+     * table ({@see slot_ledger}): their own allocation on this cycle, observed,
+     * carried from the hand-in or found by the sweep. A marker allocated before
+     * the observer or the sweep saw them has no such row yet, and then the
+     * only instant on record is the cycle's own `timeallocmarker`, which
+     * belongs to the marker stored in `allocmarkerid`: the provisional marker
+     * in position 1 while the cycle is pending, stamped by
+     * stamp_allocation_for_user(). A confirmer's stored instant is a mark, not
+     * an allocation, so it is not reused. Any other marker's start is unknown,
+     * and null makes the row's turnaround unmeasurable rather than charging
+     * that marker from somebody else's allocation
+     * ({@see self::allocation_measures()}).
      *
      * @param \stdClass $cycle The stored ledger row of the cycle, as read before this write.
      * @param int $marker The marker whose start is asked for.
      * @return int|null
      */
     private static function marker_start(\stdClass $cycle, int $marker): ?int {
+        global $DB;
+        if ($marker <= 0) {
+            return null;
+        }
+        $slot = $DB->get_field_select(
+            'block_feedback_tracker_alloc',
+            'timeallocated',
+            'subid = :subid AND marker = :marker AND timeremoved IS NULL',
+            ['subid' => (int) $cycle->id, 'marker' => $marker],
+            IGNORE_MISSING
+        );
+        if ($slot !== false && $slot !== null) {
+            return (int) $slot;
+        }
+
         $stored = (int) ($cycle->allocmarkerid ?? 0);
         $attrib = $cycle->allocattrib ?? null;
         if ($marker <= 0 || $stored !== $marker || $attrib === self::ATTRIB_CONFIRMER) {
@@ -1767,6 +1795,7 @@ class submission_ledger {
             ];
         }
 
+        slot_ledger::delete_for_ledger_where($where, $params);
         $DB->delete_records_select('block_feedback_tracker_sub', $where, $params);
 
         foreach ($tuples as [$courseid, $groupid]) {
@@ -1808,8 +1837,9 @@ class submission_ledger {
      *
      * For a deleted account. Rows where the deleted user is only the
      * allocated marker (`allocmarkerid`) are the students' and keep that id,
-     * as core keeps `assign_user_flags.allocatedmarker` when it deletes an
-     * account. An erasure request clears it through
+     * as core keeps the {assign_allocated_marker} row when it deletes an
+     * account; their slot rows as a marker stay with those students' cycles
+     * for the same reason. An erasure request clears both through
      * {@see \block_feedback_tracker\privacy\provider::delete_data_for_user()}.
      *
      * @param int $userid
@@ -1831,8 +1861,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger rows for one course-module and re-enqueue the tuples
-     * they belonged to.
+     * Delete all ledger and slot rows for one course-module and re-enqueue the
+     * tuples they belonged to.
      *
      * @param int $cmid
      * @return void
@@ -1845,6 +1875,7 @@ class submission_ledger {
             '',
             'id, courseid, groupid'
         );
+        slot_ledger::delete_for_cm($cmid);
         if (empty($rows)) {
             return;
         }
@@ -1862,8 +1893,8 @@ class submission_ledger {
     }
 
     /**
-     * Delete all ledger, rollup, trend, queue and backfill-cursor rows for one
-     * course.
+     * Delete all ledger, slot, rollup, trend, queue and backfill-cursor rows
+     * for one course.
      *
      * @param int $courseid
      * @return void
@@ -1871,6 +1902,7 @@ class submission_ledger {
     public static function delete_for_course(int $courseid): void {
         global $DB;
 
+        slot_ledger::delete_for_course($courseid);
         $DB->delete_records('block_feedback_tracker_sub', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_group', ['courseid' => $courseid]);
         $DB->delete_records('block_feedback_tracker_trend', ['courseid' => $courseid]);

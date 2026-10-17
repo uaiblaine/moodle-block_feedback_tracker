@@ -39,10 +39,10 @@ use block_feedback_tracker\local\calendar\calendar;
  * the test pins seven days back to the grading, which is the current time:
  * the width rule in CLAUDE.md, with the working hours set by the test.
  *
- * Moodle 5.2 keeps no allocation instant and this branch has no per-slot
- * table, so the only marker clock on record is the stamp of the provisional
- * marker in position 1; a responsible person whose start nobody recorded gets
- * a null turnaround.
+ * Moodle 5.2 keeps no allocation instant, so a marker's clock is their own
+ * row in the slot table when there is one, and otherwise only the stamp of
+ * the provisional marker in position 1; a responsible person whose start
+ * nobody recorded gets a null turnaround.
  *
  * The class-level covers docblock is kept, not attributes: this branch family
  * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
@@ -168,15 +168,21 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * Maximum method: the marker of the higher mark is responsible though they
-     * sit in position 2. Nobody recorded when their responsibility began, so
-     * their turnaround is unmeasurable rather than borrowed from position 1.
+     * sit in position 2, measured from their own slot allocation.
      *
      * @return void
      */
     public function test_maximum_higher_mark_wins(): void {
+        global $DB;
         $env = $this->build_environment('maximum');
         [$first, $second] = $env->markers;
         $this->pin_marker_clock($env);
+        $start = time() - self::WEEK;
+        $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $start, [
+            'userid' => $env->student->id,
+            'marker' => $second->id,
+        ]);
+        $this->seed_calendar();
         $before = $this->row($env);
 
         $this->mark($env, $first, 60);
@@ -186,9 +192,33 @@ final class responsible_marker_test extends \advanced_testcase {
         $this->assertNotNull($row->timegraded, 'Control: the agreed grade closed the cycle.');
         $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $row->allocattrib);
         $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
+        $this->assertSame($start, (int) $row->timeallocmarker);
+        $this->assertEqualsWithDelta(50.0, (float) $row->allochours, 0.01);
+        $this->assertSame($before->timeallocated, $row->timeallocated);
+    }
+
+    /**
+     * Maximum method: a winner in position 2 with no slot row (allocated
+     * before the slot table saw them) has an unknown start, so their
+     * turnaround is unmeasurable rather than borrowed from position 1.
+     *
+     * @return void
+     */
+    public function test_maximum_winner_without_a_slot_row_is_unmeasurable(): void {
+        global $DB;
+        $env = $this->build_environment('maximum');
+        [$first, $second] = $env->markers;
+        $this->pin_marker_clock($env);
+        $DB->delete_records('block_feedback_tracker_alloc', ['userid' => $env->student->id, 'marker' => $second->id]);
+
+        $this->mark($env, $first, 60);
+        $this->mark($env, $second, 80);
+
+        $row = $this->row($env);
+        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $row->allocattrib);
+        $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
         $this->assertNull($row->timeallocmarker);
         $this->assertNull($row->allochours);
-        $this->assertSame($before->timeallocated, $row->timeallocated);
     }
 
     /**
@@ -304,14 +334,19 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * A grade cleared by hand withdraws the agreed grade: the attribution is
-     * cleared and the provisional marker in position 1 is back. Their own
-     * clock was replaced when responsibility moved, so it is not invented.
+     * cleared and the provisional marker in position 1 is back, from their own
+     * slot allocation.
      *
      * @return void
      */
     public function test_cleared_grade_returns_to_the_provisional_marker(): void {
+        global $DB;
         $env = $this->build_environment('maximum');
         [$first, $second] = $env->markers;
+        $slotstart = (int) $DB->get_field('block_feedback_tracker_alloc', 'timeallocated', [
+            'userid' => $env->student->id,
+            'marker' => $first->id,
+        ], MUST_EXIST);
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
         $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $this->row($env)->allocattrib, 'Control: attributed.');
@@ -323,7 +358,7 @@ final class responsible_marker_test extends \advanced_testcase {
         $this->assertNull($row->timegraded, 'Control: the cycle reopened.');
         $this->assertNull($row->allocattrib);
         $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertNull($row->timeallocmarker);
+        $this->assertSame($slotstart, (int) $row->timeallocmarker);
     }
 
     /**
@@ -466,7 +501,8 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * Move the row's first allocation and marker clock one week back, as if
-     * position 1 had been allocated then, and return that instant.
+     * position 1 had been allocated then, with that marker's slot row, and
+     * return that instant.
      *
      * @param \stdClass $env
      * @return int The pinned instant.
@@ -474,8 +510,13 @@ final class responsible_marker_test extends \advanced_testcase {
     private function pin_marker_clock(\stdClass $env): int {
         global $DB;
         $start = time() - self::WEEK;
+        $row = $this->row($env);
         $DB->update_record('block_feedback_tracker_sub', (object) [
-            'id' => $this->row($env)->id, 'timeallocated' => $start, 'timeallocmarker' => $start,
+            'id' => $row->id, 'timeallocated' => $start, 'timeallocmarker' => $start,
+        ]);
+        $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $start, [
+            'subid' => $row->id,
+            'marker' => $row->allocmarkerid,
         ]);
         return $start;
     }

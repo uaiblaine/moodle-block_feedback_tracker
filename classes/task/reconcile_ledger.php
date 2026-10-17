@@ -30,9 +30,11 @@ use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
+use block_feedback_tracker\local\sla\marking_progress;
 use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\retention;
 use block_feedback_tracker\local\sla\rule_resolver;
+use block_feedback_tracker\local\sla\slot_ledger;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
 
@@ -61,7 +63,9 @@ use block_feedback_tracker\local\sla\submission_status;
  * returns. Seven sweeps dispatch their repairs — six as
  * {@see backfill_one_submission}, the allocation one as
  * {@see stamp_allocations} — which keeps the academic-time engine out of this
- * task's own time budget.
+ * task's own time budget. The marker-slot sweep
+ * ({@see self::sweep_marker_slots()}) writes its rare repairs in place
+ * through `slot_ledger`.
  *
  * The two cleanup sweeps ({@see self::sweep_orphans()},
  * {@see self::sweep_departed_participants()}) delete directly: the repair
@@ -177,7 +181,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
         $batch = min($batch, self::MAX_BATCH);
         /* A cap of its own rather than drain_time_cap_seconds: the drain only
-         * queues a few hundred rows, while this runs nine diffs against the
+         * queues a few hundred rows, while this runs ten diffs against the
          * assignment tables. The upgrade step that introduced the setting
          * seeded it from drain_time_cap_seconds. */
         $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
@@ -194,6 +198,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'participant' => 'sweep_departed_participants',
             'rules' => 'sweep_rule_drift',
             'allocation' => 'sweep_unstamped_allocations',
+            'slots' => 'sweep_marker_slots',
         ];
         /* Resume after the last sweep that ran, so the tail of the registry is
          * reached on a site whose ticks run out of budget. The marker is the
@@ -820,6 +825,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                         (int) $r->courseid, (int) $r->groupid,
                     ];
                 }
+                slot_ledger::delete_for_subids($ids);
                 [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'd');
                 $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
                 foreach ($tuples as [$courseid, $groupid]) {
@@ -985,6 +991,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
             $ids[] = (int) $r->id;
             $groupids[(int) $r->groupid] = true;
         }
+        slot_ledger::delete_for_subids($ids);
         [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'd');
         $DB->delete_records_select('block_feedback_tracker_sub', "id $isql", $iparams);
         foreach (array_keys($groupids) as $groupid) {
@@ -1133,6 +1140,192 @@ class reconcile_ledger extends \core\task\scheduled_task {
          * the tuples it actually touched when the worker runs, and enqueuing
          * here would mark tuples dirty before, or without, that write. */
         return $acted;
+    }
+
+    /**
+     * Per-marker slot rows that disagree with core (Moodle 5.2 multiple marking).
+     *
+     * On 5.2 this sweep carries two of the slot table's three writers: core
+     * fires `marker_updated` for every marker that stays or is added
+     * ({@see \assign::update_allocated_markers()}), which the observer records,
+     * but nothing for a removal nor for a marker's own "Marking completed"
+     * ({@see \assign::update_mark()} fires no event). Over the current cycle of
+     * the latest attempt, the one core's allocations describe, a window row of
+     * a multi-marking activity is repaired when:
+     * - (a) an allocated marker has no live slot row (an allocation the
+     *   observer missed: a course that became processable later, a failed
+     *   observer);
+     * - (b) a live slot row's marker is no longer allocated: a removal, which
+     *   5.2 never reports;
+     * - (c) a live slot row has no `timemarked` while its marker's own mark on
+     *   the attempt is complete (readyforreview with a mark of 0 or more, as
+     *   the 5.3 branch's `mark_is_marked()` reads it; 5.2 core counts any mark
+     *   row toward the agreed grade, but a marker's own completion is this
+     *   state) and was last edited at or after the cycle's hand-in.
+     *
+     * (a) and (b) are re-synced with the discovery instant as the clock and
+     * `reconciled` as the source, so a removal's `timeremoved` is when the
+     * sweep found it. (c) is completed at `assign_mark.timemodified`, the last
+     * change to the mark and so the latest the completion can be: every
+     * completion instant on 5.2 is reconciled. A mark last edited before the
+     * hand-in belongs to an earlier cycle of the same attempt (a grade row and
+     * its marks are per attempt), so it waits for the marker's next edit
+     * rather than closing the new cycle's slot with an instant before it
+     * opened. The repairs run in place: they are rare, and the window bounds
+     * them.
+     *
+     * The window carries only predicates on the driving row; whether its
+     * activity uses multiple marking is decided in PHP from one read of the
+     * tracked activities, as tracked_submissions() does, so a site with few
+     * multi-marking activities still walks the ledger at the batch size.
+     *
+     * @param array $processable Course ids in scope.
+     * @param int $batch Window size.
+     * @param string $key Cursor key.
+     * @return int Rows repaired.
+     */
+    private function sweep_marker_slots(array $processable, int $batch, string $key): int {
+        global $DB;
+
+        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
+        $multi = [];
+        $assigns = $DB->get_records_sql(
+            "SELECT a.id, a.markingworkflow, a.markingallocation, a.markercount
+               FROM {assign} a
+               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+              WHERE cm.course $csql",
+            $cparams + ['modname' => 'assign']
+        );
+        foreach ($assigns as $a) {
+            if (marking_progress::uses_multiple_marking($a)) {
+                $multi[(int) $a->id] = true;
+            }
+        }
+
+        $now = time();
+        return $this->walk(
+            $key,
+            $batch,
+            fn(int $cursor): array => $DB->get_records_sql(
+                "SELECT l.id, l.iteminstance
+                   FROM {block_feedback_tracker_sub} l
+                  WHERE l.id > :cursor
+                    AND l.iscurrent = 1
+                    AND l.islatest = 1
+                    AND l.courseid $csql
+               ORDER BY l.id ASC",
+                $cparams + ['cursor' => $cursor],
+                0,
+                $batch
+            ),
+            function (array $window) use ($multi, $now): int {
+                $ids = [];
+                foreach ($window as $row) {
+                    if (isset($multi[(int) $row->iteminstance])) {
+                        $ids[] = (int) $row->id;
+                    }
+                }
+                if (empty($ids)) {
+                    return 0;
+                }
+                return $this->repair_marker_slots($ids, $now);
+            }
+        );
+    }
+
+    /**
+     * Probe a window's multi-marking ledger rows for slot drift and repair it.
+     *
+     * @param array $ids Ledger row ids of multi-marking activities.
+     * @param int $now The discovery instant.
+     * @return int Repairs made: one per student re-synced, one per slot completed.
+     */
+    private function repair_marker_slots(array $ids, int $now): int {
+        global $DB;
+
+        $modparams = ['modname' => 'assign'];
+        [$wsql, $wparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'w');
+        $missing = $DB->get_records_sql(
+            "SELECT am.id, l.cmid, l.userid
+               FROM {block_feedback_tracker_sub} l
+               JOIN {course_modules} cm ON cm.id = l.cmid
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+               JOIN {assign_allocated_marker} am
+                 ON am.assignment = cm.instance
+                AND am.student = l.userid
+                AND am.marker > 0
+          LEFT JOIN {block_feedback_tracker_alloc} s
+                 ON s.subid = l.id
+                AND s.marker = am.marker
+                AND s.timeremoved IS NULL
+              WHERE l.id $wsql
+                AND s.id IS NULL",
+            $wparams + $modparams
+        );
+        [$wsql, $wparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'w');
+        $stale = $DB->get_records_sql(
+            "SELECT s.id, l.cmid, l.userid
+               FROM {block_feedback_tracker_sub} l
+               JOIN {course_modules} cm ON cm.id = l.cmid
+               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+               JOIN {block_feedback_tracker_alloc} s
+                 ON s.subid = l.id
+                AND s.timeremoved IS NULL
+          LEFT JOIN {assign_allocated_marker} am
+                 ON am.assignment = cm.instance
+                AND am.student = l.userid
+                AND am.marker = s.marker
+              WHERE l.id $wsql
+                AND am.id IS NULL",
+            $wparams + $modparams
+        );
+
+        $repaired = 0;
+        $synced = [];
+        foreach (array_merge(array_values($missing), array_values($stale)) as $r) {
+            $pair = (int) $r->cmid . ':' . (int) $r->userid;
+            if (isset($synced[$pair])) {
+                continue;
+            }
+            $synced[$pair] = true;
+            slot_ledger::sync_for_user((int) $r->cmid, (int) $r->userid, $now, slot_ledger::SOURCE_RECONCILED);
+            $repaired++;
+        }
+
+        /* After the re-sync, so a slot row it just inserted for a marker who
+         * already completed is completed in the same pass. */
+        [$wsql, $wparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'w');
+        $unmarked = $DB->get_records_sql(
+            "SELECT m.id, s.id AS slotid, m.timemodified
+               FROM {block_feedback_tracker_sub} l
+               JOIN {course_modules} cm ON cm.id = l.cmid
+               JOIN {modules} md ON md.id = cm.module AND md.name = :modname
+               JOIN {block_feedback_tracker_alloc} s
+                 ON s.subid = l.id
+                AND s.timeremoved IS NULL
+                AND s.timemarked IS NULL
+               JOIN {assign_grades} g
+                 ON g.assignment = cm.instance
+                AND g.userid = l.userid
+                AND g.attemptnumber = l.attemptnumber
+               JOIN {assign_mark} m
+                 ON m.gradeid = g.id
+                AND m.marker = s.marker
+              WHERE l.id $wsql
+                AND m.workflowstate = :complete
+                AND m.mark IS NOT NULL
+                AND m.mark >= 0
+                AND m.timemodified >= COALESCE(l.timesubmitted, 0)
+           ORDER BY m.timemodified ASC",
+            $wparams + $modparams + ['complete' => 'readyforreview']
+        );
+        foreach ($unmarked as $r) {
+            if (slot_ledger::complete_slot((int) $r->slotid, (int) $r->timemodified)) {
+                $repaired++;
+            }
+        }
+        return $repaired;
     }
 
     /**

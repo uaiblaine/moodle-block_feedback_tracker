@@ -40,6 +40,14 @@ use block_feedback_tracker\local\grading\grader_filters;
  * one query instead of a get_pending_submissions call per course.
  *
  * Authorisation and scope are get_dashboard's, from {@see \block_feedback_tracker\local\sla\dashboard_scope}.
+ *
+ * On an activity that uses marker allocation, a submission with allocated
+ * markers is listed only for them, each until their own mark is complete and
+ * while no agreed grade exists; an unallocated one stays listed for every
+ * teacher, as the coordinator's queue
+ * ({@see \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql()}).
+ * The course views (pending report, drill-down) keep listing every pending
+ * row. Activities without marker allocation are unchanged.
  */
 class get_grader_priority_list extends external_api {
     /** Default number of submissions to return. */
@@ -123,6 +131,16 @@ class get_grader_priority_list extends external_api {
             . ' AND sub.islatest = 1 AND sub.iscurrent = 1'
             . ' AND ' . $viswhere;
         $sqlparams['substatus'] = \block_feedback_tracker\local\sla\submission_status::SUBMITTED;
+        /* Marker allocation: only the viewer's own queue, decided in the SQL so
+         * the LIMIT below takes the top N of it rather than of every row. */
+        [$pendsql, $pendparams] = \block_feedback_tracker\local\sla\marking_progress::pending_for_viewer_sql(
+            $userid,
+            'sub.iteminstance',
+            'sub.userid',
+            'sub.attemptnumber'
+        );
+        $where .= ' AND ' . $pendsql;
+        $sqlparams += $pendparams;
         $usedays = \block_feedback_tracker\local\sla\bucket::use_day_thresholds();
         if ($bucket !== '') {
             if ($usedays) {
