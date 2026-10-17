@@ -27,9 +27,11 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\output;
 
 use block_feedback_tracker\local\sla\bucket;
+use block_feedback_tracker\local\sla\marking_progress;
 
 /**
- * Covers the wait columns in both display units and the status badge label.
+ * Covers the wait columns in both display units, the status badge label and
+ * the multi-marker line.
  * PHPUnit runs in English, whose decimal separator is a dot.
  *
  * @covers \block_feedback_tracker\local\output\drilldown_cells
@@ -117,5 +119,25 @@ final class drilldown_cells_test extends \basic_testcase {
             get_string('status_resubmitted_help_nodate', 'block_feedback_tracker'),
             drilldown_cells::resubmitted_tip(0)
         );
+    }
+
+    /**
+     * The multi-marker line names the wait, and is empty when the activity
+     * does not use multiple marking or the agreed grade already exists.
+     *
+     * @return void
+     */
+    public function test_marking_line(): void {
+        $this->assertSame('1 of 2 markers', drilldown_cells::marking_line(marking_progress::WAIT_MARKERS, 1, 2));
+        $this->assertSame(
+            get_string('marking_wait_allocation', 'block_feedback_tracker'),
+            drilldown_cells::marking_line(marking_progress::WAIT_ALLOCATION, 1, 2)
+        );
+        $this->assertSame(
+            get_string('marking_wait_agreed', 'block_feedback_tracker'),
+            drilldown_cells::marking_line(marking_progress::WAIT_AGREED, 2, 2)
+        );
+        $this->assertSame('', drilldown_cells::marking_line(marking_progress::WAIT_NONE, 2, 2));
+        $this->assertSame('', drilldown_cells::marking_line('', 0, 0));
     }
 }

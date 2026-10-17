@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\output;
 
 use block_feedback_tracker\local\sla\bucket;
+use block_feedback_tracker\local\sla\marking_progress;
 
 /**
  * Builds the wait and status cells of pages/group_drilldown.php.
@@ -80,6 +81,30 @@ final class drilldown_cells {
             bucket::REGULAR => get_string('band_regular', 'block_feedback_tracker'),
             bucket::CRITICAL => get_string('band_critical', 'block_feedback_tracker'),
             default => get_string('band_pending', 'block_feedback_tracker'),
+        };
+    }
+
+    /**
+     * The multi-marker line under a row's status, empty when there is none.
+     *
+     * Mirrors markingLine() in amd/src/views/PendingReportView.js: the two
+     * tables must say the same thing about the same row.
+     *
+     * @param string $wait marking_wait from get_pending_submissions.
+     * @param int $completed markers_completed from get_pending_submissions.
+     * @param int $expected markers_expected from get_pending_submissions.
+     * @return string
+     */
+    public static function marking_line(string $wait, int $completed, int $expected): string {
+        return match ($wait) {
+            marking_progress::WAIT_MARKERS => get_string(
+                'marking_progress',
+                'block_feedback_tracker',
+                (object) ['completed' => $completed, 'expected' => $expected]
+            ),
+            marking_progress::WAIT_ALLOCATION => get_string('marking_wait_allocation', 'block_feedback_tracker'),
+            marking_progress::WAIT_AGREED => get_string('marking_wait_agreed', 'block_feedback_tracker'),
+            default => '',
         };
     }
 

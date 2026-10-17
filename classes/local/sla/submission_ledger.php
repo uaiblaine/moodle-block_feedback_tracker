@@ -69,6 +69,27 @@ class submission_ledger {
     public const ALLOC_SOURCE_LATE = 'late';
 
     /**
+     * Responsible marker under the manual method: the teacher who saved the
+     * final grade (`{assign_grades}.grader` read when the cycle first got it).
+     */
+    public const ATTRIB_CONFIRMER = 'confirmer';
+
+    /**
+     * Responsible marker under the maximum method: the marker of the highest
+     * mark among the allocated markers, a tie going to the lower position.
+     */
+    public const ATTRIB_MAXMARK = 'maxmark';
+
+    /** Responsible marker by position: the marker in position 1 (average, and any other method). */
+    public const ATTRIB_POSITION = 'position';
+
+    /**
+     * The method's own rule named nobody (a manual grade saved with no grader,
+     * a maximum with no mark to compare), so position 1 was taken instead.
+     */
+    public const ATTRIB_FALLBACK = 'fallback';
+
+    /**
      * Upsert one ledger row for (cmid, userid, attemptnumber), in its current
      * measurement cycle.
      *
@@ -305,7 +326,8 @@ class submission_ledger {
             ['cmid' => $cmid, 'userid' => $userid, 'attemptnumber' => $attemptnumber],
             'cycle DESC',
             'id, cycle, submissionstatus, timesubmitted, timegraded, timemarked, timereleased,
-             timeclosed, closedsource, timedismissed, timeallocated, timeallocmarker',
+             timeclosed, closedsource, timedismissed, timeallocated, timeallocmarker,
+             allocmarkerid, allocattrib',
             0,
             1
         );
@@ -522,6 +544,43 @@ class submission_ledger {
             ? academic_time::elapsed_effective_hours((int) $cm->course, $groupid, $timesubmitted, $upperbound)
             : 0.0;
 
+        /* The responsible marker of a multi-marking cycle (owner decision D1),
+         * decided once, when the cycle first carries its agreed grade, and
+         * sticky like timegraded: a later mark edit or a replaced marker would
+         * be read through the markers allocated NOW (get_marks() filters on the
+         * current allocation), not the ones that produced the grade. Only the
+         * activity withdrawing the agreed grade (markbelongs false: on 5.2 a
+         * teacher clearing the grade by hand) takes it back, to the provisional
+         * marker in position 1. The marker and the start of their clock are
+         * written together here, never through stamp_allocation_for_user()'s
+         * reassignment branch, which would null the turnaround. */
+        $attribution = null;
+        if ($existing !== null && marking_progress::uses_multiple_marking($assign)) {
+            $storedattrib = $existing->allocattrib !== null ? (string) $existing->allocattrib : null;
+            if ($storedattrib === null && $state['markbelongs']) {
+                $resolved = self::resolve_responsible($assign, $existing, $userid, $attemptnumber, $grade);
+                if ($resolved !== null) {
+                    $attribution = [
+                        'allocmarkerid' => $resolved['marker'],
+                        'timeallocmarker' => $resolved['start'],
+                        'allocattrib' => $resolved['label'],
+                    ];
+                }
+            } else if ($storedattrib !== null && !$state['markbelongs']) {
+                $provisional = self::provisional_responsible($assign, $existing, $userid, $attemptnumber, $grade);
+                $attribution = [
+                    'allocmarkerid' => $provisional['marker'],
+                    'timeallocmarker' => $provisional['start'],
+                    'allocattrib' => null,
+                ];
+            }
+            if ($attribution !== null) {
+                $existing = clone $existing;
+                $existing->timeallocmarker = $attribution['timeallocmarker'];
+                $existing->allocattrib = $attribution['allocattrib'];
+            }
+        }
+
         /* The response interval split by owner (see allocation_measures()); the
          * student-experience clock above is unchanged. $assigngraded, not
          * $timegraded: the marker interval closes only on a mark entered
@@ -573,6 +632,11 @@ class submission_ledger {
         ];
         if ($alloc['late']) {
             $record->allocsource = self::ALLOC_SOURCE_LATE;
+        }
+        if ($attribution !== null) {
+            $record->allocmarkerid = $attribution['allocmarkerid'];
+            $record->timeallocmarker = $attribution['timeallocmarker'];
+            $record->allocattrib = $attribution['allocattrib'];
         }
 
         if ($existing !== null) {
@@ -676,20 +740,32 @@ class submission_ledger {
      * row per marker — so reading the old column there raises a DML error, and
      * `marker_updated` does fire on 5.2, which would take the observer with it.
      *
-     * With several markers the lowest id is chosen deterministically rather
-     * than trusting the event payload: 5.2+ fires one event per marker in
-     * insertion order, so "the last event wins" and a re-read would disagree
-     * on every multi-marker student and rewrite the row on every poll.
+     * The marker is re-read from core rather than taken from the event payload:
+     * 5.2 fires one marker_updated per marker in insertion order
+     * ({@see \assign::update_allocated_markers()}), so "the last event wins"
+     * and a re-read would disagree on every multi-marker student and rewrite
+     * the row on every poll.
+     *
+     * On a multi-marking activity it is the provisional responsible marker of
+     * owner decision D1: the marker in position 1, in core's order
+     * ({@see self::position_one_marker()}), so adding a second marker never
+     * moves it nor restarts its clock. Elsewhere the lowest id among the rows
+     * is kept, which on a single-marker activity is the one marker.
      *
      * @param int $assignid
      * @param int $userid
+     * @param bool $multi Whether the activity uses multiple marking
+     *                    ({@see marking_progress::uses_multiple_marking()}).
      * @return int Marker user id, or 0 when unallocated.
      */
-    private static function allocated_marker_id(int $assignid, int $userid): int {
+    private static function allocated_marker_id(int $assignid, int $userid, bool $multi): int {
         global $DB;
 
         if (self::$hasallocationtable === null) {
             self::$hasallocationtable = $DB->get_manager()->table_exists('assign_allocated_marker');
+        }
+        if (self::$hasallocationtable && $multi) {
+            return self::position_one_marker($assignid, $userid);
         }
         if (self::$hasallocationtable) {
             $marker = $DB->get_field_sql(
@@ -709,6 +785,216 @@ class submission_ledger {
     }
 
     /**
+     * The marker in position 1 of a student's allocation.
+     *
+     * Core's order, as {@see \assign::get_allocated_markers()} returns it:
+     * allocation rows by id, rows without a marker skipped, as
+     * {@see marking_progress::for_rows()} reads them. Never the lowest user id,
+     * which means nothing to a teacher.
+     *
+     * @param int $assignid
+     * @param int $userid The student.
+     * @return int Marker user id, or 0 when nobody is allocated.
+     */
+    private static function position_one_marker(int $assignid, int $userid): int {
+        global $DB;
+        $rows = $DB->get_records_select(
+            'assign_allocated_marker',
+            'assignment = :assignid AND student = :userid AND marker > 0',
+            ['assignid' => $assignid, 'userid' => $userid],
+            'id ASC',
+            'id, marker',
+            0,
+            1
+        );
+        return $rows ? (int) reset($rows)->marker : 0;
+    }
+
+    /**
+     * Who is responsible for a multi-marking cycle that has just got its agreed
+     * grade, decided once by the activity's method (owner decision D1).
+     *
+     * - `manual`: the grade row's grader, the teacher who saved the final grade
+     *   ({@see \assign::apply_grade_to_user()} sets it to `$USER`), read now
+     *   because a later feedback-only save overwrites it. Their responsibility
+     *   began when the last counted mark was saved: the latest
+     *   `{assign_mark}.timemodified` among the allocated markers' rows, the
+     *   rows {@see \assign::get_marks()} counts. A grader of 0 or less (a
+     *   restore maps an unknown grader to 0) falls back to position 1.
+     * - `maximum`: the marker of the highest mark among the allocated markers'
+     *   rows that hold a mark; the slots arrive in position order and only a
+     *   strictly higher mark replaces the best, so a tie goes to the lower
+     *   position. Core cannot say who won: a calculated grade keeps the id of
+     *   whichever marker's save triggered it
+     *   ({@see \assign::calculate_and_update_grade_from_maximum_mark()}).
+     * - `average` and anything else: position 1.
+     *
+     * Every marker but the confirmer starts from {@see self::marker_start()}.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $cycle The stored ledger row of the cycle, as read before this write.
+     * @param int $userid The student.
+     * @param int $attemptnumber
+     * @param \stdClass|null $grade The attempt's {assign_grades} row.
+     * @return array|null Keys marker, label (an ATTRIB_* constant) and start
+     *                    (int|null); null when nobody can be named.
+     */
+    private static function resolve_responsible(
+        \stdClass $assign,
+        \stdClass $cycle,
+        int $userid,
+        int $attemptnumber,
+        ?\stdClass $grade
+    ): ?array {
+        [$slots, $marks] = self::cycle_slots($assign, (int) $cycle->id, $userid, $attemptnumber, $grade);
+
+        $label = self::ATTRIB_POSITION;
+        switch ((string) $assign->multimarkmethod) {
+            case 'manual':
+                $grader = $grade !== null ? (int) ($grade->grader ?? 0) : 0;
+                if ($grader > 0) {
+                    $start = null;
+                    foreach ($slots as $slot) {
+                        $mark = $marks[$slot['marker']] ?? null;
+                        $done = $mark !== null ? (int) $mark->timemodified : 0;
+                        if ($done > 0 && ($start === null || $done > $start)) {
+                            $start = $done;
+                        }
+                    }
+                    return ['marker' => $grader, 'label' => self::ATTRIB_CONFIRMER, 'start' => $start];
+                }
+                $label = self::ATTRIB_FALLBACK;
+                break;
+            case 'maximum':
+                $best = null;
+                $bestmark = null;
+                foreach ($slots as $slot) {
+                    $mark = $marks[$slot['marker']] ?? null;
+                    if ($mark === null || $mark->mark === null) {
+                        continue;
+                    }
+                    $value = (float) $mark->mark;
+                    if ($bestmark === null || $value > $bestmark) {
+                        $best = $slot['marker'];
+                        $bestmark = $value;
+                    }
+                }
+                if ($best !== null) {
+                    return ['marker' => $best, 'label' => self::ATTRIB_MAXMARK, 'start' => self::marker_start($cycle, $best)];
+                }
+                $label = self::ATTRIB_FALLBACK;
+                break;
+        }
+
+        if (empty($slots)) {
+            return null;
+        }
+        $first = (int) $slots[0]['marker'];
+        return ['marker' => $first, 'label' => $label, 'start' => self::marker_start($cycle, $first)];
+    }
+
+    /**
+     * The provisional responsible marker of a multi-marking cycle: position 1.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $cycle The stored ledger row of the cycle, as read before this write.
+     * @param int $userid The student.
+     * @param int $attemptnumber
+     * @param \stdClass|null $grade The attempt's {assign_grades} row.
+     * @return array Keys marker (0 when nobody is allocated) and start (int|null).
+     */
+    private static function provisional_responsible(
+        \stdClass $assign,
+        \stdClass $cycle,
+        int $userid,
+        int $attemptnumber,
+        ?\stdClass $grade
+    ): array {
+        [$slots] = self::cycle_slots($assign, (int) $cycle->id, $userid, $attemptnumber, $grade);
+        if (empty($slots)) {
+            return ['marker' => 0, 'start' => null];
+        }
+        $first = (int) $slots[0]['marker'];
+        return ['marker' => $first, 'start' => self::marker_start($cycle, $first)];
+    }
+
+    /**
+     * The allocated markers of a cycle in position order, with the grade's marks.
+     *
+     * The slots come from {@see marking_progress::for_rows()}, the one reading
+     * of core's multi-marking state; marks are the grade row's {assign_mark}
+     * rows keyed by marker.
+     *
+     * @param \stdClass $assign The {assign} row.
+     * @param int $subid Ledger row id of the cycle.
+     * @param int $userid The student.
+     * @param int $attemptnumber
+     * @param \stdClass|null $grade The attempt's {assign_grades} row.
+     * @return array [slot entries, marks by marker].
+     */
+    private static function cycle_slots(
+        \stdClass $assign,
+        int $subid,
+        int $userid,
+        int $attemptnumber,
+        ?\stdClass $grade
+    ): array {
+        global $DB;
+
+        $progress = marking_progress::for_rows([(object) [
+            'id' => $subid,
+            'iteminstance' => (int) $assign->id,
+            'userid' => $userid,
+            'attemptnumber' => $attemptnumber,
+        ]]);
+        $slots = $progress[$subid]['slots'] ?? [];
+
+        $marks = [];
+        if ($grade !== null && !empty($grade->id)) {
+            $records = $DB->get_records('assign_mark', ['gradeid' => $grade->id], 'id ASC', 'id, marker, mark, timemodified');
+            foreach ($records as $rec) {
+                $marks[(int) $rec->marker] = $rec;
+            }
+        }
+        return [$slots, $marks];
+    }
+
+    /**
+     * When one marker's responsibility for this cycle began, as far as the
+     * ledger knows it: the one place the start of a marker's clock is looked up.
+     *
+     * Moodle 5.2 keeps no allocation instant ({assign_allocated_marker} has no
+     * time column) and this branch has no per-slot table yet, so the only
+     * instant on record is the cycle's own `timeallocmarker`, which belongs to
+     * the marker stored in `allocmarkerid`: the provisional marker in position
+     * 1 while the cycle is pending, stamped by stamp_allocation_for_user(). A
+     * confirmer's stored instant is a mark, not an allocation, so it is not
+     * reused. Any other marker's start is unknown, and null makes the row's
+     * turnaround unmeasurable rather than charging that marker from somebody
+     * else's allocation ({@see self::allocation_measures()}).
+     *
+     * @param \stdClass $cycle The stored ledger row of the cycle, as read before this write.
+     * @param int $marker The marker whose start is asked for.
+     * @return int|null
+     */
+    private static function marker_start(\stdClass $cycle, int $marker): ?int {
+        $stored = (int) ($cycle->allocmarkerid ?? 0);
+        $attrib = $cycle->allocattrib ?? null;
+        if ($marker <= 0 || $stored !== $marker || $attrib === self::ATTRIB_CONFIRMER) {
+            return null;
+        }
+        if ($cycle->timeallocmarker !== null) {
+            return (int) $cycle->timeallocmarker;
+        }
+        /* An undecided row reads a null timeallocmarker as the first allocation
+         * (allocation_measures() does the same); a decided one as unknown. */
+        if ($attrib === null && $cycle->timeallocated !== null) {
+            return (int) $cycle->timeallocated;
+        }
+        return null;
+    }
+
+    /**
      * Split the response interval into the coordination queue and the marker's
      * own turnaround.
      *
@@ -718,6 +1004,12 @@ class submission_ledger {
      * why the current stamp is used rather than the first: someone who
      * inherits a submission on day 8 and grades it on day 9 turned it round in
      * a day, not nine.
+     *
+     * On a multi-marking cycle whose responsible marker is decided
+     * (`allocattrib` set, owner decision D1), `timeallocmarker` is when
+     * responsibility landed on that person, and a null there means the start is
+     * unknown: the turnaround is then null, not measured from the first
+     * allocation.
      *
      * A non-positive marker interval yields null, never 0.0: zero effective
      * hours bands as `excellent`, so a stamp at or after the grading (which the
@@ -756,9 +1048,18 @@ class submission_ledger {
         }
 
         $allocated = $existing->timeallocated !== null ? (int) $existing->timeallocated : 0;
-        $current = $existing->timeallocmarker !== null ? (int) $existing->timeallocmarker : $allocated;
         if ($allocated <= 0) {
             return $none;
+        }
+        /* An attributed cycle (owner decision D1) whose responsible person has
+         * no known start is unmeasurable: falling back to the first allocation
+         * would charge them a turnaround that began before they were
+         * responsible. */
+        $attributed = ($existing->allocattrib ?? null) !== null;
+        if ($existing->timeallocmarker !== null) {
+            $current = (int) $existing->timeallocmarker;
+        } else {
+            $current = $attributed ? 0 : $allocated;
         }
 
         $out = $none;
@@ -775,8 +1076,11 @@ class submission_ledger {
             $out['queuehours'] = 0.0;
         }
 
+        if ($current <= 0) {
+            return $out;
+        }
         $upper = $timegraded ?? time();
-        if ($current <= 0 || $upper <= $current) {
+        if ($upper <= $current) {
             $out['late'] = $timegraded !== null;
             return $out;
         }
@@ -1104,6 +1408,12 @@ class submission_ledger {
      * a queue they did not cause. The marker id is re-read from core rather
      * than taken from the event payload; see allocated_marker_id().
      *
+     * A cycle whose responsible marker is already decided (`allocattrib` set,
+     * owner decision D1) keeps its marker and clock: only build_and_store()
+     * changes them, and only when the activity withdraws the agreed grade. A
+     * missing first allocation is still stamped there, since the queue is not
+     * the marker's.
+     *
      * @param int $cmid
      * @param int $userid
      * @param int $when Allocation instant, or the moment of discovery when
@@ -1122,30 +1432,34 @@ class submission_ledger {
         global $DB;
 
         $cm = $DB->get_record_sql(
-            "SELECT cm.id, cm.course, cm.instance
+            "SELECT cm.id, cm.course, cm.instance, a.markingworkflow, a.markingallocation, a.markercount
                FROM {course_modules} cm
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
+          LEFT JOIN {assign} a ON a.id = cm.instance
               WHERE cm.id = :cmid",
             ['modname' => 'assign', 'cmid' => $cmid]
         );
         if (!$cm) {
             return;
         }
-        $marker = self::allocated_marker_id((int) $cm->instance, $userid);
+        $marker = self::allocated_marker_id((int) $cm->instance, $userid, marking_progress::uses_multiple_marking($cm));
 
         $rows = $DB->get_records(
             'block_feedback_tracker_sub',
             ['cmid' => $cmid, 'userid' => $userid],
             '',
-            'id, courseid, groupid, timesubmitted, timeallocated, allocmarkerid'
+            'id, courseid, groupid, timesubmitted, timeallocated, allocmarkerid, allocattrib'
         );
         $tuples = [];
         foreach ($rows as $row) {
+            $decided = $row->allocattrib !== null;
             $update = (object) [
                 'id' => (int) $row->id,
-                'allocmarkerid' => $marker,
                 'timemodified' => time(),
             ];
+            if (!$decided) {
+                $update->allocmarkerid = $marker;
+            }
             if ($marker > 0) {
                 /* allocsource describes how this row's instant was obtained, so
                  * it changes only when an instant does; otherwise a sweep
@@ -1167,7 +1481,7 @@ class submission_ledger {
                         : 0.0;
                     $stamped = true;
                 }
-                if ((int) $row->allocmarkerid !== $marker) {
+                if (!$decided && (int) $row->allocmarkerid !== $marker) {
                     // A new marker starts their own clock; the queue metric stays put.
                     $update->timeallocmarker = $when;
                     $update->allochours = null;

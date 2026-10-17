@@ -418,6 +418,61 @@ final class get_pending_submissions_test extends \advanced_testcase {
     }
 
     /**
+     * Each row carries its multi-marker progress: the figures on a
+     * multi-marking activity, the neutral values on any other.
+     *
+     * @return void
+     */
+    public function test_rows_carry_marking_progress(): void {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/mod/assign/locallib.php');
+        $this->resetAfterTest();
+
+        [$course, $teacher] = $this->seed_course_with_teacher();
+        $this->seed_pending_row($course, 'submitted', 5.0);
+        $multi = $this->seed_named_row($course, 'Multi', 'Marked', 9.0);
+        $DB->set_field('assign', 'markingworkflow', 1, ['id' => $multi->iteminstance]);
+        $DB->set_field('assign', 'markingallocation', 1, ['id' => $multi->iteminstance]);
+        $DB->set_field('assign', 'markercount', 2, ['id' => $multi->iteminstance]);
+        $DB->set_field('assign', 'multimarkmethod', 'average', ['id' => $multi->iteminstance]);
+        /* The allocation below fires core's events, and the observers re-read
+         * the submission, so the handed-in work must exist as core sees it. */
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $multi->iteminstance, 'userid' => $multi->userid, 'attemptnumber' => 0,
+            'timecreated' => $multi->timesubmitted, 'timemodified' => $multi->timesubmitted,
+            'status' => 'submitted', 'groupid' => 0, 'latest' => 1,
+        ]);
+
+        $this->setAdminUser();
+        $cm = get_coursemodule_from_instance('assign', $multi->iteminstance);
+        $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
+        $markera = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $markerb = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
+        $assign->update_allocated_markers((int) $multi->userid, [(int) $markera->id, (int) $markerb->id]);
+        $grade = $assign->get_user_grade((int) $multi->userid, true);
+        $grade->grader = (int) $markera->id;
+        $assign->update_mark($grade, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+
+        $this->setUser($teacher);
+        $result = external_api::clean_returnvalue(
+            get_pending_submissions::execute_returns(),
+            get_pending_submissions::execute((int) $course->id, 0, '', 'longestwait', 0, 25)
+        );
+
+        $byid = array_column($result['submissions'], null, 'submissionid');
+        $this->assertCount(2, $byid);
+        $row = $byid[$multi->id];
+        $this->assertSame(2, $row['markers_expected']);
+        $this->assertSame(1, $row['markers_completed']);
+        $this->assertSame('markers', $row['marking_wait']);
+        unset($byid[$multi->id]);
+        $other = reset($byid);
+        $this->assertSame(0, $other['markers_expected']);
+        $this->assertSame(0, $other['markers_completed']);
+        $this->assertSame('', $other['marking_wait']);
+    }
+
+    /**
      * A student cannot read the pending table for their course.
      *
      * @return void

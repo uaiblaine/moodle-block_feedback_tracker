@@ -11,9 +11,10 @@
     * emptytext     Empty-state message
     * cols          {student, activity, group, submitted, waiting, effective, status}
     * rows          Array of {student, activity, group, submitted, waiting, effective, status, bucket,
-                    resubmitted, resubmittedtip}: status is the band's localised label, bucket its
-                    slug (the badge class); resubmitted marks work handed in again after a mark,
-                    explained by resubmittedtip
+                    resubmitted, resubmittedtip, markingline}: status is the band's localised label,
+                    bucket its slug (the badge class); resubmitted marks work handed in again after a
+                    mark, explained by resubmittedtip; markingline is the multi-marker progress
+                    ("1 of 2 markers", "Awaiting agreed grade"), empty when there is none
     * resubmittedlabel  Text of the Resubmitted badge
     * pagingbar     Pre-rendered paging-bar HTML (raw)
     * hasdrafts     Truthy when there is at least one draft (not-yet-submitted) row
@@ -41,7 +42,8 @@
                 "effective": "16.0 h", "effectivenum": 16.0,
                 "status": "Good", "bucket": "good",
                 "resubmitted": true,
-                "resubmittedtip": "This attempt was already marked on 12 May 2026 when the student saved the submission again."
+                "resubmittedtip": "This attempt was already marked on 12 May 2026 when the student saved the submission again.",
+                "markingline": "1 of 2 markers"
             }
         ],
         "resubmittedlabel": "Resubmitted",
@@ -108,6 +110,9 @@
                             <span class="badge bft-badge-resubmitted" title="{{resubmittedtip}}">{{resubmittedlabel}}</span>
                             <span class="bft-sr-only">{{resubmittedtip}}</span>
                         {{/resubmitted}}
+                        {{#markingline}}
+                            <span class="bft-row-marking">{{markingline}}</span>
+                        {{/markingline}}
                     </td>
                 </tr>
             {{/rows}}

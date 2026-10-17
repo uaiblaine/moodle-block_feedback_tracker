@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.0] - Unreleased
 
+### Added
+- **Multi-marker progress in the pending report and the drill-down** (version
+  `2026042005`). On an activity that uses multiple marking, a pending row shows
+  a secondary line under its status: "1 of 2 markers", "Awaiting marker
+  allocation" (fewer markers allocated than the marker count) or "Awaiting
+  agreed grade" (every mark in, nothing computed or confirmed yet). It is read
+  from core's tables when the page is built (`local\sla\marking_progress`), and
+  `get_pending_submissions` returns it as `markers_expected`,
+  `markers_completed` and `marking_wait`. A mark counts as Moodle 5.2 counts it
+  for the agreed grade: any mark row of an allocated marker, whatever that
+  marker's own workflow state. The headline counts are unchanged.
+- **Tests for partial marking and the manual method** (tests only, no version).
+  `tests/local/sla/agreed_grade_test.php` drives core 5.2: fewer marks than the
+  marker count stay pending, every mark in under `manual` stays pending until
+  someone confirms the grade, and every mark in under `average` closes the
+  cycle.
+
 ### Changed
+- **The responsible marker of a multi-marking cycle follows the grade method**
+  (version `2026042005`, new column `allocattrib` on the ledger). While a cycle
+  is pending, its marker is the one in position 1 (the first allocation row),
+  no longer the lowest user id, so re-allocating with a second marker no
+  longer moved the first marker's clock. When the cycle first gets its agreed
+  grade the responsible marker is decided once and kept: under `manual` the
+  teacher who saved the final grade, from the last counted mark; under
+  `maximum` the marker of the highest mark, a tie going to the lower position;
+  otherwise position 1. A later mark edit, re-allocation or feedback save does
+  not move it; a grade cleared by hand hands the cycle back to position 1. A
+  responsible marker whose start nobody recorded (a winner who is not in
+  position 1; Moodle 5.2 keeps no allocation instant) gets no turnaround
+  figure rather than one borrowed from another marker. Single-marker
+  activities are unchanged.
 - **Bulk removal shows its queue and works in batches** (version `2026042003`).
   `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
   run, so the courses used to stay on the list and could be queued again.
