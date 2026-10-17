@@ -80,6 +80,12 @@ below answers is in `docs/moodle-53-assign-audit.md`.
   `update_marker_allocations()` and `update_mark()`.
 
 ### Fixed
+- **The slot sweep no longer completes a new cycle from the previous cycle's
+  mark** (version `2026100508`). Marks belong to the attempt, not to the
+  plugin's cycle, so after a resubmission the sweep stamped the new cycle's
+  slot complete at the old mark's time, an instant before the cycle opened,
+  with no hours, for good. A mark last changed before the hand-in is no longer
+  a completion; the slot waits for the marker's next edit.
 - **A released response stays recorded when its agreed grade is cleared**
   (version `2026100502`). Moodle 5.3's "Update agreed grades" setting (Clear,
   or Recalculate under the manual method) sets every latest grade to -1 with no

@@ -1289,7 +1289,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
 
         /* After the re-sync, so a slot row it just inserted for a marker who
-         * already completed is completed in the same pass. */
+         * already completed is completed in the same pass. A mark belongs to
+         * the attempt (gradeid), not to the plugin's cycle: after a
+         * resubmission opens a new cycle in the same attempt, a mark last
+         * changed before the hand-in is the previous cycle's, so it is no
+         * completion of this one (it would stamp the slot an instant before
+         * the cycle opened, with no hours, for good). The slot then waits for
+         * the marker's next edit, or for submission_marked. */
         [$wsql, $wparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'w');
         $unmarked = $DB->get_records_sql(
             "SELECT m.id, s.id AS slotid, m.timemodified
@@ -1311,6 +1317,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                 AND m.workflowstate = :complete
                 AND m.mark IS NOT NULL
                 AND m.mark >= 0
+                AND m.timemodified >= COALESCE(l.timesubmitted, 0)
            ORDER BY m.timemodified ASC",
             $wparams + $modparams + ['complete' => 'readyforreview']
         );
