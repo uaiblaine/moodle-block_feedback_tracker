@@ -11,6 +11,18 @@ The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Added
+- **"Grade Now" lists a multi-marking submission only for the marker it is
+  pending for** (version `2026100504`, owner decision D3). On an activity that
+  uses multiple marking, the teacher dashboard's cross-course list now shows a
+  submission to a viewer who holds an active slot for the student (a required
+  slot, or an optional one that is enabled) and whose own mark is not yet
+  "Marking completed". A teacher with no slot, such as a coordinator, no longer
+  sees those rows there, and neither does a marker who has finished; rows
+  awaiting allocation or the agreed grade belong to no marker and stay in the
+  pending report and the drill-down, which still list every pending row. The
+  rule is SQL in `marking_progress::pending_for_viewer_sql()`, inside the query,
+  so the limit applies to the viewer's own queue. Other activities and the
+  course-level figures are unchanged.
 - **Multi-marker progress on the pending report and the drill-down** (version
   `2026100503`, owner decision D4). On an activity that uses multiple marking,
   a pending row now says under its status what it waits for: "1 of 2 markers",
