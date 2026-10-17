@@ -1017,16 +1017,17 @@ final class reconcile_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * A repair that could not be queued is reported, not assumed.
+     * A repair whose payload is already pending is merged, not reported as refused.
      *
-     * `queue_adhoc_task()` returns false when nothing was queued, most often
-     * because an identical payload is already pending; see
-     * reconcile_ledger::queue_repair() for the other cases. The sweep must not
-     * count such a batch as dispatched.
+     * On Moodle 5.3 `queue_adhoc_task($task, true)` returns the pending task's
+     * id for an identical payload (MDL-86422), so the repair is on its way and
+     * the sweep must not call it refused. Older branches pin the opposite,
+     * because their core returns false there; see
+     * reconcile_ledger::queue_repair().
      *
      * @return void
      */
-    public function test_a_refused_repair_batch_is_reported(): void {
+    public function test_a_pending_repair_batch_is_merged_not_refused(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
@@ -1054,10 +1055,15 @@ final class reconcile_ledger_test extends \advanced_testcase {
             $DB->count_records('task_adhoc'),
             'Sanity: core dedup collapsed the second dispatch onto the pending one.'
         );
-        $this->assertStringContainsString(
-            'repair batch(es) refused',
+        $this->assertStringNotContainsString(
+            'refused',
             $output,
-            'The sweep must say a batch was refused rather than counting it as dispatched.'
+            'A payload merged into the pending task is not a refusal on 5.3.'
+        );
+        $this->assertStringContainsString(
+            'repaired 1 row(s)',
+            $output,
+            'The merged batch counts as dispatched.'
         );
     }
 

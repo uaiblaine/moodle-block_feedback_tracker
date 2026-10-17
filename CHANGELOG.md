@@ -15,6 +15,11 @@ below answers is in `docs/moodle-53-assign-audit.md`.
   `$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`, one CI
   job on `MOODLE_503_STABLE`. A site on the 5.2 release (`2026042003`) upgrades
   in place; the number only grows, so no version reset is needed.
+- **A recompute or repair already pending is no longer reported as refused.**
+  Moodle 5.3 returns the pending task's id for a duplicate
+  `queue_adhoc_task($task, true)`, reviving it when its retries are exhausted
+  (MDL-86422), so `drain_queue` and `reconcile_ledger` count it as dispatched;
+  only a `false` return, now left for a deprecated component, is a refusal.
 
 ## [1.2.0] - Unreleased
 

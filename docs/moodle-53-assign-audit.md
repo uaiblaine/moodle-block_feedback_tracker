@@ -160,6 +160,16 @@ same six override events through `override_manager`, so `override_changed` /
 `user_rule_changed` already cover them. A test that drives `override_manager` directly
 would pin it on 5.3.
 
+### F8 — Found by the 5.3 baseline run: adhoc dedup returns the pending task
+
+Not an assign change. 5.3 rewrote `core\task\manager::queue_adhoc_task()` around an
+identity hash (MDL-86422): with `$checkforexisting` a duplicate returns the pending task's
+id, reviving it first when its retries are exhausted, where 5.2 returned `false`. The
+baseline suite on m503b (794 tests) failed exactly the two tests that pinned "a duplicate
+is refused" (`drain_queue_test`, `reconcile_ledger_test`). Fixed in P0: a merged duplicate
+counts as dispatched, and the retry-exhausted blocking the old comments describe cannot
+happen on 5.3.
+
 ### F7 — Docs and comments that are wrong for 5.3
 
 | Where | Claim | 5.3 final |

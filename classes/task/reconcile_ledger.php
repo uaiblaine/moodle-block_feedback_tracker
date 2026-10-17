@@ -1265,17 +1265,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * Queue one adhoc repair batch, logging rather than propagating failures.
      *
      * The return value of `queue_adhoc_task()` matters: `false` means nothing
-     * was queued. That is the dedup working when an identical payload is
-     * already pending, but Moodle 5.0 and later also return it up front for a
-     * task whose component is deprecated. And before 5.1.5 and 5.2.1 (so on
-     * 4.5, 5.0, 5.1.0 to 5.1.4 and 5.2.0) the dedup probe does not skip a
-     * retry-exhausted {task_adhoc} row, so an identical payload stays blocked
-     * while `task_adhoc_failed_retention` keeps the dead row (four weeks by
-     * default). The caller counts the outcome instead of assuming the repair
-     * is on its way.
+     * will run the repair. On Moodle 5.3 an identical pending payload is not a
+     * refusal: core returns that task's id and revives it first when its
+     * retries are exhausted (MDL-86422), so the repair is on its way. `false`
+     * is left for a task whose component is deprecated. The 5.2 and older
+     * branches return `false` for the duplicate too, and say why there.
      *
      * @param array $rows Row descriptors for backfill_one_submission.
-     * @return bool True when a new adhoc task was created.
+     * @return bool True when a task will run the repair, new or already pending.
      */
     private function queue_repair(array $rows): bool {
         try {
