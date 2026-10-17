@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached 1.1.0.
 
 ### Fixed
+- **Marker allocation is also observed from Moodle 5.3's events** (version
+  `2024100703`). `db/events.php` now subscribes `marker_added` and `marker_removed`
+  beside `marker_updated`; the classes exist only from 5.3, so here the lines are inert
+  and the file stays identical on every branch. The allocation test now allocates
+  through core's batch "Set allocated marker" operation instead of firing
+  `marker_updated` by hand, so it fails if core stops sending the event; a second test
+  covers two students allocated in one batch call. The `allocsource` column comment
+  and the multi-marking and design docs no longer carry stale claims.
 - **The historical backfill honours the retention window.** With
   `retention_active` on, `backfill_history` no longer dispatches submissions
   last modified before `retention::cutoff()`, the floor `reconcile_ledger`'s
