@@ -140,6 +140,54 @@ final class reconcile_slots_test extends \advanced_testcase {
     }
 
     /**
+     * A mark left from the previous cycle of the same attempt is no completion
+     * of the new cycle; the marker's next edit is.
+     *
+     * @return void
+     */
+    public function test_a_previous_cycle_mark_does_not_complete_the_new_cycle(): void {
+        global $DB;
+        $env = $this->build_environment(1);
+        $student = $env->students[0];
+        $this->mark($env, $student, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $this->mark($env, $student, $env->markers[1], 80, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $first = $DB->get_record('block_feedback_tracker_sub', ['userid' => $student->id, 'iscurrent' => 1], '*', MUST_EXIST);
+        $this->assertNotNull($first->timemarked, 'Control: the agreed grade closed the first cycle.');
+        $DB->set_field('assign_mark', 'timemodified', time() - 1000, []);
+        $DB->set_field('block_feedback_tracker_sub', 'timemarked', time() - 1000, ['id' => $first->id]);
+
+        $resubmitted = time() - 100;
+        $DB->set_field('assign_submission', 'timemodified', $resubmitted, ['userid' => $student->id]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $student->id, 0);
+        $current = $DB->get_record('block_feedback_tracker_sub', ['userid' => $student->id, 'iscurrent' => 1], '*', MUST_EXIST);
+        $this->assertSame(1, (int) $current->cycle, 'Control: a new cycle opened.');
+        $this->assertSame(
+            2,
+            $DB->count_records('block_feedback_tracker_alloc', ['subid' => $current->id, 'timeremoved' => null]),
+            'Control: the new cycle carries both slots.'
+        );
+
+        $this->sweep($env, 500);
+
+        $this->assertSame(
+            2,
+            $DB->count_records('block_feedback_tracker_alloc', ['subid' => $current->id, 'timemarked' => null]),
+            'The previous cycle\'s marks complete nothing of the new cycle.'
+        );
+
+        $this->mark($env, $student, $env->markers[0], 65, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $editedat = (int) $DB->get_field('assign_mark', 'timemodified', ['marker' => $env->markers[0]->id], MUST_EXIST);
+        $this->assertGreaterThanOrEqual($resubmitted, $editedat);
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', null, ['subid' => $current->id]);
+
+        $this->sweep($env, 500);
+
+        $done = $DB->get_record('block_feedback_tracker_alloc', ['subid' => $current->id, 'marker' => $env->markers[0]->id]);
+        $this->assertSame($editedat, (int) $done->timemarked);
+        $this->assertNotNull($done->markhours);
+    }
+
+    /**
      * An optional slot disabled behind core's API is not an active slot: the
      * first pass ends the marker's live row, and the second finds nothing,
      * because a disabled slot is not a missing one either.
