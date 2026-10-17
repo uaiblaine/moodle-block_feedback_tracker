@@ -6,11 +6,12 @@ follows so future edits stay in the same style and pass CI on the first try.
 
 Plugin context: a Moodle block plugin that measures teacher response time
 for `mod_assign` submissions using business/academic time. **One branch per
-Moodle version**: `main` is the Moodle 5.2 branch, the same commit as
-`MOODLE_502_STABLE` (`$plugin->requires = 2026042000`,
-`$plugin->supported = [502, 502]`); `MOODLE_501_STABLE` is 5.1;
-`MOODLE_405_STABLE` is 4.5 (`20241007XX`);
-`MOODLE_503_DEV` awaits a 5.3 compatibility review. CI is the
+Moodle version**: this checkout, `MOODLE_503_DEV`, is the Moodle 5.3 branch
+(`$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`);
+`main` is the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`;
+`MOODLE_501_STABLE` is 5.1; `MOODLE_405_STABLE` is 4.5 (`20241007XX`). What
+5.3 changed in `mod_assign`, and what this branch does about it, is in
+`docs/moodle-53-assign-audit.md`. CI is the
 **moodle-an-hochschulen/moodle-workflows** reusable workflow, one call in
 each branch's `.github/workflows/ci.yml` naming that branch's core.
 
@@ -51,7 +52,7 @@ definition, and none runs on the session model.
 
 Run from the plugin repo (`~/dev/moodle-block_feedback_tracker`). It is
 bind-mounted at `blocks/feedback_tracker` into every stack whose branch
-`$plugin->supported` covers (`main`, 5.2: `m502` and its twin `m502b`), and
+`$plugin->supported` covers (this 5.3 branch: `m503b`), and
 that mount only exists **inside the container** — on
 the host, `~/dev/moodle-501/public/blocks/feedback_tracker` is an empty
 directory.
@@ -66,7 +67,7 @@ mounted stacks.
 
 | Command | What it does |
 |---------|--------------|
-| `mdl grunt m502 blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Core's `amd` task is `eslint:amd` + `rollup`, so this lints the JS on the way. Required before committing JS. |
+| `mdl grunt m503b blocks/feedback_tracker` | Rebuild `amd/build/**/*.min.js` from `amd/src/`. Core's `amd` task is `eslint:amd` + `rollup`, so this lints the JS on the way. Required before committing JS. |
 | `mdl ci moodle-block_feedback_tracker --only grunt` | The CI JS/CSS gate itself: `grunt --max-lint-warnings 0` (ESLint + Stylelint). |
 | `xmllint --noout --schema ~/dev/moodle-502/public/lib/xmldb/xmldb.xsd db/install.xml` | Validate the XMLDB schema. Core libs sit under `public/` on the 5.x split layout. |
 
@@ -78,7 +79,7 @@ the plugin and phpcs would otherwise scan the result. Reproduce the whole
 pipeline locally with `mdl ci moodle-block_feedback_tracker` before pushing
 — see *Debugging CI failures* for this plugin's invocations.
 
-PHPUnit runs as `mdl phpunit m502 block_feedback_tracker`. Its `phpunit.xml`
+PHPUnit runs as `mdl phpunit m503b block_feedback_tracker`. Its `phpunit.xml`
 is generated at the **stack checkout root** (`$CFG->root`, above `public/`),
 never `public/phpunit.xml`; `mdl phpunit-init <stack>` regenerates it, which
 is required after the mounted plugin set changes.
@@ -1349,7 +1350,7 @@ a mount-time loader) without `TypeError: finally is not a function`.
 
 Every new `amd/src/**/*.js` file must have its `amd/build/**/*.min.js`
 counterpart committed in the same PR. Build with
-`mdl grunt m502 blocks/feedback_tracker`.
+`mdl grunt m503b blocks/feedback_tracker`.
 
 `amd/build/**` is **tracked** in git (not gitignored) — Moodle serves the
 compiled bundle, not `amd/src`. When resolving a cherry-pick conflict,
@@ -1362,7 +1363,7 @@ amd/build/...` is a valid way to restore it.
 - The stacks serve `amd/build/*.min.js`, not `amd/src`, even with
   `cachejs = false`: Moodle reads `amd/src` only when the `.map` beside the build
   is missing. An edit is therefore live only after
-  `mdl grunt m502 blocks/feedback_tracker`, and a mutation test that skips the
+  `mdl grunt m503b blocks/feedback_tracker`, and a mutation test that skips the
   rebuild silently tests the old build.
 - Visit `/blocks/feedback_tracker/pages/spike_react.php` as site admin
   (e.g. http://localhost:8501/…) for a quick smoke test of the Preact
@@ -1447,7 +1448,7 @@ README's requirements line diverge the same way**: each branch names its own
   (phplint/phpcs/phpdoc/grunt/leftover) since runtime legs rarely break.
 - **The whole gate runs locally — don't push to find out whether phpcs
   passes.** The repo dir is `moodle-block_feedback_tracker` (`main`, 5.2); it
-  mounts at `blocks/feedback_tracker` on `m502` and `m502b`. This plugin's
+  mounts at `blocks/feedback_tracker` on `m503b`. This plugin's
   invocations:
 
   ```sh
@@ -1455,14 +1456,14 @@ README's requirements line diverge the same way**: each branch names its own
   mdl ci moodle-block_feedback_tracker --only grunt          # ESLint + Stylelint
   mdl ci moodle-block_feedback_tracker                       # full static + PHPUnit
   mdl ci moodle-block_feedback_tracker --behat               # add the Behat leg
-  mdl phpunit m502 block_feedback_tracker                    # this plugin's testsuite
-  mdl behat m502 @block_feedback_tracker                     # this plugin's scenarios
-  mdl grunt m502 blocks/feedback_tracker                     # rebuild amd/build
+  mdl phpunit m503b block_feedback_tracker                    # this plugin's testsuite
+  mdl behat m503b @block_feedback_tracker                     # this plugin's scenarios
+  mdl grunt m503b blocks/feedback_tracker                     # rebuild amd/build
   ```
 
 - `mdl ci` defaults to the 5.1 leg (`--branch MOODLE_501_STABLE --php 8.3
   --db pgsql`) and skips Behat unless asked: for `main` pass
-  `--branch MOODLE_502_STABLE --php 8.4`, or run `--matrix`. The MariaDB leg
+  `--branch MOODLE_503_STABLE --php 8.4`, or run `--matrix`. The MariaDB leg
   (`--db mariadb`) is worth a run whenever the change touches SQL.
 
 ## MDL Shield reviews

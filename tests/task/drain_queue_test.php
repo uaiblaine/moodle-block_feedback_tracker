@@ -160,18 +160,18 @@ final class drain_queue_test extends \advanced_testcase {
     }
 
     /**
-     * A tuple whose recompute core refuses to queue is reported as refused,
-     * not counted as dispatched: the audit row's count is what actually went
-     * out.
+     * A tuple whose recompute is already pending is merged into that task and
+     * counted as dispatched: on Moodle 5.3 core returns the pending task's id
+     * (MDL-86422), which recomputes the tuple. Only a false return is a refusal.
      *
      * @return void
      */
-    public function test_a_refused_dispatch_is_not_counted_as_dispatched(): void {
+    public function test_a_pending_dispatch_is_merged_and_counted(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_config();
 
-        // A recompute already pending for (42, 99): core refuses the duplicate.
+        // A recompute already pending for (42, 99): core merges the duplicate into it.
         $existing = new recompute_one();
         $existing->set_custom_data(['courseid' => 42, 'groupid' => 99]);
         \core\task\manager::queue_adhoc_task($existing, true);
@@ -183,10 +183,10 @@ final class drain_queue_test extends \advanced_testcase {
 
         $this->assertCount(2, \core\task\manager::get_adhoc_tasks(recompute_one::class));
         $log = $DB->get_record('block_feedback_tracker_log', ['reason' => 'drain'], '*', MUST_EXIST);
-        $this->assertSame(1, (int) $log->affectedrows, 'Only the tuple actually queued counts as dispatched.');
+        $this->assertSame(2, (int) $log->affectedrows, 'The merged tuple counts as dispatched.');
         $details = json_decode($log->details, true);
-        $this->assertSame(1, $details['refused']);
-        $this->assertStringContainsString('1 of 2 tuple(s) were not queued', ob_get_contents());
+        $this->assertSame(0, $details['refused']);
+        $this->assertStringNotContainsString('were not queued', ob_get_contents());
     }
 
     /**

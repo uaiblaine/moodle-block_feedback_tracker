@@ -40,11 +40,11 @@ use block_feedback_tracker\local\sla\process_memos;
  * `queue_adhoc_task($task, true)` collapses a pending task with the same
  * component, class and custom data, so a burst of grading on one
  * (courseid, groupid) tuple, including the task the submission_graded
- * observer queues, yields a single recompute. Such a refusal is counted apart
- * from the dispatches, because the same refusal also comes from a
- * retry-exhausted task on the versions
- * {@see reconcile_ledger::queue_repair()} lists, and then nothing will
- * recompute the tuple while the dead row is kept.
+ * observer queues, yields a single recompute. On Moodle 5.3 the duplicate
+ * returns the pending task's id, reviving it first when its retries are
+ * exhausted (MDL-86422), so it counts as dispatched: that task recomputes the
+ * tuple. Only `false` is counted apart, which 5.3 returns for a task whose
+ * component is deprecated; see {@see reconcile_ledger::queue_repair()}.
  *
  * The queue row is not removed here: `recompute_one::execute()` deletes it
  * after a successful `rollup_service::recompute_group()`, so a recompute that
@@ -121,8 +121,7 @@ class drain_queue extends \core\task\scheduled_task {
 
         if ($refused > 0) {
             mtrace(sprintf(
-                'drain_queue: %d of %d tuple(s) were not queued '
-                . '(a recompute already pending, or blocked by a retry-exhausted task).',
+                'drain_queue: %d of %d tuple(s) were not queued (core refused the task).',
                 $refused,
                 $ok + $refused + $fail
             ));
