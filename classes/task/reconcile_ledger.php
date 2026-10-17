@@ -1044,9 +1044,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * On Moodle 4.5 and 5.1 only the batch "Set allocated marker" operation
      * fires `marker_updated`; quick grading and the grading form write
      * `assign_user_flags.allocatedmarker` in silence. On 5.2 every path fires,
-     * but a de-allocation still does not. Without this sweep the marker
-     * turnaround is measurable only for batch-allocated work, usually a small
-     * and non-random slice.
+     * but a de-allocation still does not. On 5.3 every path fires
+     * marker_added / marker_removed, so the sweep there only catches what an
+     * observer missed (a course that became processable later, a failed
+     * observer). Without this sweep the marker turnaround is measurable only
+     * for event-allocated work, on 4.5 and 5.1 usually a small and non-random
+     * slice.
      *
      * The stamp it writes is the moment of discovery, not of allocation, so it
      * is recorded as `reconciled` and is accurate only to the sweep period.

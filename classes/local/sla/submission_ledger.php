@@ -699,9 +699,10 @@ class submission_ledger {
      * `marker_updated` does fire on 5.2, which would take the observer with it.
      *
      * With several markers the lowest id is chosen deterministically rather
-     * than trusting the event payload: 5.2+ fires one event per marker in
-     * insertion order, so "the last event wins" and a re-read would disagree
-     * on every multi-marker student and rewrite the row on every poll.
+     * than trusting the event payload: 5.2 fires one marker_updated per marker
+     * in insertion order, and 5.3 fires marker_added / marker_removed per slot
+     * change, so "the last event wins" and a re-read would disagree on every
+     * multi-marker student and rewrite the row on every poll.
      *
      * @param int $assignid
      * @param int $userid
