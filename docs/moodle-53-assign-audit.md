@@ -493,7 +493,13 @@ uses position 1 while pending and leaves a decided cycle alone.
 
 ## 5. Future work: what can go back to 5.2, 5.1 and 4.5
 
-Recorded here; nothing below is scheduled. 5.2 already has `markercount`,
+**Status (2026-10-17): all done.** B1, B2, B7 on 5.2 (#82), 4.5 (#83) and 5.1 (#84); B8, B3, B5
+on 5.2 (#85); B6 and B4 on 5.2 (#90); B4 on 5.1 (#86) and 4.5 (#88), with the same rule added
+to this branch (#87): a submission of an activity with marking allocation is pending only for
+its allocated markers, an unallocated one for every teacher. The 5.2 port of the slots sweep
+found a stale-mark defect fixed here in #89. The table below is the plan as written.
+
+Recorded here. 5.2 already has `markercount`,
 `multimarkmethod` (`manual` / `maximum` / `average`), `{assign_allocated_marker}` and
 `{assign_mark}`; it lacks optional slots and every per-slot event.
 
