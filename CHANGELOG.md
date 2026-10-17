@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - Unreleased
+
+The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
+below answers is in `docs/moodle-53-assign-audit.md`.
+
+### Changed
+- **This branch is the Moodle 5.3 branch** (version `2026100500`):
+  `$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`, one CI
+  job on `MOODLE_503_STABLE`. A site on the 5.2 release (`2026042003`) upgrades
+  in place; the number only grows, so no version reset is needed.
+
 ## [1.2.0] - Unreleased
 
 ### Changed
