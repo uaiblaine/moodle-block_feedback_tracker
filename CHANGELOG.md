@@ -11,6 +11,21 @@ The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Added
+- **The responsible marker follows "Calculate grade"** (version `2026100506`,
+  owner decision D1). On a multi-marking activity the ledger's `allocmarkerid`
+  is, while the cycle is pending, the marker in position 1 in core's order
+  rather than the lowest user id, so adding a second marker no longer moves the
+  first marker's clock. When the cycle first carries its agreed grade the
+  responsible person is decided once by the activity's method and stored: under
+  manual, the teacher who saved the final grade (from the last mark's "Marking
+  completed"); under maximum, the marker of the highest completed mark, a tie
+  going to the lower position (from their own slot allocation); under average,
+  position 1. A new nullable column on `block_feedback_tracker_sub`,
+  `allocattrib`, says how (`confirmer`, `maxmark`, `position`, or `fallback`
+  when the method's rule named nobody). It is sticky like the response time: a
+  later mark edit, recalculation or removed marker leaves it, and only the
+  activity withdrawing the agreed grade clears it and returns the row to the
+  provisional marker. Single-marker activities are unchanged.
 - **Per-marker attribution on multi-marking activities** (version
   `2026100505`, owner decision D3). A new table,
   `block_feedback_tracker_alloc`, keeps one row per measurement cycle and marker

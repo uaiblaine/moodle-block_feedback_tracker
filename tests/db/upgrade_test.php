@@ -51,7 +51,7 @@ final class upgrade_test extends \advanced_testcase {
 
     /**
      * The 2026100505 step creates the per-marker slot table on a site that
-     * lacks it, and records its savepoint.
+     * lacks it; the steps after it run too, so the last savepoint is recorded.
      *
      * @return void
      */
@@ -70,7 +70,31 @@ final class upgrade_test extends \advanced_testcase {
 
         $this->assertTrue($dbman->table_exists($table));
         $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
-        $this->assertSame('2026100505', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
+    }
+
+    /**
+     * The 2026100506 step adds the attribution label to the ledger on a site
+     * that lacks it, and records its savepoint.
+     *
+     * @return void
+     */
+    public function test_the_attribution_step_adds_the_column(): void {
+        global $DB;
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $dbman = $DB->get_manager();
+        $table = new \xmldb_table('block_feedback_tracker_sub');
+        $field = new \xmldb_field('allocattrib', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocsource');
+        $dbman->drop_field($table, $field);
+        $this->assertFalse($dbman->field_exists($table, $field), 'Control: the column is gone.');
+        set_config('version', 2026100505, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100505));
+
+        $this->assertTrue($dbman->field_exists($table, $field));
+        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

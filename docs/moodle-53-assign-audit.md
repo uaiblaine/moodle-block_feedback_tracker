@@ -90,6 +90,8 @@ Severity is about what the plugin reports on a 5.3 site, not about code style.
 
 ### F1 — Blocker: the allocation observer is dead on 5.3
 
+**Closed by P1.**
+
 `db/events.php` subscribes `observer::marker_changed` to `marker_updated` only. On 5.3
 no allocation path fires it, so `timeallocated` / `timeallocmarker` are written only by
 the `allocation` sweep of `reconcile_ledger` with `ALLOC_SOURCE_RECONCILED` (accurate to
@@ -111,6 +113,8 @@ stay identical on every branch.
 
 ### F2 — High: `MIN(marker)` makes the marker clock reset when a marker is added
 
+**Closed by P4:** while pending, a multi-marking row's marker is position 1 in core's order, so adding a marker no longer moves the first marker's clock (`responsible_marker_test::test_pending_marker_is_position_one`).
+
 `submission_ledger::allocated_marker_id()` picks `MIN(am.marker)` (a user id). Adding a
 second marker whose user id is lower than the first's changes `allocmarkerid`, and
 `stamp_allocation_for_user()` then treats it as a reassignment: `timeallocmarker` moves,
@@ -120,6 +124,8 @@ no meaning for the teacher. Core's own order (`optional ASC, id ASC`, position 1
 is the one the Submissions page shows.
 
 ### F3 — High (5.3 only): bulk "Update agreed grades" reopens released cycles
+
+**Closed by P5.**
 
 Clear, or Recalculate under `manual`, sets grade -1 on every latest-attempt grade,
 including students whose grade was released and whose cycle the plugin closed. The writer
@@ -136,6 +142,8 @@ awaiting release" back to pending, which is correct and also untested.
 
 ### F4 — Medium: multi-marker progress is invisible
 
+**Closed by P2.**
+
 Between the first mark and the agreed grade, the plugin shows a pending submission with
 workflow `inmarking`. It cannot say "1 of 2 markers done" or, under `manual`, "all marks
 in, waiting for the agreed grade". Under `manual`, that last wait belongs to the teacher
@@ -143,6 +151,8 @@ in charge, not the markers, and it is the longest wait in that workflow. The fac
 `{assign_mark}` (5.2+) and, on 5.3, are announced by `submission_marked`.
 
 ### F5 — Medium: no per-marker figures
+
+**Closed by P3b and P4.**
 
 `allocmarkerid` holds one id. With N markers, per-marker turnaround (allocated →
 "Marking completed") is not measured. 5.3 gives what was missing: `marker_added` dates
@@ -242,6 +252,17 @@ today's behaviour.
 
   The current `stamp_allocation_for_user()` treats any change of `allocmarkerid` as a
   reassignment and nulls `allochours`. The closure path must set the pair itself.
+- **Stored label and withdrawal (settled at P4).** The decision is stored in
+  `block_feedback_tracker_sub.allocattrib`: `confirmer`, `maxmark`, `position`, or
+  `fallback` (the method's own rule named nobody: a manual grade with no grader, a
+  maximum with no completed mark); null while pending and on single-marker
+  activities. A responsible person whose start the slot table does not know keeps a
+  null `timeallocmarker`, and the row's turnaround is then null (unmeasurable), not
+  measured from the first allocation. When the activity withdraws the agreed grade
+  (the cycle reopens and the D2 rule does not keep a released response), the label
+  is cleared and `allocmarkerid` returns to the provisional marker in position 1,
+  from that marker's slot allocation on the cycle; the next agreed grade decides
+  again.
 - **Row level versus marker level.** The row's `allochours` remains "responsible person:
   responsibility → response". Each marker's own turnaround (allocation → own "Marking
   completed") lives in the per-slot table (D3), so the slower colleague under `maximum` is
@@ -415,6 +436,10 @@ column and `marker_enabled_updated` is not observed.
   Update `assign-marking-allocation.md` phases 4-5 first; it is the design's home.
 
 ### P4 — The responsible marker (D1)
+
+Implemented in `2026100506`: `submission_ledger` decides and stores the responsible
+marker at the first agreed grade (`allocattrib`), and `stamp_allocation_for_user()`
+uses position 1 while pending and leaves a decided cycle alone.
 
 - Resolution at first closure, in the writer, by method, as D1 states. It is stored with a
   source label (`confirmer`, `maxmark`, `position`, `fallback`) so a median can be split
