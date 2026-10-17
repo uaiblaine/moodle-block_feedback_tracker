@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached 1.1.0.
 
 ### Fixed
+- **Grade Now lists a student for the allocated marker** (version `2024100704`). On an
+  activity with marking workflow and marker allocation, the teacher dashboard's
+  cross-course Grade Now list now shows a student only to the marker allocated to them
+  and only until the attempt is graded, and shows a student with no allocated marker to
+  every teacher (the coordinator's queue); activities without allocation are unchanged.
+  The rule is decided in SQL before the limit (`allocation_scope`), so hidden rows do not
+  use the limit up.
 - **Marker allocation is also observed from Moodle 5.3's events** (version
   `2024100703`). `db/events.php` now subscribes `marker_added` and `marker_removed`
   beside `marker_updated`; the classes exist only from 5.3, so here the lines are inert
