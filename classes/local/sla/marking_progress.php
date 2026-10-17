@@ -237,7 +237,7 @@ final class marking_progress {
      * @param \stdClass $assign Row of {assign} with the marking columns.
      * @return bool
      */
-    private static function uses_multiple_marking(\stdClass $assign): bool {
+    public static function uses_multiple_marking(\stdClass $assign): bool {
         return !empty($assign->markingworkflow)
             && !empty($assign->markingallocation)
             && ((int) $assign->markercount + (int) $assign->optionalmarkercount) > 1;

@@ -11,6 +11,33 @@ The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Added
+- **Per-marker attribution on multi-marking activities** (version
+  `2026100505`, owner decision D3). A new table,
+  `block_feedback_tracker_alloc`, keeps one row per measurement cycle and marker
+  slot, so each marker's own turnaround, from becoming responsible to their own
+  "Marking completed", is measured apart from the row-level figures. It is
+  written only by the new `local\sla\slot_ledger`: `marker_added` /
+  `marker_removed` stamp the allocation (`observed`), a new cycle inherits the
+  markers already allocated at its hand-in (`carried`), the newly observed
+  `submission_marked` records each marker's first completion (a draft mark
+  records nothing, and a later edit back to "In marking" clears nothing), and a
+  re-allocation after a removal starts a new clock. The turnaround is stored in
+  effective hours and in business days, each counted on its own, from the later
+  of the allocation and the hand-in. A new reconciler sweep, `slots`, repairs
+  what the events missed (an active allocation without a row, a row whose
+  marker no longer holds the slot, a completed mark without a completion), with
+  `reconciled` as the source. Every path that deletes ledger rows (course and
+  activity deletion, unenrolment, account deletion, the data reset, retention,
+  the orphan and departed-participant sweeps, privacy erasure) deletes their
+  slot rows. The privacy provider declares, exports and erases the table for
+  both its subjects, the student and the marker; a marker's erasure deletes the
+  rows where they are the marker and keeps the student's ledger row. The group
+  drill-down gains a "Markers" section (open slots, marks completed, median
+  own turnaround, coverage), shown only when the page's rows include
+  multi-marking work and the viewer has `mod/assign:manageallocations` in the
+  course. The figures are gated per activity: only for assign activities the
+  viewer can see and may manage allocations in (module context). A student's
+  data export omits the marker's turnaround.
 - **"Grade Now" lists a multi-marking submission only for the marker it is
   pending for** (version `2026100504`, owner decision D3). On an activity that
   uses multiple marking, the teacher dashboard's cross-course list now shows a

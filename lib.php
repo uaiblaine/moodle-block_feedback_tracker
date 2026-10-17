@@ -29,6 +29,7 @@ use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\local\sla\slot_ledger;
 
 /**
  * Returns true when the current request is part of an install / upgrade /
@@ -116,10 +117,12 @@ function block_feedback_tracker_invalidate_rollups(): void {
 }
 
 /**
- * Full data reset: drop every ledger / rollup / trend / site / queue row and
- * bump the calendar version. The platform calendar configuration (cday /
- * chours / cpause) is preserved, and so is the recompute audit log: the reset
- * records itself there, and a log it wiped would hold nothing but that entry.
+ * Full data reset: drop every ledger / slot / rollup / trend / site / queue
+ * row and bump the calendar version. Slot rows are not counted apart: they
+ * belong to the ledger rows they describe. The platform calendar
+ * configuration (cday / chours / cpause) is preserved, and so is the
+ * recompute audit log: the reset records itself there, and a log it wiped
+ * would hold nothing but that entry.
  * Optionally re-enables the backfill task so historic submissions are
  * re-ingested.
  *
@@ -147,6 +150,7 @@ function block_feedback_tracker_reset_data(bool $reenablebackfill = false): arra
         'queue'   => (int) $DB->count_records('block_feedback_tracker_queue'),
     ];
 
+    slot_ledger::delete_all();
     $DB->delete_records('block_feedback_tracker_sub');
     $DB->delete_records('block_feedback_tracker_group');
     $DB->delete_records('block_feedback_tracker_trend');

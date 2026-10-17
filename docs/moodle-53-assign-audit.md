@@ -292,6 +292,17 @@ submission of their courses, whatever the allocation.
 - Per-marker figures about **other** markers (medians, coverage) stay gated on
   `mod/assign:manageallocations`, as `assign-marking-allocation.md` phase 4 proposed. A
   marker always sees their own queue.
+- **When a marker's clock starts** (settled at P3b). A marker becomes responsible for a
+  cycle when allocated, but never before its hand-in. Core keeps allocations per student,
+  not per attempt or cycle, so a cycle opened while markers are already allocated (the
+  first hand-in, or a resubmission's new cycle) inherits them at its hand-in instant, with
+  `allocsource = carried`; that instant is exact by construction. The turnaround is
+  measured from the later of the allocation and the hand-in.
+- **A re-allocation restarts the clock.** A marker removed and allocated again starts
+  from the new allocation, and a completion recorded before the removal no longer stands
+  on that slot. A removal and re-allocation in the same second are one save moving the
+  marker between positions (`update_marker_allocations()` fires per position), so only
+  the removal is undone there.
 
 ### D4 — Show multi-marker progress
 
@@ -373,6 +384,11 @@ ships before the per-slot work. Tests: the owner's example, an enabled optional 
 single-marker control, and agreement with `for_rows()`.
 
 ### P3b — Per-slot table, per-marker figures, privacy (D3)
+
+Implemented in `2026100505`: `local\sla\slot_ledger` writes the table, the `slots`
+reconcile sweep repairs it, and the drill-down's Markers section reads it through
+`local\sla\marker_figures`; only active slots get rows, so the table has no `enabled`
+column and `marker_enabled_updated` is not observed.
 
 - Table `block_feedback_tracker_alloc`, one row per ledger cycle and slot: ledger row id,
   position, marker, `optional`, `enabled`, `timeallocated`, `allocsource`, `timemarked`

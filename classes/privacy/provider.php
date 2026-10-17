@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\privacy;
 
+use block_feedback_tracker\local\sla\slot_ledger;
 use core_privacy\local\metadata\collection;
 use core_privacy\local\request\approved_contextlist;
 use core_privacy\local\request\approved_userlist;
@@ -42,6 +43,12 @@ use core_privacy\local\request\writer;
  *    names the teacher currently allocated to mark each submission
  *    (allocmarkerid): that teacher's allocations are exported as theirs, and
  *    erasing them clears the id while the student's row stays.
+ *  - {block_feedback_tracker_alloc}, the per-marker slot table of multi-marking
+ *    activities, holds two subjects: the student (userid) and the marker
+ *    (marker). Each is exported their own view of a row; a student's erasure
+ *    deletes their slot rows with their ledger rows, and a marker's erasure
+ *    deletes the rows where they are the marker while the student's ledger
+ *    row stays.
  *  - The calendar tables (cday / chours / cpause) record who last edited a
  *    row (`usermodified`) and the audit log who triggered a recompute
  *    (`triggeredby`). They live at system context; erasure clears the
@@ -112,6 +119,25 @@ class provider implements
                 'slabucket'        => 'privacy:metadata:sub:slabucket',
             ],
             'privacy:metadata:sub'
+        );
+
+        $collection->add_database_table(
+            'block_feedback_tracker_alloc',
+            [
+                'courseid' => 'privacy:metadata:alloc:courseid',
+                'cmid' => 'privacy:metadata:alloc:cmid',
+                'userid' => 'privacy:metadata:alloc:userid',
+                'marker' => 'privacy:metadata:alloc:marker',
+                'position' => 'privacy:metadata:alloc:position',
+                'optional' => 'privacy:metadata:alloc:optional',
+                'timeallocated' => 'privacy:metadata:alloc:timeallocated',
+                'allocsource' => 'privacy:metadata:alloc:allocsource',
+                'timemarked' => 'privacy:metadata:alloc:timemarked',
+                'markhours' => 'privacy:metadata:alloc:markhours',
+                'markdays' => 'privacy:metadata:alloc:markdays',
+                'timeremoved' => 'privacy:metadata:alloc:timeremoved',
+            ],
+            'privacy:metadata:alloc'
         );
 
         $collection->add_database_table(
@@ -187,9 +213,10 @@ class provider implements
     }
 
     /**
-     * Course contexts where the user has ledger rows or is the allocated
-     * marker of one; system context when they appear as `usermodified` on any
-     * calendar/pause table or `triggeredby` on the audit log.
+     * Course contexts where the user has ledger rows, is the allocated marker
+     * of one, or appears on a slot row as the student or the marker; system
+     * context when they appear as `usermodified` on any calendar/pause table or
+     * `triggeredby` on the audit log.
      *
      * @param int $userid
      * @return contextlist
@@ -216,6 +243,18 @@ class provider implements
             ['markerid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
         );
 
+        // The slot table, once per column for the same reason.
+        foreach (['userid', 'marker'] as $column) {
+            $sql = "SELECT ctx.id
+                      FROM {block_feedback_tracker_alloc} a
+                      JOIN {context} ctx ON ctx.contextlevel = :coursectxlevel AND ctx.instanceid = a.courseid
+                     WHERE a.$column = :userid";
+            $contextlist->add_from_sql(
+                $sql,
+                ['userid' => $userid, 'coursectxlevel' => CONTEXT_COURSE]
+            );
+        }
+
         // Select ctx.id from {context} rather than a bare :placeholder:
         // PostgreSQL types a selected placeholder as text, and the join that
         // contextlist::add_from_sql() wraps around this query compares it with
@@ -238,8 +277,9 @@ class provider implements
     }
 
     /**
-     * Users with ledger rows in a course context or allocated to mark one, or
-     * who modified any calendar / audit row at system context.
+     * Users with ledger rows in a course context, allocated to mark one, or on
+     * a slot row as the student or the marker; or who modified any calendar /
+     * audit row at system context.
      *
      * @param userlist $userlist
      * @return void
@@ -256,6 +296,16 @@ class provider implements
             $userlist->add_from_sql(
                 'allocmarkerid',
                 'SELECT allocmarkerid FROM {block_feedback_tracker_sub} WHERE courseid = :courseid AND allocmarkerid > 0',
+                ['courseid' => $context->instanceid]
+            );
+            $userlist->add_from_sql(
+                'userid',
+                'SELECT userid FROM {block_feedback_tracker_alloc} WHERE courseid = :courseid',
+                ['courseid' => $context->instanceid]
+            );
+            $userlist->add_from_sql(
+                'marker',
+                'SELECT marker FROM {block_feedback_tracker_alloc} WHERE courseid = :courseid',
                 ['courseid' => $context->instanceid]
             );
             return;
@@ -307,6 +357,8 @@ class provider implements
             }
 
             self::export_marker_allocations($context, (int) $userid);
+            self::export_marker_slots($context, (int) $userid);
+            self::export_student_slots($context, (int) $userid);
 
             $rows = $DB->get_records('block_feedback_tracker_sub', [
                 'courseid' => $context->instanceid,
@@ -460,6 +512,105 @@ class provider implements
     }
 
     /**
+     * Export the slot rows where one user is the marker, in a course.
+     *
+     * The marker's own record: which activity, attempt and cycle, the slot,
+     * since when they held it and how long they took. The student is the
+     * student's data and is left out, as in export_marker_allocations().
+     *
+     * @param \context_course $context
+     * @param int $userid The marker.
+     * @return void
+     */
+    private static function export_marker_slots(\context_course $context, int $userid): void {
+        global $DB;
+
+        $rows = $DB->get_records_sql(
+            "SELECT a.id, a.cmid, l.attemptnumber, l.cycle, a.position, a.optional, a.timeallocated,
+                    a.allocsource, a.timemarked, a.markhours, a.markdays, a.timeremoved
+               FROM {block_feedback_tracker_alloc} a
+               JOIN {block_feedback_tracker_sub} l ON l.id = a.subid
+              WHERE a.courseid = :courseid AND a.marker = :marker
+           ORDER BY a.cmid ASC, a.id ASC",
+            ['courseid' => $context->instanceid, 'marker' => $userid]
+        );
+        if (empty($rows)) {
+            return;
+        }
+        $slots = [];
+        foreach ($rows as $r) {
+            $slots[] = self::slot_export($r);
+        }
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:markerslots', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['slots' => $slots]);
+    }
+
+    /**
+     * Export the slot rows of one student's submissions, in a course.
+     *
+     * Which marker held each slot of the student's work and when they
+     * completed it, as the student's ledger export names the allocated marker.
+     *
+     * @param \context_course $context
+     * @param int $userid The student.
+     * @return void
+     */
+    private static function export_student_slots(\context_course $context, int $userid): void {
+        global $DB;
+
+        $rows = $DB->get_records_sql(
+            "SELECT a.id, a.cmid, l.attemptnumber, l.cycle, a.marker, a.position, a.optional, a.timeallocated,
+                    a.allocsource, a.timemarked, a.timeremoved
+               FROM {block_feedback_tracker_alloc} a
+               JOIN {block_feedback_tracker_sub} l ON l.id = a.subid
+              WHERE a.courseid = :courseid AND a.userid = :userid
+           ORDER BY a.cmid ASC, a.id ASC",
+            ['courseid' => $context->instanceid, 'userid' => $userid]
+        );
+        if (empty($rows)) {
+            return;
+        }
+        $slots = [];
+        foreach ($rows as $r) {
+            $slots[] = ['marker' => (int) $r->marker] + self::slot_export($r, false);
+        }
+        $subcontext = [
+            get_string('pluginname', 'block_feedback_tracker'),
+            get_string('privacy:path:slots', 'block_feedback_tracker'),
+        ];
+        writer::with_context($context)->export_data($subcontext, (object) ['slots' => $slots]);
+    }
+
+    /**
+     * The fields of a slot row shown to a subject.
+     *
+     * @param \stdClass $r Slot row joined with its ledger row's attempt and cycle.
+     * @param bool $withmeasures True for the marker's own export, which adds the marker's turnaround.
+     * @return array
+     */
+    private static function slot_export(\stdClass $r, bool $withmeasures = true): array {
+        $row = [
+            'cmid' => (int) $r->cmid,
+            'attemptnumber' => (int) $r->attemptnumber,
+            'cycle' => (int) $r->cycle,
+            'position' => (int) $r->position,
+            'optional' => transform::yesno((int) $r->optional === 1),
+            'timeallocated' => $r->timeallocated !== null ? transform::datetime((int) $r->timeallocated) : null,
+            'allocsource' => (string) $r->allocsource,
+            'timemarked' => $r->timemarked !== null ? transform::datetime((int) $r->timemarked) : null,
+            'timeremoved' => $r->timeremoved !== null ? transform::datetime((int) $r->timeremoved) : null,
+        ];
+        if ($withmeasures) {
+            $row['markhours'] = $r->markhours !== null ? (float) $r->markhours : null;
+            $row['markdays'] = $r->markdays !== null ? (int) $r->markdays : null;
+        }
+        return $row;
+    }
+
+    /**
      * Export the site-configuration rows one user is attributed on.
      *
      * These rows are site configuration rather than the user's own content,
@@ -531,8 +682,10 @@ class provider implements
      * deleted contributions.
      *
      * For one user, the submissions they are only allocated to mark belong to
-     * their students and stay: the marker's id is cleared from them instead.
-     * No rollup reads that id, so nothing is re-enqueued for it.
+     * their students and stay: the marker's id is cleared from them instead,
+     * and the slot rows where they are the marker are deleted. No rollup reads
+     * either, so nothing is re-enqueued for them. The user's own slot rows as
+     * a student go with their ledger rows.
      *
      * @param int $courseid
      * @param int|null $userid Restrict to one user, or null to drop the whole course.
@@ -550,8 +703,11 @@ class provider implements
                 'courseid = :courseid AND allocmarkerid = :markerid',
                 ['courseid' => $courseid, 'markerid' => $userid]
             );
+            slot_ledger::delete_for_marker_in_course($courseid, $userid);
             $params['userid'] = $userid;
             $where .= ' AND userid = :userid';
+        } else {
+            slot_ledger::delete_for_course($courseid);
         }
 
         $rows = $DB->get_records_select(
@@ -570,6 +726,7 @@ class provider implements
             $tuples[(int) $r->groupid] = true;
         }
 
+        slot_ledger::delete_for_ledger_where($where, $params);
         $DB->delete_records_select('block_feedback_tracker_sub', $where, $params);
 
         foreach (array_keys($tuples) as $groupid) {

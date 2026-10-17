@@ -472,6 +472,10 @@ class observer {
      * the marker is re-read from core, so the payload's marker id and the order
      * of several events for one student do not matter.
      *
+     * On a multi-marking activity the per-marker slot rows follow too
+     * ({@see slot_ledger::sync_for_user()}), each marker's clock starting at
+     * the event's instant.
+     *
      * @param \core\event\base $event
      * @return void
      */
@@ -488,11 +492,45 @@ class observer {
             return;
         }
 
-        submission_ledger::stamp_allocation_for_user(
-            $cmid,
-            $userid,
-            (int) ($event->timecreated ?: time())
-        );
+        $when = (int) ($event->timecreated ?: time());
+        submission_ledger::stamp_allocation_for_user($cmid, $userid, $when);
+        slot_ledger::sync_for_user($cmid, $userid, $when, slot_ledger::SOURCE_OBSERVED);
+    }
+
+    /**
+     * A marker's own mark or own workflow state changed (Moodle 5.3).
+     *
+     * Core fires `submission_marked` from {@see \assign::update_mark()} with
+     * `other.draft` set unless the marker's state is readyforreview ("Marking
+     * completed"), so only an event without it is a completion. It records the
+     * marker's first completion on the student's current cycle
+     * ({@see slot_ledger::mark_completed()}); the event's `objectid` is the
+     * {assign_mark} row.
+     *
+     * @param \core\event\base $event
+     * @return void
+     */
+    public static function submission_marked(\core\event\base $event): void {
+        $cmid = (int) ($event->contextinstanceid ?? 0);
+        $markid = (int) ($event->objectid ?? 0);
+        if ($cmid <= 0 || $markid <= 0) {
+            return;
+        }
+        $other = $event->other;
+        if (is_object($other)) {
+            $other = (array) $other;
+        }
+        if (!empty($other['draft'])) {
+            return;
+        }
+
+        global $DB;
+        $courseid = (int) $DB->get_field('course_modules', 'course', ['id' => $cmid], IGNORE_MISSING);
+        if (!course_access::is_processable($courseid)) {
+            return;
+        }
+
+        slot_ledger::mark_completed($markid, (int) ($event->timecreated ?: time()));
     }
 
     /**

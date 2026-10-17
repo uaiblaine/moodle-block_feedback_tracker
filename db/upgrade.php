@@ -61,5 +61,37 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         );
     }
 
+    if ($oldversion < 2026100505) {
+        /* Per-marker attribution on multi-marking activities (owner decision
+         * D3): one row per ledger cycle and marker slot. Written out here as
+         * it stands at this version rather than read from install.xml. */
+        $table = new xmldb_table('block_feedback_tracker_alloc');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('subid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('courseid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('cmid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('marker', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, null);
+        $table->add_field('position', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0');
+        $table->add_field('optional', XMLDB_TYPE_INTEGER, '1', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timeallocated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('allocsource', XMLDB_TYPE_CHAR, '12', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timemarked', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('markhours', XMLDB_TYPE_NUMBER, '10, 2', null, null, null, null);
+        $table->add_field('markdays', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('timeremoved', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, null, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0');
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', XMLDB_UNSIGNED, XMLDB_NOTNULL, null, '0');
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker']);
+        $table->add_index('idx_marker', XMLDB_INDEX_NOTUNIQUE, ['marker']);
+        $table->add_index('idx_course_cm', XMLDB_INDEX_NOTUNIQUE, ['courseid', 'cmid']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_block_savepoint(true, 2026100505, 'feedback_tracker');
+    }
+
     return true;
 }
