@@ -11,6 +11,16 @@ The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Fixed
+- **A released response stays recorded when its agreed grade is cleared**
+  (version `2026100502`). Moodle 5.3's "Update agreed grades" setting (Clear,
+  or Recalculate under the manual method) sets every latest grade to -1 with no
+  workflow check, so students who had already received their grade went back
+  to pending and the class lost their response times. A cycle closed by a
+  release keeps its instants while the state is still released; taking the
+  state back from released, or a resubmission, reopens it as before. New tests
+  drive multi-marker grading through `assign::update_mark()`: partial marking
+  stays pending, an optional marker enabled on an unreleased grade reopens it,
+  and a recalculation keeps the first response instant.
 - **Marker allocations are stamped again on Moodle 5.3** (version
   `2026100501`). 5.3 no longer triggers `mod_assign\event\marker_updated`;
   every allocation path fires `marker_added` / `marker_removed` instead, so the

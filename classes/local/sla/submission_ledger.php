@@ -383,6 +383,28 @@ class submission_ledger {
 
         $state = grading_state::resolve($assign, $grade ?: null, $flags, $timesubmitted, $isgradable);
 
+        /* A response the student already received stays recorded when the grade
+         * under it is cleared while the state is still released. Moodle 5.3
+         * clears agreed grades in bulk from the activity settings ("Update
+         * agreed grades": Clear, or Recalculate under the manual method) with
+         * no workflow check, released students included; without this the cycle
+         * would read as pending again and lose its response time. A state taken
+         * back from released, or a resubmission, still reopens as before. */
+        if (
+            $existing !== null
+            && !$state['hasmark']
+            && $state['usesworkflow']
+            && $state['isreleased']
+            && $storedreleased !== null
+            && $storedstudentclosed !== null
+            && $existing->timemarked !== null
+        ) {
+            $state['hasmark'] = true;
+            $state['markbelongs'] = true;
+            $state['timemarked'] = (int) $existing->timemarked;
+            $state['isclosed'] = true;
+        }
+
         /* The release instant exists nowhere in core — {assign_user_flags} has
          * no time columns on any supported version — so it is only ever known
          * from the observed workflow_state_updated event, or from what a
