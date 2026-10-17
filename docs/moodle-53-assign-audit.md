@@ -190,9 +190,14 @@ workflow observer must mirror the live `{assign_user_flags}.workflowstate` and t
 `other.newstate` as a hint; the agreed grade covers the latest attempt only (core says so
 in `calculate_and_save_agreed_grade()`).
 
-Carried over from `assign-marking-allocation.md` and not re-verified in this audit: the
-grading form never updates allocations for team submissions, and `set_user_flags` accepts
-`allocatedmarker` and discards it. Re-check them in P1.
+Carried over from `assign-marking-allocation.md` and re-verified on 5.3 in P1:
+- the grading form never updates allocations for a team submission ("only if this is not
+  a group submission", `apply_grade_to_user()`);
+- `mod_assign_set_user_flags` still accepts `allocatedmarker` and copies it into the flags
+  record, which `update_record()` drops because the column is gone, so nothing is
+  allocated and no event fires.
+
+Neither reaches the plugin.
 
 ## 3. Owner decisions (2026-10-17)
 
