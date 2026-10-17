@@ -1,7 +1,7 @@
 # Marking workflow + marking allocation support — design for `block_feedback_tracker`
 
 Target repo: `/Users/uaiblaine/dev/moodle-block_feedback_tracker`
-Current state: `version.php` → `$plugin->version = 2026080200`, `$plugin->release = '1.0.36'`, `$plugin->supported = [405, 502]`.
+Current state: `version.php` → `$plugin->version = 2026080200`, `$plugin->release = '1.0.36'`, `$plugin->supported = [405, 502]` when this design was written. This checkout is the Moodle 4.5 branch (`$plugin->supported = [405, 405]`); 5.1, 5.2 and 5.3 have their own branches.
 Core references: `/Users/uaiblaine/dev/moodle-405/mod/assign`, `/Users/uaiblaine/dev/moodle-501/public/mod/assign`, `/Users/uaiblaine/dev/moodle/public/mod/assign`.
 
 **Revision note.** This is the second revision. Three adversarial reviews found a fatal self-contradiction in the first draft's closing rule and a dozen implementation defects; every accepted finding is folded in below, and the places where a reviewer was wrong carry a **Disputed** note. The largest changes: the closing rule is now conditional on the instance setting (§2.2), the predicate migration is all-or-nothing rather than "the `IS NULL` ones" (§2.6), `sla_clock` moves to phase 3 with an explicit recompute cost (§5), the current-marker clock is separated from the first-allocation clock (§2.3), and §9 enumerates the eight files the first draft never mentioned.

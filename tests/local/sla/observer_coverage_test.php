@@ -186,44 +186,78 @@ final class observer_coverage_test extends \advanced_testcase {
      * Allocating a marker records when marking responsibility landed, which
      * mod_assign keeps no column for, so it can only be captured from the event.
      *
+     * The allocation goes through core's own batch "Set allocated marker"
+     * operation (the only 4.5 path that fires marker_updated), so the test
+     * proves that the event core sends today reaches the observer: a test that
+     * fired the event by hand stayed green on 5.3 while production lost every
+     * stamp.
+     *
      * @return void
      */
     public function test_marker_allocation_stamps_the_allocation_instant(): void {
         global $DB;
         $this->resetAfterTest();
+        $this->setAdminUser();
         $this->seed_calendar();
         [$student, $cm, $assign, $context] = $this->build_environment([
             'markingworkflow' => 1,
             'markingallocation' => 1,
         ]);
-
-        $t1 = $this->ts('2026-05-11 09:00:00');
-        $DB->insert_record('assign_submission', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
-            'timecreated' => $t1, 'timemodified' => $t1,
-            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
-        ]);
+        $this->submit_student($assign, $student);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNull($row->timeallocated);
         $this->assertSame(0, (int) $row->allocmarkerid);
 
-        $marker = $this->getDataGenerator()->create_and_enrol(
-            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
-            'editingteacher'
-        );
-        $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')
-            ->allocate_marker((int) $assign->id, (int) $student->id, (int) $marker->id);
-        $user = $DB->get_record('user', ['id' => $student->id], '*', MUST_EXIST);
-        $assignobj = $this->assign_object($cm, $context);
-        \mod_assign\event\marker_updated::create_from_marker($assignobj, $user, $marker)->trigger();
+        $marker = $this->create_marker($cm);
+        $this->testable_assign($cm, $context)
+            ->testable_process_set_batch_marking_allocation((string) $student->id, (int) $marker->id);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNotNull($row->timeallocated, 'The allocation instant exists nowhere in core.');
         $this->assertNotNull($row->timeallocmarker);
         $this->assertSame((int) $marker->id, (int) $row->allocmarkerid);
         $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
+    }
+
+    /**
+     * The batch operation fires marker_updated once per selected student, so two
+     * students allocated in one call reach the observer twice and each ledger
+     * row is stamped on its own, as observed, with the chosen marker.
+     *
+     * @return void
+     */
+    public function test_two_students_allocated_in_one_batch_call_are_both_stamped(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $this->seed_calendar();
+        [$first, $cm, $assign, $context] = $this->build_environment([
+            'markingworkflow' => 1,
+            'markingallocation' => 1,
+        ]);
+        $course = $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST);
+        $second = $this->getDataGenerator()->create_and_enrol($course, 'student');
+        foreach ([$first, $second] as $student) {
+            $this->submit_student($assign, $student);
+            submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        }
+
+        $marker = $this->create_marker($cm);
+        $this->testable_assign($cm, $context)->testable_process_set_batch_marking_allocation(
+            $first->id . ',' . $second->id,
+            (int) $marker->id
+        );
+
+        $this->assertSame(2, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
+        foreach ([$first, $second] as $student) {
+            $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $student->id]);
+            $this->assertNotNull($row->timeallocated);
+            $this->assertNotNull($row->timeallocmarker);
+            $this->assertSame((int) $marker->id, (int) $row->allocmarkerid);
+            $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
+        }
     }
 
     /**
@@ -278,6 +312,20 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
+     * Core's testable assign, whose public wrapper runs the batch allocation.
+     *
+     * @param \stdClass $cm The course module.
+     * @param \context_module $context The module context.
+     * @return \mod_assign_testable_assign
+     */
+    private function testable_assign(\stdClass $cm, \context_module $context): \mod_assign_testable_assign {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/mod/assign/tests/fixtures/testable_assign.php');
+        $course = $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST);
+        return new \mod_assign_testable_assign($context, $cm, $course);
+    }
+
+    /**
      * Build a processable course with an enrolled student and an assign.
      *
      * @param array $assignopts Extra {assign} settings.
@@ -301,6 +349,37 @@ final class observer_coverage_test extends \advanced_testcase {
         $context = \context_module::instance($cm->id);
         $assign = $DB->get_record('assign', ['id' => $inst->id], '*', MUST_EXIST);
         return [$student, $cm, $assign, $context];
+    }
+
+    /**
+     * Insert a submitted attempt for the student, at a fixed instant.
+     *
+     * @param \stdClass $assign The assign row.
+     * @param \stdClass $student The student.
+     * @return void
+     */
+    private function submit_student(\stdClass $assign, \stdClass $student): void {
+        global $DB;
+        $t1 = $this->ts('2026-05-11 09:00:00');
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
+            'timecreated' => $t1, 'timemodified' => $t1,
+            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
+        ]);
+    }
+
+    /**
+     * Create a teacher enrolled in the activity's course.
+     *
+     * @param \stdClass $cm The course module.
+     * @return \stdClass The teacher.
+     */
+    private function create_marker(\stdClass $cm): \stdClass {
+        global $DB;
+        return $this->getDataGenerator()->create_and_enrol(
+            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
+            'editingteacher'
+        );
     }
 
     /**
