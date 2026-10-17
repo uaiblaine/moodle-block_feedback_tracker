@@ -27,14 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\task\bulk_remove_blocks;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The queue is what stops a course being queued twice while cron has not run
  * yet, and enqueue() is the server-side check of a selection made in the
  * browser, so a course it lets through is a block removed by mistake.
- *
- * @covers \block_feedback_tracker\local\sla\bulk_removal_queue
  */
+#[CoversClass(bulk_removal_queue::class)]
 final class bulk_removal_queue_test extends \advanced_testcase {
     /** A filter every course built here matches: none has an end date. */
     private const FILTER = ['noenddate' => 1];

@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\event;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Tests for the report_viewed access event.
- *
- * @covers \block_feedback_tracker\event\report_viewed
  */
+#[CoversClass(report_viewed::class)]
 final class report_viewed_test extends \advanced_testcase {
     /**
      * A course-scoped report view triggers exactly one read event carrying

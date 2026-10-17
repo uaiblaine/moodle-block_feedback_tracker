@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Verifies how cday rows, weekend mask, and the exclude-* settings combine
  * into the final per-day rule.
- *
- * @covers \block_feedback_tracker\local\calendar\day_rule_resolver
  */
+#[CoversClass(day_rule_resolver::class)]
 final class day_rule_resolver_test extends \advanced_testcase {
     public function test_weekday_with_no_cday_is_active(): void {
         $this->resetAfterTest();

@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Covers the two-gate decision: block presence at the course's own
  * context + course visibility (with the process_hidden_courses opt-in).
- *
- * @covers \block_feedback_tracker\local\sla\course_access
  */
+#[CoversClass(course_access::class)]
 final class course_access_test extends \advanced_testcase {
     /**
      * Reset the memo before every test method so prior decisions don't

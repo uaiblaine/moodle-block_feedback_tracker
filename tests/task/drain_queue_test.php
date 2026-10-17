@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\dirty_queue;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The drain task pops queued (course, group) tuples and queues one
  * `recompute_one` adhoc task per tuple. The adhoc task owns the queue-row
  * lifecycle: it deletes the row after a successful recompute. Failures
  * leave the row in place for the next scheduled tick to redispatch.
- *
- * @covers \block_feedback_tracker\task\drain_queue
  */
+#[CoversClass(drain_queue::class)]
 final class drain_queue_test extends \advanced_testcase {
     /**
      * Buffer the task's mtrace() output, which Moodle's PHPUnit configuration

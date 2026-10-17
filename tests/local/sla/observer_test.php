@@ -27,14 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Verifies that the observed Moodle events drive ledger upserts, queue entries
  * and adhoc-task queueing, and that the course_access gate applies.
- *
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
 final class observer_test extends \advanced_testcase {
     /**
      * Firing assessable_submitted creates exactly one ledger row and one

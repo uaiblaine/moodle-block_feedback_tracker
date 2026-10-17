@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\external;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Tests for saving academic calendar day data via external functions.
- *
- * @covers \block_feedback_tracker\external\save_calendar_day
  */
+#[CoversClass(save_calendar_day::class)]
 final class save_calendar_day_test extends \advanced_testcase {
     /**
      * Test that invalid daydate is rejected.

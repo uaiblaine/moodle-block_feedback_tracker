@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\form;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Slot validation needs no database. The boundary that matters most is that
  * slots which merely touch are legal: 09:00-12:00 followed by 12:00-18:00 is a
  * day without a lunch break, not an overlap.
- *
- * @covers \block_feedback_tracker\form\business_hours_form
  */
+#[CoversClass(business_hours_form::class)]
 final class business_hours_form_test extends \advanced_testcase {
     /**
      * Validate a set of slots.

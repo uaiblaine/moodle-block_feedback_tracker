@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The day-mode band predicates compare a nullable column, and SQL NULL
  * comparisons are never true — so a row whose effectivedays was never
  * backfilled can fall out of every band while still being counted in total.
- *
- * @covers \block_feedback_tracker\local\sla\submission_browser
  */
+#[CoversClass(submission_browser::class)]
 final class submission_browser_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

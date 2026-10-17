@@ -953,7 +953,9 @@ The canonical guard is in [`lib.php`](lib.php):
 
 - Every test file in `tests/<area>/<thing>_test.php`
 - Class: `block_feedback_tracker\<namespace>\<thing>_test extends \advanced_testcase`
-- `@covers \block_feedback_tracker\...` annotation on the class docblock
+- This 5.3 branch puts coverage in attributes (`#[CoversClass]`, `#[CoversFunction]`,
+  `#[DataProvider]`); the docblock form is deprecated in PHPUnit 11 and the older
+  branches keep it only while they support 4.5
 - Call `$this->resetAfterTest()` in every test that touches the DB
 - DB rows from `$DB->get_records()` and `getDataGenerator()->create_*()`
   return **string** ids under both drivers. Cast to `(int)` when passing

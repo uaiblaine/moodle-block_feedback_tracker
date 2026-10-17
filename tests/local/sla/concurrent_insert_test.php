@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The ledger writer and the dirty queue each read before they insert, against
@@ -40,10 +41,9 @@ use block_feedback_tracker\local\calendar\academic_time;
  * Each test calls preventResetByRollback(): on PostgreSQL the test runner
  * otherwise wraps the test in a transaction, and both writers rethrow a
  * collision inside one, since it has aborted the transaction.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\dirty_queue
  */
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(dirty_queue::class)]
 final class concurrent_insert_test extends \advanced_testcase {
     /**
      * Flush the memos the ledger consults.

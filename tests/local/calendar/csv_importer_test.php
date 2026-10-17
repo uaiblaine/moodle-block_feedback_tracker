@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Format + edge-case coverage for the bulk import parser.
- *
- * @covers \block_feedback_tracker\local\calendar\csv_importer
  */
+#[CoversClass(csv_importer::class)]
 final class csv_importer_test extends \advanced_testcase {
     public function test_blank_and_comment_lines_skipped(): void {
         $this->resetAfterTest();

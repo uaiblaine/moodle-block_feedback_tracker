@@ -26,15 +26,16 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Date-based elapsed-day counting for the "business days" display unit. Time of
  * day is ignored: only the day boundaries crossed are counted, over
  * (date(from), date(to)]. Business days skip weekends and holidays; calendar
  * days count every day. Anchors (UTC): 2026-05-15 is a Friday, 2026-05-18 a
  * Monday.
- *
- * @covers \block_feedback_tracker\local\calendar\day_counter
  */
+#[CoversClass(day_counter::class)]
 final class day_counter_test extends \advanced_testcase {
     /**
      * Configure the platform calendar: UTC, exclude weekends (Sat+Sun),

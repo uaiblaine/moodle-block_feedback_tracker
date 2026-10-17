@@ -28,15 +28,15 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\sla\course_access;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Pins the worker that backfill_history and reconcile_ledger queue: one ledger
  * row per individual row of its payload, idempotent on a re-run, and re-gated
  * at execute time on course processability and on the user still being an
  * active participant.
- *
- * @covers \block_feedback_tracker\task\backfill_one_submission
  */
+#[CoversClass(backfill_one_submission::class)]
 final class backfill_one_submission_test extends \advanced_testcase {
     public function test_empty_payload_is_noop(): void {
         $this->resetAfterTest();

@@ -494,11 +494,11 @@ Recorded here; nothing below is scheduled. 5.2 already has `markercount`,
 |---|---|---|---|---|
 | B1 | `db/events.php` identical on every branch, with the 5.3 events | yes | yes | Inert where the class does not exist; one file to cherry-pick |
 | B2 | Allocation tests drive core's API instead of firing the event by hand | `update_allocated_markers()` | the batch "Set allocated marker" path | The same false-green shape exists on every branch |
-| B3 | `marking_progress` and the progress line (P2) | yes, required slots only (`expected = markercount`) | n/a | Refreshes on the next event or sweep; there is no `submission_marked` |
+| B3 | `marking_progress` and the progress line (P2) | yes, required slots only (`expected = markercount`) | n/a | Read at view time, so it needs no event on 5.2 either |
 | B4 | "Pending for me" (D3, P3) | yes, from `{assign_allocated_marker}` + `{assign_mark}` | yes, with one marker: allocated marker = the only one it is pending for | 4.5/5.1 read `assign_user_flags.allocatedmarker` |
 | B5 | Responsible marker by method (D1, P4) | yes, all three methods; per-slot instants are reconciled only | n/a | Position 1 while pending fixes F2 on 5.2 too |
 | B6 | Per-slot table (P3) | yes, reconciled precision (`assign_mark.timecreated/timemodified`; allocation discovered by the sweep) | n/a | Absorbs item 3 of `moodle-52-multimarking.md` §6 |
 | B7 | Stale comments: `install.xml:32`, the `CLAUDE.md` privacy note, the `supported` headers of the two design docs | yes | yes | Wrong on every branch today |
 | B8 | Partial-marking and "all marks in, no agreed grade" tests | yes | n/a | Owed since August |
 
-F3 / D2 (bulk clear) and the optional-slot paths are 5.3-only. They have no backport.
+F3 / D2 (bulk clear), F8 (adhoc dedup returning the pending task) and the optional-slot paths are 5.3-only. They have no backport.

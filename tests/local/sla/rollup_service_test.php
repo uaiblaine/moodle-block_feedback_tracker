@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Seeds the ledger with a mix of pending + graded rows, runs recompute_group,
  * and verifies pending / critical / overgoal counts, medians, score, and band.
- *
- * @covers \block_feedback_tracker\local\sla\rollup_service
  */
+#[CoversClass(rollup_service::class)]
 final class rollup_service_test extends \advanced_testcase {
     /**
      * Mix of pending + graded rows produces a rollup row with correct

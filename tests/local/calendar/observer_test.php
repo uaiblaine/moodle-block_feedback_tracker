@@ -29,6 +29,7 @@ namespace block_feedback_tracker\local\calendar;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A calendar edit changes how long every pending submission has effectively
@@ -37,9 +38,8 @@ use block_feedback_tracker\local\sla\dirty_queue;
  * touches everything, a course pause only that course, a group pause a single
  * tuple. Every edit also leaves one audit row and purges the calver-keyed
  * caches the bump made unreachable.
- *
- * @covers \block_feedback_tracker\local\calendar\observer
  */
+#[CoversClass(observer::class)]
 final class observer_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

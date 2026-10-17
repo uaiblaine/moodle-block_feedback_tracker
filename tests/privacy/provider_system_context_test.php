@@ -30,14 +30,14 @@ namespace block_feedback_tracker\privacy;
 use core_privacy\local\request\approved_contextlist;
 use core_privacy\local\request\approved_userlist;
 use core_privacy\local\request\writer;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The provider declares four tables holding administrator ids at system
  * context and returns that context from get_contexts_for_userid(), so the
  * export and delete paths must act on it too.
- *
- * @covers \block_feedback_tracker\privacy\provider
  */
+#[CoversClass(provider::class)]
 final class provider_system_context_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

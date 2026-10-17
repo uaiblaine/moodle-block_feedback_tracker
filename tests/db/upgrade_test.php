@@ -27,12 +27,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\db;
 
+use PHPUnit\Framework\Attributes\CoversFunction;
+
 /**
  * The upgrade from 1.1.0 into per-Moodle-version numbering, and the rule
  * that keeps savepoints at or below version.php.
- *
- * @covers ::xmldb_block_feedback_tracker_upgrade
  */
+#[CoversFunction('xmldb_block_feedback_tracker_upgrade')]
 final class upgrade_test extends \advanced_testcase {
     /**
      * A site that reached 1.1.0 and set its version below this branch's

@@ -27,14 +27,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\admin;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The score bands are read from the highest cutoff down and the wait-time
  * buckets from the lowest up, so a threshold saved out of order silently
  * misclassifies the whole site. These tests pin what the setting accepts, and
  * that settings.php puts the three threshold settings behind it.
- *
- * @covers \block_feedback_tracker\local\admin\thresholds_setting
  */
+#[CoversClass(thresholds_setting::class)]
 final class thresholds_setting_test extends \advanced_testcase {
     /**
      * A score-band setting as settings.php builds it.

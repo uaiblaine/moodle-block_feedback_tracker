@@ -28,6 +28,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\audit\recompute_log;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Two retention tasks that own real deletion logic, plus the three thin
@@ -37,13 +38,12 @@ use block_feedback_tracker\local\audit\recompute_log;
  * pending_recomputer_test, site_stats_service_test and trend_service_test here
  * would add ceremony, not safety. What is worth pinning is that each task
  * actually runs and is safe to run twice, since cron will.
- *
- * @covers \block_feedback_tracker\task\prune_audit_log
- * @covers \block_feedback_tracker\task\purge_calendar_cache
- * @covers \block_feedback_tracker\task\recompute_pending
- * @covers \block_feedback_tracker\task\recompute_site_stats
- * @covers \block_feedback_tracker\task\recompute_trend
  */
+#[CoversClass(prune_audit_log::class)]
+#[CoversClass(purge_calendar_cache::class)]
+#[CoversClass(recompute_pending::class)]
+#[CoversClass(recompute_site_stats::class)]
+#[CoversClass(recompute_trend::class)]
 final class scheduled_tasks_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

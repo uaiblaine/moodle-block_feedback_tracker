@@ -28,14 +28,14 @@ namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\sla\group_access;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers the 30-day heatmap series: window length, per-day pause classification
  * (a holiday overrides into a paused day), per-day band derivation from the
  * trend table and the plain-text event labels.
- *
- * @covers \block_feedback_tracker\external\get_academic_days
  */
+#[CoversClass(get_academic_days::class)]
 final class get_academic_days_test extends \advanced_testcase {
     /**
      * The series spans 30 days, flags a seeded holiday as paused, and colours

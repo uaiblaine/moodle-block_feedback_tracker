@@ -28,14 +28,14 @@ namespace block_feedback_tracker\local\output;
 
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\course_finder;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The list prints course, short and category names through Mustache double
  * stashes, so the rows must carry them filtered but unescaped, each formatted
  * in its own context.
- *
- * @covers \block_feedback_tracker\local\output\bulk_remove_rows
  */
+#[CoversClass(bulk_remove_rows::class)]
 final class bulk_remove_rows_test extends \advanced_testcase {
     /**
      * An ampersand in a course, short or category name reaches the template

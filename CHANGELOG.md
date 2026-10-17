@@ -110,6 +110,13 @@ below answers is in `docs/moodle-53-assign-audit.md`.
   `queue_adhoc_task($task, true)`, reviving it when its retries are exhausted
   (MDL-86422), so `drain_queue` and `reconcile_ledger` count it as dispatched;
   only a `false` return, now left for a deprecated component, is a refusal.
+- **The tests carry their coverage in PHPUnit attributes** (`#[CoversClass]`,
+  `#[CoversFunction]`, `#[CoversNothing]`, `#[DataProvider]`) instead of
+  docblock tags, which PHPUnit 11 deprecates: the suite's 99 PHPUnit
+  deprecations are gone. Its one notice is gone too: `ledger_rule_dates_test`
+  deleted overrides through `assign::delete_override()`, deprecated in 5.3
+  (MDL-86513), and now goes through `override_manager::delete_overrides_by_id()`.
+  Tests only: no version bump.
 
 ## [1.2.0] - Unreleased
 

@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Boundary checks for the four-band bucket classifier.
- *
- * @covers \block_feedback_tracker\local\sla\bucket
  */
+#[CoversClass(bucket::class)]
 final class bucket_test extends \advanced_testcase {
     public function test_default_thresholds_classify(): void {
         $this->resetAfterTest();

@@ -28,14 +28,15 @@ namespace block_feedback_tracker\local\output;
 
 use block_feedback_tracker\local\sla\bucket;
 use block_feedback_tracker\local\sla\marking_progress;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * Covers the wait columns in both display units, the status badge label and
  * the multi-marker line.
  * PHPUnit runs in English, whose decimal separator is a dot.
- *
- * @covers \block_feedback_tracker\local\output\drilldown_cells
  */
+#[CoversClass(drilldown_cells::class)]
 final class drilldown_cells_test extends \basic_testcase {
     /**
      * Business-days mode shows the day count and ignores the hours.
@@ -77,11 +78,11 @@ final class drilldown_cells_test extends \basic_testcase {
     /**
      * Each band shows its band_* string, never its slug.
      *
-     * @dataProvider band_label_provider
      * @param string $slug Band slug.
      * @param string $key Lang string the badge must show.
      * @return void
      */
+    #[DataProvider('band_label_provider')]
     public function test_band_label(string $slug, string $key): void {
         $label = drilldown_cells::band_label($slug);
         $this->assertSame(get_string($key, 'block_feedback_tracker'), $label);

@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\form;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Two rules, both with a value that means something other than itself: a site
  * scope legitimately has no id, and a zero end time means open-ended rather
  * than "ends at the epoch".
- *
- * @covers \block_feedback_tracker\form\pause_window_form
  */
+#[CoversClass(pause_window_form::class)]
 final class pause_window_form_test extends \advanced_testcase {
     /**
      * Validate a pause definition.

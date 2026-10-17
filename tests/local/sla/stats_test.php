@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Median / percentile / max boundary checks.
- *
- * @covers \block_feedback_tracker\local\sla\stats
  */
+#[CoversClass(stats::class)]
 final class stats_test extends \advanced_testcase {
     public function test_empty_returns_null(): void {
         $this->assertNull(stats::median([]));

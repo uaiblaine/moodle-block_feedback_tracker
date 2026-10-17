@@ -29,6 +29,7 @@ namespace block_feedback_tracker\external;
 
 use block_feedback_tracker\local\sla\dashboard_scope;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for get_insights.
@@ -40,9 +41,8 @@ use core_external\external_api;
  * Every test resets the scope memo: it is a PHP static keyed by userid, and
  * user ids are reused between tests, so a stale entry would answer for a
  * different user.
- *
- * @covers \block_feedback_tracker\external\get_insights
  */
+#[CoversClass(get_insights::class)]
 final class get_insights_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.
