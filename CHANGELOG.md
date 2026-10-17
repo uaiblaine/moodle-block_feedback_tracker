@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
+### Added
+- **Multi-marker progress on the pending report and the drill-down** (version
+  `2026100503`, owner decision D4). On an activity that uses multiple marking,
+  a pending row now says under its status what it waits for: "1 of 2 markers",
+  "Awaiting marker allocation" (a required marker slot is empty) or "Awaiting
+  agreed grade" (every expected mark is complete and nobody has confirmed the
+  grade). The headline counts are unchanged. The figures reach the page as
+  three new fields of `get_pending_submissions` (`markers_expected`,
+  `markers_completed`, `marking_wait`), read when the page is built by the new
+  `local\sla\marking_progress`, which mirrors core's
+  `get_marker_allocations()`, `mark_is_marked()`, `expected_marker_count()` and
+  `all_markers_marked()` with one query per table for the whole page; nothing
+  is stored, so no new event is subscribed. Tests drive core's
+  `update_marker_allocations()` and `update_mark()`.
+
 ### Fixed
 - **A released response stays recorded when its agreed grade is cleared**
   (version `2026100502`). Moodle 5.3's "Update agreed grades" setting (Clear,

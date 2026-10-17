@@ -245,6 +245,27 @@ const resubmittedTip = (previousmarktime, i18n) => {
 };
 
 /**
+ * The multi-marker line under a pending row's status, empty when there is
+ * none. Mirrors drilldown_cells::marking_line(), so the report and the
+ * drill-down say the same thing about the same row.
+ *
+ * @param {object} row  A get_pending_submissions row.
+ * @param {object} i18n
+ * @returns {string}
+ */
+const markingLine = (row, i18n) => {
+    switch (row.marking_wait) {
+        case 'markers':
+            return String(i18n.marking_progress || '{$a->completed} of {$a->expected} markers')
+                .replace('{$a->completed}', formatCount(row.markers_completed))
+                .replace('{$a->expected}', formatCount(row.markers_expected));
+        case 'allocation': return i18n.marking_wait_allocation || 'Awaiting marker allocation';
+        case 'agreed': return i18n.marking_wait_agreed || 'Awaiting agreed grade';
+        default: return '';
+    }
+};
+
+/**
  * A per-row disclosure: a short tag whose explanation opens on click.
  *
  * Used wherever a row's status is true but incomplete on its own — work handed
@@ -793,6 +814,7 @@ export default function PendingReportView({initial}) {
                                         - Number(row.effectivehours || 0) > PAUSED_TAG_EPSILON;
                                 const rowColor = colourFor(row.slabucket);
                                 const resultbadge = graded ? gradedBadge(row.slabucket, i18n) : null;
+                                const marking = graded ? '' : markingLine(row, i18n);
                                 return html`
                                     <tr class="bft-report-row" key=${'r-' + row.submissionid}>
                                         <td class="bft-report-cell-title">${row.studentname}</td>
@@ -881,6 +903,7 @@ export default function PendingReportView({initial}) {
                                                 queuehours=${row.queuehours}
                                                 allochours=${row.allochours}
                                                 tip=${i18n.alloc_split_tip || ''} />
+                                            ${marking && html`<span class="bft-row-marking">${marking}</span>`}
                                         </td>
                                         <td class="bft-report-col-action">
                                             <a class="bft-report-action-grade" href=${graderUrl(row, config)}>
