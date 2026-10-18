@@ -72,7 +72,7 @@ There is one exception, and it is deliberate: **a mark made inside the assignmen
 
 ## Requirements
 
-- Moodle 5.1 (this branch, `MOODLE_501_STABLE`; `main` and `MOODLE_502_STABLE` are the Moodle 5.2 release)
+- Moodle 5.1 (this branch, `MOODLE_501_STABLE`; `main` and `MOODLE_503_STABLE` are the Moodle 5.3 release, `MOODLE_502_STABLE` the 5.2 one, `MOODLE_405_STABLE` the 4.5 one)
 - PHP 8.2 or later
 - PostgreSQL or MariaDB
 
