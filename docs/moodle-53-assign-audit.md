@@ -1,6 +1,6 @@
 # Moodle 5.3 audit of the assign integration, and the 5.3 plan
 
-Audit of 2026-10-17 on `MOODLE_503_DEV` (tree identical to `main` since #72, still
+Audit of 2026-10-17 on `MOODLE_503_DEV` (renamed `MOODLE_503_STABLE` on 2026-10-18, when `main` became the 5.3 branch) (tree identical to `main` since #72, still
 carrying 5.2 values: `supported = [502, 502]`, version `2026042003`). It compares
 core **5.2.4** (`~/dev/moodle-502`, `2df605b1e09`) with **5.3** final
 (`~/dev/moodle-503`, `42622298fe0`, build 20261005) over everything under

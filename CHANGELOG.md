@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - Unreleased
+## [v5.3-r1] - 2026-10-18
 
-The Moodle 5.3 release. What 5.3 changed in `mod_assign` and what each change
+The Moodle 5.3 release, and the first under the fleet's release names: one
+release per Moodle branch, tagged `v<moodle>-r<N>` with the same name in
+`$plugin->release` (it was `1.3.0`). `main` is now the Moodle 5.3 branch, the
+same commit as `MOODLE_503_STABLE` (renamed from `MOODLE_503_DEV`); the 5.2
+line continues on `MOODLE_502_STABLE`. What 5.3 changed in `mod_assign` and what each change
 below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Added

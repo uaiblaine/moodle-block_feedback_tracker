@@ -25,8 +25,8 @@ concurrency:
 
 jobs:
   # Single reusable-workflow call for this branch's one Moodle version
-  # (version.php $plugin->supported). This is the 5.3 branch; main is the
-  # 5.2 branch and each MOODLE_XX_STABLE branch names its own core.
+  # (version.php $plugin->supported). main is the 5.3 branch, the same
+  # commit as MOODLE_503_STABLE; each MOODLE_XX_STABLE branch names its own core.
   # Keep each branch's own form when resolving merges and cherry-picks.
   ci-503:
     name: Moodle 5.03

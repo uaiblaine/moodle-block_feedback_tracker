@@ -6,11 +6,16 @@ follows so future edits stay in the same style and pass CI on the first try.
 
 Plugin context: a Moodle block plugin that measures teacher response time
 for `mod_assign` submissions using business/academic time. **One branch per
-Moodle version**: this checkout, `MOODLE_503_DEV`, is the Moodle 5.3 branch
-(`$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`);
-`main` is the Moodle 5.2 branch, the same commit as `MOODLE_502_STABLE`;
-`MOODLE_501_STABLE` is 5.1; `MOODLE_405_STABLE` is 4.5 (`20241007XX`). What
-5.3 changed in `mod_assign`, and what this branch does about it, is in
+Moodle version**: `main` is the Moodle 5.3 branch, the same commit as
+`MOODLE_503_STABLE` (`$plugin->requires = 2026100500`,
+`$plugin->supported = [503, 503]`); `MOODLE_502_STABLE` is 5.2 (its own
+checkout, `moodle-block_feedback_tracker-502`), `MOODLE_501_STABLE` 5.1 and
+`MOODLE_405_STABLE` 4.5 (`20241007XX`). New work lands on `main` and is
+backported. Releases follow the fleet pattern: one per branch, tagged
+`v<moodle>-r<N>` (`v5.3-r1`, `v5.2-r1`, ...), the same name in
+`$plugin->release`, with the `git archive` zip of the tag attached as
+`moodle-block_feedback_tracker-v<moodle>-r<N>.zip`. What 5.3 changed in
+`mod_assign`, and what this branch does about it, is in
 `docs/moodle-53-assign-audit.md`. CI is the
 **moodle-an-hochschulen/moodle-workflows** reusable workflow, one call in
 each branch's `.github/workflows/ci.yml` naming that branch's core.
@@ -1500,7 +1505,7 @@ reviews).
   key it names; an invalid file stops reviews for the repository until it is fixed, and an
   unknown key only raises a warning on the summary comment.
 - **One Moodle version per repository.** There is no per-branch mapping, so the file pins
-  `moodle.versions: ["5.2"]`. The plugin also runs on older cores, so read a finding about a core API with that in mind.
+  `moodle.versions: ["5.3"]`, the core of `main`. The plugin also runs on older cores, so read a finding about a core API with that in mind.
 - `fail_on.severity` is `high`: the check fails on an open finding at or above it. Code
   quality findings never block, only security findings do.
 - The context file is project knowledge that **influences** the reviewer and is not a

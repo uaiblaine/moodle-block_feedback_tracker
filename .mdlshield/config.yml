@@ -18,9 +18,9 @@ fail_on:
 on-error: open        # a failure on MDL Shield's side must not block a merge
 
 moodle:
-  # One version per repository, with no per-branch mapping: this plugin supports 4.5 through 5.2 on one branch, and the highest supported core is the one reviewed.
-  # Quoted: an unquoted 5.2 is read as a number and rejects the file.
-  versions: ["5.2"]
+  # One version per repository, with no per-branch mapping: the plugin has one branch per Moodle version, and main (5.3) is the one reviewed.
+  # Quoted: an unquoted 5.3 is read as a number and rejects the file.
+  versions: ["5.3"]
 
 trusted_users: ["uaiblaine"]   # GitHub usernames whose !mdlshield commands count
 
