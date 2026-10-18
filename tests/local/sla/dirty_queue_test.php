@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The queue collapses a burst of writes for one (courseid, groupid) tuple into
  * a single row. `enqueue()` is called after the ledger row is written, so an
  * exception escaping it fails the calling write path over a row already stored.
- *
- * @covers \block_feedback_tracker\local\sla\dirty_queue
  */
+#[CoversClass(dirty_queue::class)]
 final class dirty_queue_test extends \advanced_testcase {
     /**
      * A second enqueue for the same tuple refreshes the row rather than adding

@@ -248,10 +248,11 @@ class rollup_service {
         $compliancepctdays = $numgraded30d ? round(100.0 * $compliantdayscount / $numgraded30d, 2) : null;
 
         /* Coordination queue vs marker turnaround. Coverage is the share of
-         * the graded window that carries a marker measurement: before Moodle
-         * 5.2 only one of mod_assign's three allocation paths (the batch
-         * action) fires marker_updated, so the sample is partial and the
-         * median must be read beside the coverage. */
+         * the graded window that carries a marker measurement: on Moodle 5.3
+         * every allocation path fires marker_added, but allocations made
+         * before the observer existed, or missed by it, carry only a
+         * reconciled stamp, so the sample can be partial and the median must
+         * be read beside the coverage. */
         $medianqueue = !empty($queuevals) ? stats::median($queuevals) : null;
         $medianalloc = !empty($allocvals) ? stats::median($allocvals) : null;
         $alloccoverage = $numgraded30d ? round(100.0 * count($allocvals) / $numgraded30d, 2) : null;

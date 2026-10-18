@@ -27,12 +27,12 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers the cross-course aggregation + per-user capability filter.
- *
- * @covers \block_feedback_tracker\external\get_dashboard
  */
+#[CoversClass(get_dashboard::class)]
 final class get_dashboard_test extends \advanced_testcase {
     /**
      * Reset the per-request dashboard_scope and group_access memos.

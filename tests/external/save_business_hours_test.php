@@ -28,14 +28,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A site-wide write that replaces a whole weekday's slots inside a
  * transaction, so the validation boundaries matter: a bad slot must abort
  * before anything is deleted.
- *
- * @covers \block_feedback_tracker\external\save_business_hours
  */
+#[CoversClass(save_business_hours::class)]
 final class save_business_hours_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

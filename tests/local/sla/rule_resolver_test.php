@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 
 /**
  * Assign dates use 0 as "not set", while an override uses NULL for "inherit"
@@ -35,9 +37,8 @@ namespace block_feedback_tracker\local\sla;
  * considers to have a deadline at all. The per-student resolution also has to
  * choose among several group overrides and apply extensions the way mod_assign
  * does; the last test compares it with core's own resolution.
- *
- * @covers \block_feedback_tracker\local\sla\rule_resolver
  */
+#[CoversClass(rule_resolver::class)]
 final class rule_resolver_test extends \advanced_testcase {
     /**
      * Build an assign-like row.

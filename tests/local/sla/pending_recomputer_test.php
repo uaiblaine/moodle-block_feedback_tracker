@@ -28,12 +28,12 @@ namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\calendar\calendar;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Verifies that stale pending ledger rows are re-bucketed by the recomputer.
- *
- * @covers \block_feedback_tracker\local\sla\pending_recomputer
  */
+#[CoversClass(pending_recomputer::class)]
 final class pending_recomputer_test extends \advanced_testcase {
     /**
      * A pending row whose effectiveasof is more than an hour old gets its hours

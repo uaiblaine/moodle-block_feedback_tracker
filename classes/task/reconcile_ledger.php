@@ -1051,9 +1051,12 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * On Moodle 4.5 and 5.1 only the batch "Set allocated marker" operation
      * fires `marker_updated`; quick grading and the grading form write
      * `assign_user_flags.allocatedmarker` in silence. On 5.2 every path fires,
-     * but a de-allocation still does not. Without this sweep the marker
-     * turnaround is measurable only for batch-allocated work, usually a small
-     * and non-random slice.
+     * but a de-allocation still does not. On 5.3 every path fires
+     * marker_added / marker_removed, so the sweep there only catches what an
+     * observer missed (a course that became processable later, a failed
+     * observer). Without this sweep the marker turnaround is measurable only
+     * for event-allocated work, on 4.5 and 5.1 usually a small and non-random
+     * slice.
      *
      * The stamp it writes is the moment of discovery, not of allocation, so it
      * is recorded as `reconciled` and is accurate only to the sweep period.
@@ -1143,36 +1146,26 @@ class reconcile_ledger extends \core\task\scheduled_task {
     }
 
     /**
-     * Per-marker slot rows that disagree with core (Moodle 5.2 multiple marking).
+     * Per-marker slot rows that disagree with core (Moodle 5.3 multiple marking).
      *
-     * On 5.2 this sweep carries two of the slot table's three writers: core
-     * fires `marker_updated` for every marker that stays or is added
-     * ({@see \assign::update_allocated_markers()}), which the observer records,
-     * but nothing for a removal nor for a marker's own "Marking completed"
-     * ({@see \assign::update_mark()} fires no event). Over the current cycle of
-     * the latest attempt, the one core's allocations describe, a window row of
-     * a multi-marking activity is repaired when:
-     * - (a) an allocated marker has no live slot row (an allocation the
-     *   observer missed: a course that became processable later, a failed
-     *   observer);
-     * - (b) a live slot row's marker is no longer allocated: a removal, which
-     *   5.2 never reports;
-     * - (c) a live slot row has no `timemarked` while its marker's own mark on
-     *   the attempt is complete (readyforreview with a mark of 0 or more, as
-     *   the 5.3 branch's `mark_is_marked()` reads it; 5.2 core counts any mark
-     *   row toward the agreed grade, but a marker's own completion is this
-     *   state) and was last edited at or after the cycle's hand-in.
+     * The slot table follows marker_added / marker_removed and
+     * submission_marked; this sweep catches what those missed (a course that
+     * became processable later, a failed observer, an allocation written by a
+     * path that fired nothing). Over the current cycle of the latest attempt,
+     * the one core's allocations describe, a window row of a multi-marking
+     * activity is repaired when:
+     * - (a) a marker holds an active slot ({@see slot_ledger::sync_for_user()}
+     *   reads them as {@see marking_progress::for_rows()} does) and has no live
+     *   slot row;
+     * - (b) a live slot row's marker no longer holds an active slot;
+     * - (c) a live slot row has no `timemarked` while its marker's mark is
+     *   complete (readyforreview with a mark of 0 or more, as
+     *   {@see \assign::mark_is_marked()}).
      *
      * (a) and (b) are re-synced with the discovery instant as the clock and
-     * `reconciled` as the source, so a removal's `timeremoved` is when the
-     * sweep found it. (c) is completed at `assign_mark.timemodified`, the last
-     * change to the mark and so the latest the completion can be: every
-     * completion instant on 5.2 is reconciled. A mark last edited before the
-     * hand-in belongs to an earlier cycle of the same attempt (a grade row and
-     * its marks are per attempt), so it waits for the marker's next edit
-     * rather than closing the new cycle's slot with an instant before it
-     * opened. The repairs run in place: they are rare, and the window bounds
-     * them.
+     * `reconciled` as the source; (c) is completed at `assign_mark.timemodified`,
+     * the last change to the mark and so the latest the completion can be. The
+     * repairs run in place: they are rare, and the window bounds them.
      *
      * The window carries only predicates on the driving row; whether its
      * activity uses multiple marking is decided in PHP from one read of the
@@ -1190,7 +1183,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
         $multi = [];
         $assigns = $DB->get_records_sql(
-            "SELECT a.id, a.markingworkflow, a.markingallocation, a.markercount
+            "SELECT a.id, a.markingworkflow, a.markingallocation, a.markercount, a.optionalmarkercount
                FROM {assign} a
                JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
                JOIN {modules} m ON m.id = cm.module AND m.name = :modname
@@ -1255,6 +1248,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                  ON am.assignment = cm.instance
                 AND am.student = l.userid
                 AND am.marker > 0
+                AND (am.optional = 0 OR am.enabled = 1)
           LEFT JOIN {block_feedback_tracker_alloc} s
                  ON s.subid = l.id
                 AND s.marker = am.marker
@@ -1276,6 +1270,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
                  ON am.assignment = cm.instance
                 AND am.student = l.userid
                 AND am.marker = s.marker
+                AND (am.optional = 0 OR am.enabled = 1)
               WHERE l.id $wsql
                 AND am.id IS NULL",
             $wparams + $modparams
@@ -1294,7 +1289,13 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
 
         /* After the re-sync, so a slot row it just inserted for a marker who
-         * already completed is completed in the same pass. */
+         * already completed is completed in the same pass. A mark belongs to
+         * the attempt (gradeid), not to the plugin's cycle: after a
+         * resubmission opens a new cycle in the same attempt, a mark last
+         * changed before the hand-in is the previous cycle's, so it is no
+         * completion of this one (it would stamp the slot an instant before
+         * the cycle opened, with no hours, for good). The slot then waits for
+         * the marker's next edit, or for submission_marked. */
         [$wsql, $wparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'w');
         $unmarked = $DB->get_records_sql(
             "SELECT m.id, s.id AS slotid, m.timemodified
@@ -1458,17 +1459,14 @@ class reconcile_ledger extends \core\task\scheduled_task {
      * Queue one adhoc repair batch, logging rather than propagating failures.
      *
      * The return value of `queue_adhoc_task()` matters: `false` means nothing
-     * was queued. That is the dedup working when an identical payload is
-     * already pending, but Moodle 5.0 and later also return it up front for a
-     * task whose component is deprecated. And before 5.1.5 and 5.2.1 (so on
-     * 4.5, 5.0, 5.1.0 to 5.1.4 and 5.2.0) the dedup probe does not skip a
-     * retry-exhausted {task_adhoc} row, so an identical payload stays blocked
-     * while `task_adhoc_failed_retention` keeps the dead row (four weeks by
-     * default). The caller counts the outcome instead of assuming the repair
-     * is on its way.
+     * will run the repair. On Moodle 5.3 an identical pending payload is not a
+     * refusal: core returns that task's id and revives it first when its
+     * retries are exhausted (MDL-86422), so the repair is on its way. `false`
+     * is left for a task whose component is deprecated. The 5.2 and older
+     * branches return `false` for the duplicate too, and say why there.
      *
      * @param array $rows Row descriptors for backfill_one_submission.
-     * @return bool True when a new adhoc task was created.
+     * @return bool True when a task will run the repair, new or already pending.
      */
     private function queue_repair(array $rows): bool {
         try {

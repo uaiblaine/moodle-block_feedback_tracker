@@ -259,19 +259,20 @@ class get_pending_submissions extends external_api {
             ),
             'markers_expected' => new external_value(
                 PARAM_INT,
-                'Under multiple marking, the marks the agreed grade waits for (the activity\'s marker count); 0 when '
-                    . 'the activity does not use multiple marking, and on graded and draft rows'
+                'Under multiple marking, the completed marks the agreed grade waits for (required markers plus '
+                    . 'enabled optional ones); 0 when the activity does not use multiple marking, and on graded '
+                    . 'and draft rows'
             ),
             'markers_completed' => new external_value(
                 PARAM_INT,
-                'Under multiple marking, the allocated markers who have left a mark, counted as Moodle 5.2 counts '
-                    . 'them for the agreed grade (any saved mark, whatever the marker\'s own state); 0 otherwise'
+                'Under multiple marking, the allocated markers whose own mark is complete (Marking completed with '
+                    . 'a mark); 0 otherwise'
             ),
             'marking_wait' => new external_value(
                 PARAM_ALPHA,
                 'Under multiple marking, what the submission waits for: markers (some allocated marker has not '
-                    . 'marked), allocation (fewer markers allocated than the marker count), agreed (every expected '
-                    . 'mark is in and no agreed grade exists yet), none (the agreed grade exists); empty when the '
+                    . 'completed), allocation (a required marker slot is empty), agreed (every expected mark is '
+                    . 'complete and no agreed grade exists yet), none (the agreed grade exists); empty when the '
                     . 'activity does not use multiple marking, and on graded and draft rows'
             ),
         ]);

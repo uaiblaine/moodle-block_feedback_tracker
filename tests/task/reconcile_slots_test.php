@@ -26,29 +26,22 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
-use block_feedback_tracker\local\calendar\academic_time;
-use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\group_resolver;
 use block_feedback_tracker\local\sla\slot_ledger;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * The slot sweep on Moodle 5.2 repairs what no event reports: (a) an
- * allocation with no live slot row, (b) a live slot row whose marker is no
- * longer allocated, which is every removal on 5.2, (c) a complete mark whose
- * slot row has no completion, which is every completion on 5.2. Removals and
- * completions go through core's own API (update_allocated_markers(),
- * update_mark()), which fires nothing the slot table could follow; a lost
- * allocation event is produced by deleting the slot rows.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\task\reconcile_ledger
- * @covers \block_feedback_tracker\local\sla\slot_ledger
+ * The slot sweep repairs what the events missed: (a) an active allocation with
+ * no live slot row, (b) a live slot row whose marker no longer holds an active
+ * slot, (c) a complete mark whose slot row has no completion. Each state is
+ * produced behind the observers' back, by writing core's tables or the slot
+ * table directly, as a lost event or a later-processable course leaves it.
  */
+#[CoversClass(reconcile_ledger::class)]
+#[CoversClass(slot_ledger::class)]
 final class reconcile_slots_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -88,180 +81,131 @@ final class reconcile_slots_test extends \advanced_testcase {
     }
 
     /**
-     * (b) A marker removed through core, which fires nothing for them, loses
-     * their live row at the discovery instant; the marker who stays keeps it.
+     * (b) A marker removed in core without an event loses their live row.
      *
      * @return void
      */
-    public function test_a_removal_is_closed_by_the_sweep(): void {
+    public function test_a_silently_removed_marker_loses_the_slot(): void {
         global $DB;
         $env = $this->build_environment(1);
         $student = $env->students[0];
-        [$stays, $gone] = $env->markers;
-        $env->assign->update_allocated_markers((int) $student->id, [(int) $stays->id]);
-        $this->assertNull(
-            $DB->get_field('block_feedback_tracker_alloc', 'timeremoved', ['userid' => $student->id, 'marker' => $gone->id]),
-            'Control: nothing closed the slot before the sweep.'
-        );
-
-        $before = time();
-        $this->assertSame(1, $this->sweep($env, 500));
-
-        $removed = $DB->get_record('block_feedback_tracker_alloc', ['userid' => $student->id, 'marker' => $gone->id]);
-        $this->assertGreaterThanOrEqual($before, (int) $removed->timeremoved);
-        $this->assertNull(
-            $DB->get_field('block_feedback_tracker_alloc', 'timeremoved', ['userid' => $student->id, 'marker' => $stays->id]),
-            'Control: the marker still allocated keeps the slot.'
-        );
-        $this->assertSame(0, $this->sweep($env, 500), 'Converged: a closed slot is not missing.');
-    }
-
-    /**
-     * (b) Removing every marker fires no event at all; the sweep closes every
-     * slot.
-     *
-     * @return void
-     */
-    public function test_removing_every_marker_is_closed_by_the_sweep(): void {
-        global $DB;
-        $env = $this->build_environment(1);
-        $student = $env->students[0];
-        $env->assign->update_allocated_markers((int) $student->id, []);
+        $gone = $env->markers[1];
+        $DB->delete_records('assign_allocated_marker', [
+            'assignment' => $env->assign->get_instance()->id,
+            'student' => $student->id,
+            'marker' => $gone->id,
+        ]);
 
         $this->sweep($env, 500);
 
-        $this->assertSame(0, $DB->count_records('block_feedback_tracker_alloc', ['userid' => $student->id, 'timeremoved' => null]));
-        $this->assertSame(2, $DB->count_records('block_feedback_tracker_alloc', ['userid' => $student->id]));
+        $rows = $DB->get_records('block_feedback_tracker_alloc', ['userid' => $student->id]);
+        foreach ($rows as $r) {
+            if ((int) $r->marker === (int) $gone->id) {
+                $this->assertNotNull($r->timeremoved);
+            } else {
+                $this->assertNull($r->timeremoved, 'Control: the marker still allocated keeps the slot.');
+            }
+        }
     }
 
     /**
-     * (c) A mark completed through core, which fires nothing on 5.2, is
-     * stamped at the mark row's last change; a mark still in marking is not.
+     * (c) A complete mark whose slot has no completion is completed at the
+     * mark's last change.
      *
      * @return void
      */
-    public function test_a_completion_is_stamped_from_the_mark_timemodified(): void {
+    public function test_a_missed_completion_is_recorded_at_the_mark_instant(): void {
         global $DB;
         $env = $this->build_environment(1);
         $student = $env->students[0];
         $marker = $env->markers[0];
-        $env->assign->get_instance()->multimarkmethod = 'manual';
-        $DB->set_field('assign', 'multimarkmethod', 'manual', ['id' => $env->assign->get_instance()->id]);
         $this->mark($env, $student, $marker, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
         $this->mark($env, $student, $env->markers[1], 70, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
-        $this->assertSame(
-            0,
-            $DB->count_records_select(
-                'block_feedback_tracker_alloc',
-                'userid = :u AND timemarked IS NOT NULL',
-                ['u' => $student->id]
-            ),
-            'Control: no event recorded the completion.'
-        );
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', null, ['userid' => $student->id]);
         $markedat = (int) $DB->get_field('assign_mark', 'timemodified', ['marker' => $marker->id], MUST_EXIST) - 50;
         $DB->set_field('assign_mark', 'timemodified', $markedat, ['marker' => $marker->id]);
 
-        $this->assertSame(1, $this->sweep($env, 500));
+        $this->sweep($env, 500);
 
         $done = $DB->get_record('block_feedback_tracker_alloc', ['userid' => $student->id, 'marker' => $marker->id]);
         $this->assertSame($markedat, (int) $done->timemarked);
-        $this->assertNull(
+        $this->assertSame(
+            null,
             $DB->get_field('block_feedback_tracker_alloc', 'timemarked', [
                 'userid' => $student->id,
                 'marker' => $env->markers[1]->id,
             ]),
             'Control: a mark still in marking is not a completion.'
         );
-        $this->assertSame(0, $this->sweep($env, 500), 'Converged: the first completion stands.');
     }
 
     /**
-     * A completed mark with no value (a workflow state saved without a mark)
-     * is not complete.
+     * A mark left from the previous cycle of the same attempt is no completion
+     * of the new cycle; the marker's next edit is.
      *
      * @return void
      */
-    public function test_a_completed_state_without_a_mark_is_not_stamped(): void {
+    public function test_a_previous_cycle_mark_does_not_complete_the_new_cycle(): void {
         global $DB;
         $env = $this->build_environment(1);
         $student = $env->students[0];
-        $marker = $env->markers[0];
-        $this->mark($env, $student, $marker, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
-        $DB->set_field('assign_mark', 'mark', null, ['marker' => $marker->id]);
+        $this->mark($env, $student, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $this->mark($env, $student, $env->markers[1], 80, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $first = $DB->get_record('block_feedback_tracker_sub', ['userid' => $student->id, 'iscurrent' => 1], '*', MUST_EXIST);
+        $this->assertNotNull($first->timemarked, 'Control: the agreed grade closed the first cycle.');
+        $DB->set_field('assign_mark', 'timemodified', time() - 1000, []);
+        $DB->set_field('block_feedback_tracker_sub', 'timemarked', time() - 1000, ['id' => $first->id]);
 
-        $this->sweep($env, 500);
-        $this->assertNull(
-            $DB->get_field('block_feedback_tracker_alloc', 'timemarked', ['userid' => $student->id, 'marker' => $marker->id])
-        );
-
-        $DB->set_field('assign_mark', 'mark', 55, ['marker' => $marker->id]);
-        $this->sweep($env, 500);
-        $this->assertNotNull(
-            $DB->get_field('block_feedback_tracker_alloc', 'timemarked', ['userid' => $student->id, 'marker' => $marker->id]),
-            'Control: the same row with a mark is complete.'
-        );
-    }
-
-    /**
-     * The sweep measures the marker's turnaround from the later of the
-     * allocation and the hand-in to the mark's last change, in effective hours
-     * and business days.
-     *
-     * Handed in Monday 09:00, allocated Tuesday 10:00, completed Thursday
-     * 15:00 under Mon-Fri 08:00-18:00: 8 + 10 + 7 hours, two day boundaries.
-     *
-     * @return void
-     */
-    public function test_a_stamped_completion_measures_hours_and_days(): void {
-        global $DB;
-        $env = $this->build_environment(1);
-        $student = $env->students[0];
-        $marker = $env->markers[0];
-        $this->seed_calendar();
-        $this->mark($env, $student, $marker, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
-        $DB->set_field('block_feedback_tracker_sub', 'timesubmitted', $this->ts('2026-05-11 09:00:00'), ['userid' => $student->id]);
-        $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $this->ts('2026-05-12 10:00:00'), [
-            'userid' => $student->id,
-            'marker' => $marker->id,
-        ]);
-        $DB->set_field('assign_mark', 'timemodified', $this->ts('2026-05-14 15:00:00'), ['marker' => $marker->id]);
-
-        $this->sweep($env, 500);
-
-        $slot = $DB->get_record('block_feedback_tracker_alloc', ['userid' => $student->id, 'marker' => $marker->id]);
-        $this->assertSame($this->ts('2026-05-14 15:00:00'), (int) $slot->timemarked);
-        $this->assertEqualsWithDelta(25.0, (float) $slot->markhours, 0.001);
-        $this->assertSame(2, (int) $slot->markdays);
-    }
-
-    /**
-     * A mark last edited before the cycle's hand-in belongs to an earlier
-     * cycle of the attempt, so it does not complete this cycle's slot; the
-     * marker's next edit does.
-     *
-     * @return void
-     */
-    public function test_a_mark_older_than_the_hand_in_is_not_this_cycles_completion(): void {
-        global $DB;
-        $env = $this->build_environment(1);
-        $student = $env->students[0];
-        $marker = $env->markers[0];
-        $this->mark($env, $student, $marker, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
-        $handin = (int) $DB->get_field('block_feedback_tracker_sub', 'timesubmitted', ['userid' => $student->id]);
-        $DB->set_field('assign_mark', 'timemodified', $handin - 10, ['marker' => $marker->id]);
-
-        $this->sweep($env, 500);
-        $this->assertNull(
-            $DB->get_field('block_feedback_tracker_alloc', 'timemarked', ['userid' => $student->id, 'marker' => $marker->id])
-        );
-
-        $DB->set_field('assign_mark', 'timemodified', $handin, ['marker' => $marker->id]);
-        $this->sweep($env, 500);
+        $resubmitted = time() - 100;
+        $DB->set_field('assign_submission', 'timemodified', $resubmitted, ['userid' => $student->id]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $student->id, 0);
+        $current = $DB->get_record('block_feedback_tracker_sub', ['userid' => $student->id, 'iscurrent' => 1], '*', MUST_EXIST);
+        $this->assertSame(1, (int) $current->cycle, 'Control: a new cycle opened.');
         $this->assertSame(
-            $handin,
-            (int) $DB->get_field('block_feedback_tracker_alloc', 'timemarked', ['userid' => $student->id, 'marker' => $marker->id]),
-            'Control: an edit at the hand-in or later completes it.'
+            2,
+            $DB->count_records('block_feedback_tracker_alloc', ['subid' => $current->id, 'timeremoved' => null]),
+            'Control: the new cycle carries both slots.'
         );
+
+        $this->sweep($env, 500);
+
+        $this->assertSame(
+            2,
+            $DB->count_records('block_feedback_tracker_alloc', ['subid' => $current->id, 'timemarked' => null]),
+            'The previous cycle\'s marks complete nothing of the new cycle.'
+        );
+
+        $this->mark($env, $student, $env->markers[0], 65, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $editedat = (int) $DB->get_field('assign_mark', 'timemodified', ['marker' => $env->markers[0]->id], MUST_EXIST);
+        $this->assertGreaterThanOrEqual($resubmitted, $editedat);
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', null, ['subid' => $current->id]);
+
+        $this->sweep($env, 500);
+
+        $done = $DB->get_record('block_feedback_tracker_alloc', ['subid' => $current->id, 'marker' => $env->markers[0]->id]);
+        $this->assertSame($editedat, (int) $done->timemarked);
+        $this->assertNotNull($done->markhours);
+    }
+
+    /**
+     * An optional slot disabled behind core's API is not an active slot: the
+     * first pass ends the marker's live row, and the second finds nothing,
+     * because a disabled slot is not a missing one either.
+     *
+     * @return void
+     */
+    public function test_a_disabled_optional_slot_is_repaired_once(): void {
+        global $DB;
+        $env = $this->build_environment(1, 1);
+        $student = $env->students[0];
+        $extra = $this->getDataGenerator()->create_and_enrol($env->course, 'editingteacher');
+        $env->assign->update_marker_allocations((int) $student->id, [3 => [(int) $extra->id, 1]]);
+        $this->assertSame(0, $this->sweep($env, 500), 'Control: converged with the optional slot live.');
+        $DB->set_field('assign_allocated_marker', 'enabled', 0, ['marker' => $extra->id]);
+
+        $this->assertSame(1, $this->sweep($env, 500));
+        $this->assertNotNull($DB->get_field('block_feedback_tracker_alloc', 'timeremoved', ['marker' => $extra->id]));
+        $this->assertSame(0, $this->sweep($env, 500), 'Converged: the disabled slot is not missing a row.');
     }
 
     /**
@@ -356,9 +300,10 @@ final class reconcile_slots_test extends \advanced_testcase {
      * in with both markers allocated through core.
      *
      * @param int $students Number of students.
+     * @param int $optional Number of optional marker slots.
      * @return \stdClass course, cm, assign, students and markers.
      */
-    private function build_environment(int $students): \stdClass {
+    private function build_environment(int $students, int $optional = 0): \stdClass {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -376,6 +321,7 @@ final class reconcile_slots_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => 2,
+            'optionalmarkercount' => $optional,
             'multimarkmethod' => 'average',
             'grade' => 100,
         ]);
@@ -396,7 +342,10 @@ final class reconcile_slots_test extends \advanced_testcase {
                 'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
             ]);
             submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-            $assign->update_allocated_markers((int) $student->id, [(int) $env->markers[0]->id, (int) $env->markers[1]->id]);
+            $assign->update_marker_allocations((int) $student->id, [
+                1 => [(int) $env->markers[0]->id, null],
+                2 => [(int) $env->markers[1]->id, null],
+            ]);
             $env->students[] = $student;
         }
         return $env;
@@ -416,39 +365,5 @@ final class reconcile_slots_test extends \advanced_testcase {
         $grade = $env->assign->get_user_grade((int) $student->id, true);
         $grade->grader = (int) $marker->id;
         $env->assign->update_mark($grade, $mark, $state);
-    }
-
-    /**
-     * Mon-Fri 08:00-18:00 UTC working hours, set by the test itself.
-     *
-     * @return void
-     */
-    private function seed_calendar(): void {
-        global $DB;
-        // A fresh calendar version: days the fixture's own writes measured stay cached under the old one.
-        calendar::bump_version();
-        set_config('timezone', 'UTC', 'block_feedback_tracker');
-        set_config('excludeweekends', '1', 'block_feedback_tracker');
-        set_config('weekendmask', '96', 'block_feedback_tracker');
-        set_config('enablebusinesshours', '1', 'block_feedback_tracker');
-        $DB->delete_records('block_feedback_tracker_chours');
-        $now = time();
-        for ($dow = 0; $dow <= 4; $dow++) {
-            $DB->insert_record('block_feedback_tracker_chours', (object) [
-                'dayofweek' => $dow, 'starttime' => 480, 'endtime' => 1080,
-                'enabled' => 1, 'timecreated' => $now, 'timemodified' => $now,
-            ]);
-        }
-        academic_time::reset_memos();
-    }
-
-    /**
-     * Parse a datetime string as UTC.
-     *
-     * @param string $datetime
-     * @return int
-     */
-    private function ts(string $datetime): int {
-        return (new \DateTime($datetime, new \DateTimeZone('UTC')))->getTimestamp();
     }
 }

@@ -26,19 +26,17 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
- * Multi-marker progress on Moodle 5.2, driven through mod_assign's own API.
+ * Multi-marker progress on Moodle 5.3, driven through mod_assign's own API.
  *
- * Every allocation goes through assign::update_allocated_markers() and every
+ * Every allocation goes through assign::update_marker_allocations() and every
  * mark through assign::update_mark(), so the rows read are the ones core
  * writes, and each expectation is checked against core's own answer where core
- * offers one (get_allocated_markers(), get_marks(), the agreed grade itself).
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\marking_progress
+ * offers one (expected_marker_count(), get_marker_allocations()).
  */
+#[CoversClass(marking_progress::class)]
 final class marking_progress_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -86,62 +84,20 @@ final class marking_progress_test extends \advanced_testcase {
     }
 
     /**
-     * Positions follow the allocation rows in core's order, not the user ids:
-     * a marker allocated first holds position 1 whatever their id.
-     *
-     * @return void
-     */
-    public function test_positions_follow_the_allocation_order(): void {
-        $env = $this->build_environment('average', 0);
-        [$lower, $higher] = $env->markers;
-        $this->assertLessThan((int) $higher->id, (int) $lower->id, 'Control: the ids are ordered.');
-
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $higher->id, (int) $lower->id]);
-
-        $p = $this->progress($env);
-        $this->assertSame(
-            array_map('intval', array_column($env->assign->get_allocated_markers((int) $env->student->id), 'marker')),
-            array_column($p['slots'], 'marker')
-        );
-        $this->assertSame([(int) $higher->id, (int) $lower->id], array_column($p['slots'], 'marker'));
-        $this->assertSame([1, 2], array_column($p['slots'], 'position'));
-    }
-
-    /**
-     * One mark in and one marker not started: 1 of 2.
+     * One mark completed and one in marking: 1 of 2. A mark saved without
+     * "Marking completed" has started but does not count.
      *
      * @return void
      */
     public function test_one_of_two(): void {
         $env = $this->build_environment('average');
         $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $env->markers[1], 70, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
 
         $p = $this->progress($env);
         $this->assertSame(2, $p['expected']);
         $this->assertSame(1, $p['completed']);
         $this->assertSame(marking_progress::WAIT_MARKERS, $p['wait']);
-        $this->assertSame(
-            [marking_progress::MARK_COMPLETE, marking_progress::MARK_NONE],
-            array_column($p['slots'], 'state')
-        );
-    }
-
-    /**
-     * Moodle 5.2 counts a mark row whatever the marker's own state: a mark
-     * saved "In marking" completes the count, and core computes the average at
-     * once. The slot still shows as in marking.
-     *
-     * @return void
-     */
-    public function test_a_mark_in_marking_counts_as_completed(): void {
-        $env = $this->build_environment('average');
-        $this->mark($env, $env->markers[0], 60);
-        $this->mark($env, $env->markers[1], 70, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
-        $this->assertEquals(65, $this->grade($env)->grade, 'Control: core agreed with a mark still in marking.');
-
-        $p = $this->progress($env);
-        $this->assertSame(2, $p['completed']);
-        $this->assertSame(marking_progress::WAIT_NONE, $p['wait']);
         $this->assertSame(
             [marking_progress::MARK_COMPLETE, marking_progress::MARK_INMARKING],
             array_column($p['slots'], 'state')
@@ -149,32 +105,8 @@ final class marking_progress_test extends \advanced_testcase {
     }
 
     /**
-     * A mark row holding no mark at all (a marker who only moved their own
-     * workflow state) is counted too, as get_marks() counts it, so under the
-     * manual method the wait is the agreed grade.
-     *
-     * @return void
-     */
-    public function test_a_row_without_a_mark_counts_as_completed(): void {
-        $env = $this->build_environment('manual');
-        $this->mark($env, $env->markers[0], 60);
-        $this->mark($env, $env->markers[1], null, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
-        $grade = $this->grade($env);
-        $this->assertCount(
-            2,
-            $env->assign->get_marks((int) $grade->id, (int) $env->student->id),
-            'Control: core counts the empty row.'
-        );
-
-        $p = $this->progress($env);
-        $this->assertSame(2, $p['completed']);
-        $this->assertSame(marking_progress::WAIT_AGREED, $p['wait']);
-        $this->assertSame(marking_progress::MARK_INMARKING, $p['slots'][1]['state']);
-    }
-
-    /**
      * Under the average method core computes the agreed grade on the second
-     * mark, so nothing is waited for.
+     * completed mark, so nothing is waited for.
      *
      * @return void
      */
@@ -182,7 +114,7 @@ final class marking_progress_test extends \advanced_testcase {
         $env = $this->build_environment('average');
         $this->mark($env, $env->markers[0], 60);
         $this->mark($env, $env->markers[1], 80);
-        $this->assertEquals(70, $this->grade($env)->grade, 'Control: core agreed.');
+        $this->assertEquals(70, $env->assign->get_user_grade((int) $env->student->id, false)->grade, 'Control: core agreed.');
 
         $p = $this->progress($env);
         $this->assertSame(2, $p['completed']);
@@ -190,8 +122,8 @@ final class marking_progress_test extends \advanced_testcase {
     }
 
     /**
-     * Under the manual method every mark in still waits for whoever confirms
-     * the agreed grade.
+     * Under the manual method every mark complete still waits for whoever
+     * confirms the agreed grade.
      *
      * @return void
      */
@@ -199,7 +131,7 @@ final class marking_progress_test extends \advanced_testcase {
         $env = $this->build_environment('manual');
         $this->mark($env, $env->markers[0], 60);
         $this->mark($env, $env->markers[1], 80);
-        $grade = $this->grade($env);
+        $grade = $env->assign->get_user_grade((int) $env->student->id, false);
         $this->assertTrue($grade->grade === null || $grade->grade < 0, 'Control: manual computes nothing.');
 
         $p = $this->progress($env);
@@ -209,13 +141,109 @@ final class marking_progress_test extends \advanced_testcase {
     }
 
     /**
-     * Fewer markers allocated than markercount is the coordinator's wait, even
-     * while the allocated marker has marked.
+     * Enabling an optional slot with a marker raises the expected count from 2
+     * to 3 and lists the slot at position 3; core clears the agreed grade it
+     * had computed, so the student waits for the third mark.
      *
      * @return void
      */
-    public function test_missing_marker_waits_for_allocation(): void {
+    public function test_enabled_optional_marker_is_expected(): void {
         $env = $this->build_environment('average', 1);
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $env->markers[1], 80);
+        $this->assertSame(2, $this->progress($env)['expected'], 'Control: the optional slot is not expected yet.');
+        $this->assertSame(marking_progress::WAIT_NONE, $this->progress($env)['wait']);
+
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+
+        $p = $this->progress($env);
+        $this->assertSame($env->assign->expected_marker_count((int) $env->student->id), $p['expected']);
+        $this->assertSame(3, $p['expected']);
+        $this->assertSame(2, $p['completed']);
+        $this->assertSame(marking_progress::WAIT_MARKERS, $p['wait']);
+        $this->assertSame(
+            [
+                'marker' => (int) $extra->id,
+                'optional' => 1,
+                'enabled' => 1,
+                'position' => 3,
+                'state' => marking_progress::MARK_NONE,
+            ],
+            $p['slots'][2]
+        );
+    }
+
+    /**
+     * An optional slot enabled before anyone is allocated to it is expected
+     * (core counts the placeholder) but listed as no slot, since nobody holds it,
+     * so the wait is the coordinator's: nobody can complete that mark.
+     *
+     * @return void
+     */
+    public function test_enabled_placeholder_is_expected_but_not_a_slot(): void {
+        global $DB;
+        $env = $this->build_environment('average', 1);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [0, 1]]);
+        $this->assertTrue(
+            $DB->record_exists('assign_allocated_marker', [
+                'assignment' => $env->assign->get_instance()->id,
+                'student' => $env->student->id,
+                'marker' => 0,
+                'enabled' => 1,
+            ]),
+            'Control: core stored the placeholder.'
+        );
+
+        $p = $this->progress($env);
+        $this->assertSame($env->assign->expected_marker_count((int) $env->student->id), $p['expected']);
+        $this->assertSame(3, $p['expected']);
+        $this->assertCount(2, $p['slots']);
+        $this->assertSame(
+            array_keys($env->assign->get_marker_allocations((int) $env->student->id, false)),
+            array_column($p['slots'], 'position')
+        );
+        $this->assertSame(marking_progress::WAIT_ALLOCATION, $p['wait']);
+    }
+
+    /**
+     * Disabling the optional slot again drops the expected count back to 2,
+     * and the optional marker's mark, still stored, no longer counts.
+     *
+     * @return void
+     */
+    public function test_disabled_optional_marker_is_not_counted(): void {
+        global $DB;
+        $env = $this->build_environment('average', 1);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $extra, 90);
+        $before = $this->progress($env);
+        $this->assertSame(3, $before['expected']);
+        $this->assertSame(2, $before['completed'], 'Control: the optional mark counts while the slot is enabled.');
+
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 0]]);
+
+        $gradeid = $env->assign->get_user_grade((int) $env->student->id, false)->id;
+        $this->assertTrue(
+            $DB->record_exists('assign_mark', ['gradeid' => $gradeid, 'marker' => $extra->id]),
+            'Control: core keeps the mark.'
+        );
+        $p = $this->progress($env);
+        $this->assertSame(2, $p['expected']);
+        $this->assertSame(1, $p['completed']);
+        $this->assertCount(2, $p['slots']);
+        $this->assertSame(marking_progress::WAIT_MARKERS, $p['wait']);
+    }
+
+    /**
+     * A required slot with no marker is the coordinator's wait.
+     *
+     * @return void
+     */
+    public function test_empty_required_slot_waits_for_allocation(): void {
+        $env = $this->build_environment('average', 0, 1);
         $this->mark($env, $env->markers[0], 60);
 
         $p = $this->progress($env);
@@ -224,50 +252,70 @@ final class marking_progress_test extends \advanced_testcase {
         $this->assertCount(1, $p['slots']);
         $this->assertSame(marking_progress::WAIT_ALLOCATION, $p['wait']);
 
-        $env->assign->update_allocated_markers(
-            (int) $env->student->id,
-            [(int) $env->markers[0]->id, (int) $env->markers[1]->id]
-        );
-        $p = $this->progress($env);
-        $this->assertSame(1, $p['completed'], 'Control: the first mark is still counted.');
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [(int) $env->markers[1]->id, null]]);
         $this->assertSame(
             marking_progress::WAIT_MARKERS,
-            $p['wait'],
-            'Control: allocating the second marker hands the wait to the markers.'
+            $this->progress($env)['wait'],
+            'Control: allocating the slot hands the wait to the marker.'
         );
     }
 
     /**
-     * A marker replaced after marking keeps their mark row, which core no
-     * longer reads, so it no longer counts.
+     * With no optional slot configured core expects the required count and
+     * reads no allocation row, so an optional row left behind does not count.
+     *
+     * Core refuses to lower the optional count while such a row exists
+     * ({@see \assign::can_change_marker_count()}), so the state is written
+     * straight into the activity row.
      *
      * @return void
      */
-    public function test_a_replaced_markers_mark_is_not_counted(): void {
+    public function test_no_optional_slot_configured_ignores_optional_rows(): void {
         global $DB;
-        $env = $this->build_environment('manual');
-        $this->mark($env, $env->markers[0], 60);
-        $this->mark($env, $env->markers[1], 80);
-        $this->assertSame(2, $this->progress($env)['completed'], 'Control: both marks count.');
+        $env = $this->build_environment('average', 1);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+        $this->assertSame(3, $this->progress($env)['expected'], 'Control: the optional slot is expected.');
 
-        $other = $this->getDataGenerator()->create_and_enrol($env->course, 'editingteacher');
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $env->markers[0]->id, (int) $other->id]);
+        $DB->set_field('assign', 'optionalmarkercount', 0, ['id' => $env->assign->get_instance()->id]);
 
-        $grade = $this->grade($env);
-        $this->assertTrue(
-            $DB->record_exists('assign_mark', ['gradeid' => $grade->id, 'marker' => $env->markers[1]->id]),
-            'Control: core keeps the mark.'
-        );
-        $this->assertCount(1, $env->assign->get_marks((int) $grade->id, (int) $env->student->id));
-        $p = $this->progress($env);
-        $this->assertSame(1, $p['completed']);
-        $this->assertSame((int) $other->id, $p['slots'][1]['marker']);
-        $this->assertSame(marking_progress::WAIT_MARKERS, $p['wait']);
+        $this->assertSame(2, $this->progress($env)['expected']);
     }
 
     /**
-     * A single-marker activity, an activity without marker allocation, and a
-     * row with no student, get no entry.
+     * When the completed marks reach the expected count, core can determine
+     * the agreed grade ({@see \assign::all_markers_marked()}) even with a
+     * required slot empty, so the wait is the agreed grade, not the allocation.
+     *
+     * Under core's own writes the completed marks cannot reach the expected
+     * count while a required slot is empty, so the state is reached as in the
+     * test above: an optional row left behind once no optional slot is configured.
+     *
+     * @return void
+     */
+    public function test_agreed_takes_precedence_over_an_empty_required_slot(): void {
+        global $DB;
+        $env = $this->build_environment('manual', 1, 1);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $extra, 80);
+        $DB->set_field('assign', 'optionalmarkercount', 0, ['id' => $env->assign->get_instance()->id]);
+        $env->assign = new \assign(\context_module::instance($env->cm->id), $env->cm, $env->course);
+        $gradeid = (int) $env->assign->get_user_grade((int) $env->student->id, false)->id;
+        $this->assertTrue(
+            $env->assign->all_markers_marked($gradeid, (int) $env->student->id),
+            'Control: core can determine the agreed grade.'
+        );
+
+        $p = $this->progress($env);
+        $this->assertSame(2, $p['expected']);
+        $this->assertSame(2, $p['completed']);
+        $this->assertSame(marking_progress::WAIT_AGREED, $p['wait']);
+    }
+
+    /**
+     * A single-marker activity, and a row with no student, get no entry.
      *
      * @return void
      */
@@ -281,6 +329,7 @@ final class marking_progress_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => 1,
+            'optionalmarkercount' => 0,
         ]);
         $singlerow = (object) ['id' => -1, 'iteminstance' => $single->id, 'userid' => $env->student->id, 'attemptnumber' => 0];
         $teamrow = (object) ['id' => -2, 'iteminstance' => $multirow->iteminstance, 'userid' => 0, 'attemptnumber' => 0];
@@ -294,16 +343,17 @@ final class marking_progress_test extends \advanced_testcase {
     }
 
     /**
-     * Build a processable course with a two-marker assign, one submitted
-     * student with a ledger row, and some markers allocated in one call.
+     * Build a processable course with a multi-marker assign, one submitted
+     * student with a ledger row, and some of the required markers allocated.
      *
      * Core's generator leaves markercount at 0, so it is always set here.
      *
      * @param string $method The multimarkmethod.
-     * @param int $allocated How many of the two markers are allocated, in creation order.
+     * @param int $optional Number of optional marker slots.
+     * @param int $allocated How many of the two required slots get a marker.
      * @return \stdClass course, cm, assign, student and markers.
      */
-    private function build_environment(string $method, int $allocated = 2): \stdClass {
+    private function build_environment(string $method, int $optional = 0, int $allocated = 2): \stdClass {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -322,6 +372,7 @@ final class marking_progress_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => 2,
+            'optionalmarkercount' => $optional,
             'multimarkmethod' => $method,
             'grade' => 100,
         ]);
@@ -337,15 +388,23 @@ final class marking_progress_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $env = (object) ['course' => $course, 'cm' => $cm, 'assign' => $assign, 'student' => $student];
-        $env->markers = [
-            $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
-            $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
-        ];
-        $ids = array_map(fn($m) => (int) $m->id, array_slice($env->markers, 0, $allocated));
-        if (!empty($ids)) {
-            $assign->update_allocated_markers((int) $student->id, $ids);
+        $env->markers = [$this->create_marker($env), $this->create_marker($env)];
+        $allocations = [];
+        for ($i = 0; $i < $allocated; $i++) {
+            $allocations[$i + 1] = [(int) $env->markers[$i]->id, null];
         }
+        $assign->update_marker_allocations((int) $student->id, $allocations);
         return $env;
+    }
+
+    /**
+     * Create a teacher in the environment's course.
+     *
+     * @param \stdClass $env
+     * @return \stdClass The user record.
+     */
+    private function create_marker(\stdClass $env): \stdClass {
+        return $this->getDataGenerator()->create_and_enrol($env->course, 'editingteacher');
     }
 
     /**
@@ -353,24 +412,14 @@ final class marking_progress_test extends \advanced_testcase {
      *
      * @param \stdClass $env
      * @param \stdClass $marker
-     * @param float|null $mark Null saves a row with no mark, as a state-only change does.
+     * @param float $mark
      * @param string $state The marker's own workflow state; "Marking completed" by default.
      * @return void
      */
-    private function mark(\stdClass $env, \stdClass $marker, ?float $mark, string $state = 'readyforreview'): void {
+    private function mark(\stdClass $env, \stdClass $marker, float $mark, string $state = 'readyforreview'): void {
         $grade = $env->assign->get_user_grade((int) $env->student->id, true);
         $grade->grader = (int) $marker->id;
         $env->assign->update_mark($grade, $mark, $state);
-    }
-
-    /**
-     * The student's grade row for attempt 0.
-     *
-     * @param \stdClass $env
-     * @return \stdClass
-     */
-    private function grade(\stdClass $env): \stdClass {
-        return $env->assign->get_user_grade((int) $env->student->id, false);
     }
 
     /**

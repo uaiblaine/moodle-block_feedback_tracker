@@ -29,6 +29,7 @@ namespace block_feedback_tracker\lockstep;
 
 use block_feedback_tracker\local\output\bootstrap;
 use block_feedback_tracker\local\score\responsiveness_calculator;
+use PHPUnit\Framework\Attributes\CoversNothing;
 
 /**
  * Several values live on both sides, once in PHP and once in amd/src: the
@@ -39,9 +40,8 @@ use block_feedback_tracker\local\score\responsiveness_calculator;
  *
  * The JS is read from disk rather than mirrored into an expected array here:
  * a mirrored copy would be a third copy, free to drift like the other two.
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class js_php_lockstep_test extends \advanced_testcase {
     /**
      * Read a file from amd/src.

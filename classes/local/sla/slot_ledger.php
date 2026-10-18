@@ -31,28 +31,13 @@ use block_feedback_tracker\local\calendar\day_counter;
 
 /**
  * The only code that writes {block_feedback_tracker_alloc}: one row per ledger
- * cycle and marker slot on a multi-marking activity (owner decision D3), so
- * each marker's own turnaround, from becoming responsible to their own
+ * cycle and marker slot on a multi-marking activity (Moodle 5.3, owner decision
+ * D3), so each marker's own turnaround, from becoming responsible to their own
  * "Marking completed", is measured apart from the row-level figures.
  *
  * The table is history. Who holds a slot now is read from core every time,
  * through {@see marking_progress::for_rows()}, the one reading of core's
  * multi-marking state; events and the reconciler only say when to look.
- *
- * What Moodle 5.2 reports, and so how precise each column is here:
- * - an allocation: {@see \assign::update_allocated_markers()} deletes every
- *   allocation row of the student and inserts the new set one marker at a
- *   time, firing `marker_updated` after each insert, for every marker that
- *   stays or is added. The observer records those ({@see self::SOURCE_OBSERVED})
- *   but never closes a slot, because at each event the markers still to be
- *   inserted are missing from core for a moment;
- * - a removal fires nothing, so the reconcile sweep closes the slot when it
- *   finds it, with the discovery instant as `timeremoved`;
- * - a completion fires nothing either (5.2 has no `submission_marked`), so the
- *   sweep stamps `timemarked` from the mark row ({@see self::complete_slot()}).
- *   Every completion instant on 5.2 is therefore reconciled: the last edit of
- *   the marker's {assign_mark} row, an upper bound on the real instant;
- * - 5.2 has no optional slots, so `optional` is always 0.
  *
  * Two clock rules:
  * - A marker becomes responsible for a cycle when they are allocated, but never
@@ -65,7 +50,7 @@ use block_feedback_tracker\local\calendar\day_counter;
  *   save moving the marker between positions, not a re-allocation.
  */
 final class slot_ledger {
-    /** The allocation instant comes from marker_updated: exact. */
+    /** The allocation instant comes from marker_added / marker_removed: exact. */
     public const SOURCE_OBSERVED = 'observed';
 
     /**
@@ -77,8 +62,7 @@ final class slot_ledger {
     /**
      * Found by the reconciler's slot sweep, because no event reported it: the
      * instant is the discovery, later than the real allocation, so the
-     * turnaround is under-estimated. On Moodle 5.2 every `timeremoved` the
-     * sweep writes is such a discovery instant too.
+     * turnaround is under-estimated.
      */
     public const SOURCE_RECONCILED = 'reconciled';
 
@@ -97,33 +81,19 @@ final class slot_ledger {
      *
      * Covers the current cycle (`iscurrent = 1`) of the latest attempt, the only
      * one core's allocations describe, since they are not kept per attempt. For
-     * each allocated marker ({@see marking_progress::for_rows()}): a row is
+     * each active marker ({@see marking_progress::for_rows()}): a row is
      * inserted when there is none, revived with a new clock when it was removed,
-     * and its position is updated as seen. With `$closeabsent`, a live row whose
-     * marker is no longer allocated gets `timeremoved`. Does nothing on an
-     * activity that does not use multiple marking.
-     *
-     * The observer passes `$closeabsent = false`: it runs inside
-     * {@see \assign::update_allocated_markers()}, between the insert of one
-     * marker and the next, so a marker the same save is about to re-insert
-     * would read as removed, and if the save crossed a second boundary their
-     * clock would restart. Removals are found by the reconcile sweep instead,
-     * which reads core at rest.
+     * and its position and optional flag are updated as seen. A live row whose
+     * marker no longer holds an active slot gets `timeremoved`. Does nothing on
+     * an activity that does not use multiple marking.
      *
      * @param int $cmid Course-module id of the assign.
      * @param int $userid The student.
      * @param int $when The instant the change happened, or was found.
      * @param string $source One of the SOURCE_* constants, recorded on every row whose clock starts here.
-     * @param bool $closeabsent Whether to close the live rows of markers no longer allocated.
      * @return int Slot rows inserted or changed.
      */
-    public static function sync_for_user(
-        int $cmid,
-        int $userid,
-        int $when,
-        string $source,
-        bool $closeabsent = true
-    ): int {
+    public static function sync_for_user(int $cmid, int $userid, int $when, string $source): int {
         global $DB;
 
         if ($cmid <= 0 || $userid <= 0) {
@@ -177,9 +147,6 @@ final class slot_ledger {
                 }
                 $written += self::refresh_slot($rec, $slot, $when, $source);
             }
-            if (!$closeabsent) {
-                continue;
-            }
             foreach ($mine as $marker => $rec) {
                 if (!isset($active[$marker]) && $rec->timeremoved === null) {
                     $DB->update_record('block_feedback_tracker_alloc', (object) [
@@ -220,17 +187,63 @@ final class slot_ledger {
     }
 
     /**
-     * Stamp one slot's first completion and measure the marker's turnaround.
+     * Record a marker's "Marking completed" on the student's current cycle.
      *
-     * On Moodle 5.2 only the reconcile sweep calls this, with the
-     * `timemodified` of the marker's complete {assign_mark} row: core fires no
-     * event when a marker completes, so every completion instant here is
-     * reconciled, the last edit of the mark row and an upper bound on the real
-     * one.
+     * The caller has established that the mark reached that state (the
+     * `submission_marked` event without `draft`). The mark row gives the
+     * marker, the student and the attempt; the slot is that marker's live row
+     * on the attempt's current cycle. Without one (an allocation no event
+     * reported yet) nothing is written, and the reconciler's slot sweep
+     * records both later. The first completion wins
+     * ({@see self::complete_slot()}).
+     *
+     * @param int $markid {assign_mark}.id.
+     * @param int $when The completion instant.
+     * @return bool True when a completion was recorded.
+     */
+    public static function mark_completed(int $markid, int $when): bool {
+        global $DB;
+
+        $mark = $DB->get_record_sql(
+            "SELECT m.id, m.marker, g.assignment, g.userid, g.attemptnumber
+               FROM {assign_mark} m
+               JOIN {assign_grades} g ON g.id = m.gradeid
+              WHERE m.id = :markid",
+            ['markid' => $markid]
+        );
+        if (!$mark) {
+            return false;
+        }
+        $slotid = $DB->get_field_sql(
+            "SELECT s.id
+               FROM {block_feedback_tracker_alloc} s
+               JOIN {block_feedback_tracker_sub} l ON l.id = s.subid
+              WHERE l.iteminstance = :assignid
+                AND l.userid = :userid
+                AND l.attemptnumber = :attempt
+                AND l.iscurrent = 1
+                AND s.marker = :marker
+                AND s.timeremoved IS NULL",
+            [
+                'assignid' => (int) $mark->assignment,
+                'userid' => (int) $mark->userid,
+                'attempt' => (int) $mark->attemptnumber,
+                'marker' => (int) $mark->marker,
+            ],
+            IGNORE_MULTIPLE
+        );
+        if (!$slotid) {
+            return false;
+        }
+        return self::complete_slot((int) $slotid, $when);
+    }
+
+    /**
+     * Stamp one slot's first completion and measure the marker's turnaround.
      *
      * First completion wins: a slot that already has `timemarked` is left
      * alone, so a marker who goes back to "In marking" and completes again
-     * keeps the instant first recorded. The interval runs from the later
+     * keeps the instant they first delivered. The interval runs from the later
      * of `timeallocated` and the cycle's hand-in to the completion, in
      * effective hours ({@see academic_time::elapsed_effective_hours()}) and in
      * business days ({@see day_counter::business_days()}), never derived from
@@ -365,7 +378,7 @@ final class slot_ledger {
      * PostgreSQL.
      *
      * @param \stdClass $row Ledger row (id, courseid, cmid, userid).
-     * @param array $slot Slot entry from marking_progress (marker, optional, position); optional is always 0 on 5.2.
+     * @param array $slot Slot entry from marking_progress (marker, optional, position).
      * @param int $when Allocation instant.
      * @param string $source One of the SOURCE_* constants.
      * @return int 1 when a row was inserted, else 0.
@@ -404,12 +417,10 @@ final class slot_ledger {
      * Update a stored row whose marker holds an active slot.
      *
      * A removed row is revived. Its clock restarts when the removal is older
-     * than this instant; a removal in the same second is the same save
-     * re-inserting the marker ({@see \assign::update_allocated_markers()}
-     * deletes every allocation row and inserts the new set one by one), so only
-     * the removal is undone. On 5.2 a removal is recorded only when the sweep
-     * saw it, so a marker removed and allocated again between two sweeps keeps
-     * their clock.
+     * than this instant; a removal in the same second is the same save moving
+     * the marker to another position ({@see \assign::update_marker_allocations()}
+     * processes the positions one by one and fires per position), so only the
+     * removal is undone.
      *
      * @param \stdClass $rec Stored row (id, position, optional, timeremoved).
      * @param array $slot Slot entry from marking_progress.

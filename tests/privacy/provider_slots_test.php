@@ -33,18 +33,15 @@ use core_privacy\local\request\approved_contextlist;
 use core_privacy\local\request\approved_userlist;
 use core_privacy\local\request\userlist;
 use core_privacy\local\request\writer;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The slot table holds two subjects: the student and the marker. Every
- * fixture uses the marker allocated in position 2, who is never the ledger
- * row's `allocmarkerid` (position 1 on a multi-marking activity): whatever the
+ * fixture uses the marker allocated in position 2, who has the higher id and
+ * so is never the ledger row's `allocmarkerid` (the lowest id): whatever the
  * provider finds for them, it found through the slot table.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\privacy\provider
  */
+#[CoversClass(provider::class)]
 final class provider_slots_test extends \core_privacy\tests\provider_testcase {
     /**
      * The marker who only appears on slot rows gets the course context, and
@@ -244,7 +241,10 @@ final class provider_slots_test extends \core_privacy\tests\provider_testcase {
             $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
             $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
         ];
-        $assign->update_allocated_markers((int) $student->id, [(int) $markers[0]->id, (int) $markers[1]->id]);
+        $assign->update_marker_allocations((int) $student->id, [
+            1 => [(int) $markers[0]->id, null],
+            2 => [(int) $markers[1]->id, null],
+        ]);
         return (object) [
             'course' => $course,
             'cm' => $cm,

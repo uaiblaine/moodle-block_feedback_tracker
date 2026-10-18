@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Covers the {block_feedback_tracker_bfcursor} primitives used by the
  * backfill_history task and cli/backfill_course.php.
- *
- * @covers \block_feedback_tracker\local\sla\backfill_cursor
  */
+#[CoversClass(backfill_cursor::class)]
 final class backfill_cursor_test extends \advanced_testcase {
     /**
      * get_or_create lazily inserts a row with cursor=0 + active=1 the

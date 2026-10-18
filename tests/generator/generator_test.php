@@ -28,13 +28,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker;
 
 use block_feedback_tracker\local\sla\course_access;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The fixture helpers are shared by most test files, so a defect here shows
  * up as a confusing failure somewhere else. Pin their contracts.
- *
- * @covers \block_feedback_tracker_generator
  */
+#[CoversClass(\block_feedback_tracker_generator::class)]
 final class generator_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

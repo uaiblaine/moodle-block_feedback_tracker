@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The stored open / due / cut-off dates reach a ledger row through three
@@ -36,10 +37,9 @@ use block_feedback_tracker\local\calendar\academic_time;
  * group memberships core applies. rule_resolver_test pins the resolution
  * itself; these tests pin what reaches the ledger, through core's own events
  * where core has them.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\rule_resolver
  */
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(rule_resolver::class)]
 final class ledger_rule_dates_test extends \advanced_testcase {
     /**
      * Flush the per-request memos the ledger consults.
@@ -121,15 +121,19 @@ final class ledger_rule_dates_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
         $this->assertSame($due + 86400, $this->stored_close($cm, $userid), 'Sanity: the first group governs.');
 
+        /* Through the override manager, as Moodle 5.3's own pages delete an
+         * override (assign::delete_override() is deprecated there, MDL-86513);
+         * it fires the same group_override_deleted event. */
         $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
-        $assign->delete_override($firstoverride);
+        $manager = new \mod_assign\override_manager($assign->get_instance(), $assign->get_context());
+        $manager->delete_overrides_by_id([$firstoverride]);
         $this->assertSame(
             $due + 2 * 86400,
             $this->stored_close($cm, $userid),
             'With the first override gone, the second group governs.'
         );
 
-        $assign->delete_override($secondoverride);
+        $manager->delete_overrides_by_id([$secondoverride]);
         $this->assertSame($due, $this->stored_close($cm, $userid), 'With no override left, the activity date.');
     }
 

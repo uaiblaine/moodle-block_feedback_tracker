@@ -26,15 +26,16 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\external;
 
+use block_feedback_tracker\local\payload\responsiveness_payload;
 use block_feedback_tracker\local\sla\rollup_service;
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for retrieving responsiveness data via external functions.
- *
- * @covers \block_feedback_tracker\external\get_responsiveness
- * @covers \block_feedback_tracker\local\payload\responsiveness_payload
  */
+#[CoversClass(get_responsiveness::class)]
+#[CoversClass(responsiveness_payload::class)]
 final class get_responsiveness_test extends \advanced_testcase {
     /**
      * After seeding ledger + rollup, the WS returns the expected payload

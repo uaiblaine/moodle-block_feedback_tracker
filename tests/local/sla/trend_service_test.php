@@ -26,11 +26,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Tests that trend rows aggregate only genuinely "submitted" graded work.
- *
- * @covers \block_feedback_tracker\local\sla\trend_service
  */
+#[CoversClass(trend_service::class)]
 final class trend_service_test extends \advanced_testcase {
     /**
      * A graded draft on the same day is excluded from the trend median.

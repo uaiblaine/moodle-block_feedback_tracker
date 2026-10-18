@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
+
 /**
  * version.php declares the Moodle branches the plugin supports, and
  * .github/workflows/ci.yml runs one job per branch. Nothing else ties the two
@@ -36,9 +38,8 @@ namespace block_feedback_tracker;
  * there is nothing to compare and the test is skipped. On a MOODLE_XX_STABLE
  * branch of this repository ci.yml names no branch (the workflow detects it
  * from the branch name), and the range must then be that one branch.
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class ci_matrix_test extends \basic_testcase {
     /**
      * The branches of $plugin->supported and the branches ci.yml runs are the

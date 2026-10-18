@@ -1,6 +1,6 @@
 # Multi-marking on Moodle 5.2
 
-For Moodle 5.3 see docs/moodle-53-assign-audit.md on the 5.3 branch (`MOODLE_503_DEV`), which supersedes the 5.3 notes below.
+For Moodle 5.3 final see moodle-53-assign-audit.md, which supersedes the 5.3 notes below.
 Everything here is true of Moodle 5.2; where a claim differs on 5.3 final, the section says so.
 
 **Correction, 2026-08-03.** An earlier revision of this file attributed every
@@ -49,7 +49,7 @@ existing event, never in the event's own payload. Two consequences on 5.2:
 
 This stops at 5.2. Moodle 5.3 adds `marker_added`, `marker_removed`,
 `marker_enabled_updated`, `submission_marked` and `agreed_grade_calculated`, and retires
-`marker_updated`; see section 1 of docs/moodle-53-assign-audit.md on the 5.3 branch.
+`marker_updated`; see moodle-53-assign-audit.md section 1.
 
 The only event class added anywhere in the module in recent releases is
 `\assignfeedback_file\event\feedback_downloaded`, which is **5.1+** (absent
@@ -157,11 +157,8 @@ survive:
   silent, and re-allocating a subset emits events only for the survivors. A
   marker removed entirely leaves no trace.
 - **One event per marker** means the last event does not identify "the" marker.
-  The plugin re-reads core rather than trusting the payload, and picks one
-  marker deterministically: on a multi-marking activity the one in position 1
-  (the first allocation row, as `get_allocated_markers()` orders them), so a
-  second marker never moves the first one's clock; elsewhere the lowest id.
-  Keep both properties.
+  The plugin already re-reads core rather than trusting the payload, and
+  already picks `MIN(marker)` deterministically; keep both properties.
 
 ---
 
@@ -190,51 +187,24 @@ re-dirty the rollup.
 
 In dependency order:
 
-1. **N-marker support: done.** The responsible marker follows the grade
-   method (`2026042005`, audit item B5): position 1 while the cycle is pending,
-   then the confirmer, the marker of the highest mark or position 1, stored in
-   `allocattrib` (`submission_ledger::resolve_responsible()`). The per-slot
-   table `block_feedback_tracker_alloc` (`2026042006`, audit item B6) holds one
-   row per cycle and marker, written by `local\sla\slot_ledger`:
-   - allocations from `marker_updated` (`observed`), carried onto a new cycle
-     written within 600 s of its hand-in (`carried`), otherwise found by the
-     `slots` reconcile sweep (`reconciled`);
-   - removals, which 5.2 never reports, closed by the sweep at discovery; the
-     observer only adds, because `update_allocated_markers()` fires between one
-     marker's insert and the next;
-   - completions, which 5.2 never reports either, stamped by the sweep from
-     the marker's complete `{assign_mark}` row (readyforreview, mark of 0 or
-     more) at its `timemodified`, so every 5.2 completion instant is an upper
-     bound; a mark last edited before the cycle's hand-in waits for the next
-     edit.
-
-   `submission_ledger::marker_start()` reads a marker's slot allocation first,
-   so a maximum winner in position 2 is measured. The drill-down's Markers
-   section (`local\sla\marker_figures`) shows each marker's open slots,
-   completed marks, median own turnaround and coverage, per activity where the
-   viewer may manage allocations. Grade Now lists an allocated submission only
-   for its allocated markers until their own mark is complete and no agreed
-   grade exists (`marking_progress::pending_for_viewer_sql()`, audit item B4);
-   an unallocated one stays on every teacher's list.
+1. **N-marker support is still missing on 5.02.**
+   `allocmarkerid` holds one id; a student with several allocated markers is
+   reduced to the lowest. That is deterministic but incomplete — the per-marker
+   table from the allocation design's phase 4 is what makes per-marker figures
+   meaningful. Audit phases P3 and P4 of moodle-53-assign-audit.md cover it.
 2. **`$plugin->supported` max to `503`** when 5.3 work starts, with
    `.github/workflows/ci.yml` job list and the README compatibility table in
    the same commit (fleet rule).
-3. **`assign_mark.timecreated` as an allocation lower bound: absorbed** by the
-   per-slot table (item 1): an allocation the observer missed is found by the
-   `slots` sweep at discovery instead, labelled `reconciled`.
-4. **A reconciliation sweep over `assign_mark`: absorbed** by the `slots`
-   sweep (item 1), which reads every marker's own mark row whatever the
-   method, so partial marking under `manual` leaves a per-marker trail.
-5. **Assert, do not fix, partial marking: done** (audit item B8).
-   `tests/local/sla/agreed_grade_test.php` drives core 5.2: fewer marks than
-   `markercount` stay pending, every mark in under `manual` stays pending, every
-   mark in under `average` closes the cycle.
-6. **The progress line: done** (`2026042005`, audit item B3).
-   `local\sla\marking_progress` reads core's tables when the pending report and
-   the drill-down are built ("1 of 2 markers", awaiting allocation, awaiting the
-   agreed grade), counting a mark as `assign::get_marks()` does: any mark row of
-   an allocated marker.
-7. Run **every** supported branch before tagging:
+3. **`assign_mark.timecreated` as an allocation lower bound**, raising
+   coverage where `marker_updated` was missed. Absorbed by the per-slot table of audit
+   phase P3.
+4. **A reconciliation sweep over `assign_mark`** for the `manual` / `first`
+   methods, where partial marking leaves no event trail at all. Audit phase P3's
+   reconcile sweep covers it.
+5. **Assert, do not fix, partial marking**: a submission with fewer marks than
+   `markercount` is correctly pending. Add the test before touching anything. Done in
+   audit phase P5: `tests/local/sla/agreed_grade_test.php::test_partial_marking_stays_pending`.
+6. Run **every** supported branch before tagging:
    `mdl ci moodle-block_feedback_tracker --branch MOODLE_405_STABLE`,
    `MOODLE_501_STABLE`, `MOODLE_502_STABLE`, plus `--db mariadb` and, once 5.3
    is in range, `mdl phpunit m53 block_feedback_tracker`.

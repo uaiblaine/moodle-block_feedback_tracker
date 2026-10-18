@@ -26,13 +26,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\output;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
+
 /**
  * pages/calendar_editor.php puts exception messages, which can carry a
  * submitted value, into the notice as plain text. The template must escape
  * the notice and its error lines while it prints the pre-rendered forms raw.
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class calendar_editor_template_test extends \advanced_testcase {
     /** Markup that renders as an element when it is not escaped. */
     private const PROBE = '<img src="x" data-probe="1">';

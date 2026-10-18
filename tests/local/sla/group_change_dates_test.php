@@ -29,6 +29,7 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\task\reattribute_users;
 use block_feedback_tracker\task\reconcile_ledger;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A group override governs a student only while they belong to its group, so
@@ -37,11 +38,10 @@ use block_feedback_tracker\task\reconcile_ledger;
  * the events reach the observer as they do on a site, and no reconciler sweep
  * or adhoc task runs unless a test runs it. After each change the rule-drift
  * sweep must find nothing left to repair.
- *
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\rule_resolver
  */
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(rule_resolver::class)]
 final class group_change_dates_test extends \advanced_testcase {
     /**
      * Load core's group API and flush the memos the ledger consults.

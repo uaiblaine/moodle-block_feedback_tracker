@@ -27,6 +27,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\lockstep;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
+
 /**
  * The JS builds class names and token names from a band slug at run time, so
  * no linter can see which rules and tokens it needs. A missing one fails
@@ -35,9 +37,8 @@ namespace block_feedback_tracker\lockstep;
  *
  * The same blindness covers contrast: stylelint accepts an `opacity` that
  * fades a label under 4.5:1, so the colour rules are pinned here too.
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class stylesheet_contract_test extends \basic_testcase {
     /**
      * Class families the JS builds as prefix + band slug.

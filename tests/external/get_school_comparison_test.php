@@ -28,13 +28,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A cross-school read behind its own capability, so the interesting cases are
  * the refusal and the window parameter.
- *
- * @covers \block_feedback_tracker\external\get_school_comparison
  */
+#[CoversClass(get_school_comparison::class)]
 final class get_school_comparison_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

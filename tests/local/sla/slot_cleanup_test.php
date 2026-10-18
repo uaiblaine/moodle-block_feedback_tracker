@@ -28,6 +28,7 @@ namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\task\prune_ledger;
 use block_feedback_tracker\task\reconcile_ledger;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A slot row belongs to a ledger cycle: when the cycle goes, its slot rows go
@@ -35,18 +36,12 @@ use block_feedback_tracker\task\reconcile_ledger;
  * no retention removes. Each test deletes through one production path and
  * checks that no slot row is left without its ledger row, with a second course
  * whose rows must survive as the control.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\slot_ledger
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\task\prune_ledger
- * @covers \block_feedback_tracker\task\reconcile_ledger
- * @covers \block_feedback_tracker\task\discard_course_data
- * @covers \block_feedback_tracker\privacy\provider
  */
+#[CoversClass(slot_ledger::class)]
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(observer::class)]
+#[CoversClass(prune_ledger::class)]
+#[CoversClass(reconcile_ledger::class)]
 final class slot_cleanup_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -70,30 +65,6 @@ final class slot_cleanup_test extends \advanced_testcase {
         ob_start();
         delete_course($env->course, false);
         ob_end_clean();
-        $this->assert_cleaned($env, $control);
-    }
-
-    /**
-     * Removing the block discards the course's data, slot rows included.
-     *
-     * @return void
-     */
-    public function test_block_removed_discards_the_course(): void {
-        global $DB;
-        [$env, $control] = $this->two_courses();
-        $DB->delete_records('block_instances', [
-            'blockname' => 'feedback_tracker',
-            'parentcontextid' => \context_course::instance($env->course->id)->id,
-        ]);
-        course_access::reset_memo();
-        $task = new \block_feedback_tracker\task\discard_course_data();
-        $task->set_custom_data(['courseid' => (int) $env->course->id]);
-
-        ob_start();
-        $task->execute();
-        ob_end_clean();
-
-        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $env->course->id]), 'Control.');
         $this->assert_cleaned($env, $control);
     }
 
@@ -141,7 +112,7 @@ final class slot_cleanup_test extends \advanced_testcase {
     /**
      * Deleting the student's account deletes their slot rows; deleting a
      * marker's account keeps the rows where they were the marker, as core
-     * keeps the allocation row.
+     * keeps the allocation.
      *
      * @return void
      */
@@ -238,19 +209,6 @@ final class slot_cleanup_test extends \advanced_testcase {
     }
 
     /**
-     * A privacy erasure of the whole course context deletes its slot rows.
-     *
-     * @return void
-     */
-    public function test_privacy_course_context_erasure(): void {
-        [$env, $control] = $this->two_courses();
-        \block_feedback_tracker\privacy\provider::delete_data_for_all_users_in_context(
-            \context_course::instance($env->course->id)
-        );
-        $this->assert_cleaned($env, $control);
-    }
-
-    /**
      * The course under test is left with no slot row, no slot row anywhere is
      * left without its ledger row, and the control course keeps its rows.
      *
@@ -331,7 +289,10 @@ final class slot_cleanup_test extends \advanced_testcase {
             $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
             $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
         ];
-        $assign->update_allocated_markers((int) $student->id, [(int) $markers[0]->id, (int) $markers[1]->id]);
+        $assign->update_marker_allocations((int) $student->id, [
+            1 => [(int) $markers[0]->id, null],
+            2 => [(int) $markers[1]->id, null],
+        ]);
         return (object) ['course' => $course, 'cm' => $cm, 'assign' => $assign, 'student' => $student, 'markers' => $markers];
     }
 }

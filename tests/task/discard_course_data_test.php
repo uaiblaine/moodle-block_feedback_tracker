@@ -28,6 +28,7 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\removal_grace;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Removing the block from a course must eventually discard that course's
@@ -35,10 +36,9 @@ use block_feedback_tracker\local\sla\removal_grace;
  * after enough time to undo it. Several ordinary administrative actions remove
  * every block from a course and immediately put them back; those must not cost
  * a course its history.
- *
- * @covers \block_feedback_tracker\task\discard_course_data
- * @covers \block_feedback_tracker\local\sla\removal_grace
  */
+#[CoversClass(discard_course_data::class)]
+#[CoversClass(removal_grace::class)]
 final class discard_course_data_test extends \advanced_testcase {
     /**
      * Swallow the task's mtrace() output, which Moodle's PHPUnit configuration

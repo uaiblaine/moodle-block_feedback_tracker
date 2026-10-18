@@ -28,24 +28,20 @@ namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\calendar\calendar;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * The slot table on Moodle 5.2, driven through mod_assign's own API.
+ * The slot table on Moodle 5.3, driven through mod_assign's own API.
  *
- * Allocations go through assign::update_allocated_markers() and marks through
- * assign::update_mark(), so the events are the ones core fires: marker_updated
- * per marker that stays or is added, and nothing for a removal or a
- * completion. Where an hours figure is asserted, both ends of the interval are
- * pinned instants passed to the writer and the working hours are set by the
- * test, as the width rule in CLAUDE.md requires.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\slot_ledger
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
+ * Allocations go through assign::update_marker_allocations() and marks through
+ * assign::update_mark(), so the events are the ones core fires. Where an
+ * hours figure is asserted, both ends of the interval are pinned instants
+ * passed to the writer and the working hours are set by the test, as the
+ * width rule in CLAUDE.md requires.
  */
+#[CoversClass(slot_ledger::class)]
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
 final class slot_ledger_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -60,25 +56,27 @@ final class slot_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * Allocating markers through core writes one observed row per allocated
-     * marker, in core's order, never optional.
+     * Allocating markers through core writes one observed row per active slot,
+     * with core's positions and the optional flag.
      *
      * @return void
      */
     public function test_allocation_creates_observed_rows_with_positions(): void {
         $before = time();
-        $env = $this->build_environment('average');
+        $env = $this->build_environment('average', 1);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
         $after = time();
 
         $slots = $this->slots($env);
-        $this->assertCount(2, $slots);
-        $this->assertSame([1, 2], array_map(fn($s) => (int) $s->position, array_values($slots)));
+        $this->assertCount(3, $slots);
+        $this->assertSame([1, 2, 3], array_map(fn($s) => (int) $s->position, array_values($slots)));
         $this->assertSame(
-            [(int) $env->markers[0]->id, (int) $env->markers[1]->id],
+            [(int) $env->markers[0]->id, (int) $env->markers[1]->id, (int) $extra->id],
             array_map(fn($s) => (int) $s->marker, array_values($slots))
         );
+        $this->assertSame([0, 0, 1], array_map(fn($s) => (int) $s->optional, array_values($slots)));
         foreach ($slots as $s) {
-            $this->assertSame(0, (int) $s->optional);
             $this->assertSame(slot_ledger::SOURCE_OBSERVED, $s->allocsource);
             $this->assertGreaterThanOrEqual($before, (int) $s->timeallocated);
             $this->assertLessThanOrEqual($after, (int) $s->timeallocated);
@@ -89,78 +87,73 @@ final class slot_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * A removal through core fires nothing for the removed marker, and the
-     * event for the marker who stays closes nothing: the observer only adds.
-     * The reconcile sweep closes it (reconcile_slots_test).
+     * An optional slot ticked with no marker named (a placeholder) is not an
+     * active slot, so it writes no row; naming its marker does.
      *
      * @return void
      */
-    public function test_removal_through_core_leaves_the_slot_live(): void {
-        $env = $this->build_environment('average');
-        [$first, $second] = $env->markers;
+    public function test_placeholder_slot_writes_nothing(): void {
+        $env = $this->build_environment('average', 1);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [0, 1]]);
+        $this->assertCount(2, $this->slots($env), 'The enabled placeholder holds no marker.');
 
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $first->id]);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+        $this->assertCount(3, $this->slots($env), 'Control: naming the marker fills the slot.');
+    }
+
+    /**
+     * Removing a marker through core marks their row removed and keeps it.
+     *
+     * @return void
+     */
+    public function test_removal_sets_timeremoved(): void {
+        $env = $this->build_environment('average');
+        $before = time();
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [0, null]]);
 
         $slots = $this->slots_by_marker($env);
-        $this->assertNull($slots[(int) $second->id]->timeremoved, 'The observer never closes a slot.');
-        $this->assertCount(2, $slots, 'Control: no row was added or dropped.');
+        $removed = $slots[(int) $env->markers[1]->id];
+        $this->assertNotNull($removed->timeremoved);
+        $this->assertGreaterThanOrEqual($before, (int) $removed->timeremoved);
+        $this->assertNull($slots[(int) $env->markers[0]->id]->timeremoved, 'Control: the other marker keeps the slot.');
     }
 
     /**
-     * The same markers saved again (core deletes every allocation row and
-     * inserts them anew) keep their clocks: a live row is left as it is.
+     * An optional slot disabled behind core's API (enabled = 0 with the marker
+     * left in place) is not an active slot: the marker loses it at the next
+     * sync, as get_marker_allocations($id, false) filters it.
      *
      * @return void
      */
-    public function test_saving_the_same_markers_again_keeps_the_clocks(): void {
+    public function test_a_disabled_optional_slot_is_not_active(): void {
         global $DB;
-        $env = $this->build_environment('average');
-        $pinned = time() - 5000;
-        $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $pinned, ['userid' => $env->student->id]);
+        $env = $this->build_environment('average', 1);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+        $this->assertNull($this->slots_by_marker($env)[(int) $extra->id]->timeremoved, 'Control: the slot is live.');
 
-        $env->assign->update_allocated_markers(
-            (int) $env->student->id,
-            [(int) $env->markers[0]->id, (int) $env->markers[1]->id]
-        );
+        $DB->set_field('assign_allocated_marker', 'enabled', 0, [
+            'assignment' => $env->assign->get_instance()->id,
+            'marker' => $extra->id,
+        ]);
+        slot_ledger::sync_for_user((int) $env->cm->id, (int) $env->student->id, time(), slot_ledger::SOURCE_RECONCILED);
 
-        foreach ($this->slots($env) as $s) {
-            $this->assertSame($pinned, (int) $s->timeallocated);
-            $this->assertSame(slot_ledger::SOURCE_OBSERVED, $s->allocsource);
-        }
+        $this->assertNotNull($this->slots_by_marker($env)[(int) $extra->id]->timeremoved);
     }
 
     /**
-     * Reversing the order in a later save moves the positions and nothing else.
-     *
-     * @return void
-     */
-    public function test_reordering_updates_positions(): void {
-        $env = $this->build_environment('average');
-        [$first, $second] = $env->markers;
-        $before = $this->slots_by_marker($env);
-
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $second->id, (int) $first->id]);
-
-        $after = $this->slots_by_marker($env);
-        $this->assertSame(1, (int) $after[(int) $second->id]->position);
-        $this->assertSame(2, (int) $after[(int) $first->id]->position);
-        $this->assertSame($before[(int) $first->id]->timeallocated, $after[(int) $first->id]->timeallocated);
-    }
-
-    /**
-     * A marker allocated again after the sweep recorded their removal starts a
-     * new clock, and a completion recorded before the removal no longer stands.
+     * A marker allocated again after a removal starts a new clock, and a
+     * completion recorded before the removal no longer stands.
      *
      * @return void
      */
     public function test_reallocation_revives_with_a_new_clock(): void {
         global $DB;
         $env = $this->build_environment('average');
-        [$first, $marker] = $env->markers;
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $first->id]);
-        slot_ledger::sync_for_user((int) $env->cm->id, (int) $env->student->id, time(), slot_ledger::SOURCE_RECONCILED);
+        $marker = $env->markers[1];
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [0, null]]);
         $slot = $this->slots_by_marker($env)[(int) $marker->id];
-        $this->assertNotNull($slot->timeremoved, 'Control: the sweep-side sync recorded the removal.');
         // Push the history back, so the re-allocation is clearly a later instant.
         $DB->update_record('block_feedback_tracker_alloc', (object) [
             'id' => $slot->id,
@@ -172,7 +165,7 @@ final class slot_ledger_test extends \advanced_testcase {
         ]);
 
         $before = time();
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $first->id, (int) $marker->id]);
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [(int) $marker->id, null]]);
 
         $revived = $this->slots_by_marker($env)[(int) $marker->id];
         $this->assertSame((int) $slot->id, (int) $revived->id, 'The same row is revived, not a second one.');
@@ -185,9 +178,9 @@ final class slot_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * A removal and re-allocation in the same second are one save re-inserting
-     * the marker: only the removal is undone and the clock keeps running. A
-     * later re-allocation restarts it.
+     * A removal and re-allocation in the same second are one save moving the
+     * marker: only the removal is undone and the clock keeps running. A later
+     * re-allocation restarts it.
      *
      * @return void
      */
@@ -227,60 +220,64 @@ final class slot_ledger_test extends \advanced_testcase {
     }
 
     /**
-     * Without $closeabsent a sync adds and never closes, which is what the
-     * observer needs between two inserts of one save; with it, a marker no
-     * longer allocated is closed.
+     * submission_marked without draft completes the marking marker's slot,
+     * and only theirs.
      *
      * @return void
      */
-    public function test_sync_closes_only_when_asked(): void {
-        global $DB;
+    public function test_completed_mark_stamps_the_right_slot(): void {
         $env = $this->build_environment('average');
-        $markerid = (int) $env->markers[1]->id;
-        $DB->delete_records('assign_allocated_marker', [
-            'assignment' => $env->assign->get_instance()->id,
-            'marker' => $markerid,
-        ]);
-        $cmid = (int) $env->cm->id;
-        $studentid = (int) $env->student->id;
+        $before = time();
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $after = time();
 
-        $this->assertSame(0, slot_ledger::sync_for_user($cmid, $studentid, time(), slot_ledger::SOURCE_OBSERVED, false));
-        $this->assertNull($this->slots_by_marker($env)[$markerid]->timeremoved);
-
-        $this->assertSame(1, slot_ledger::sync_for_user($cmid, $studentid, time(), slot_ledger::SOURCE_RECONCILED));
-        $this->assertNotNull($this->slots_by_marker($env)[$markerid]->timeremoved);
+        $slots = $this->slots_by_marker($env);
+        $done = $slots[(int) $env->markers[0]->id];
+        $this->assertNotNull($done->timemarked);
+        $this->assertGreaterThanOrEqual($before, (int) $done->timemarked);
+        $this->assertLessThanOrEqual($after, (int) $done->timemarked);
+        $this->assertNull($slots[(int) $env->markers[1]->id]->timemarked, 'The other marker has not completed.');
     }
 
     /**
-     * Moodle 5.2 fires no event when a marker completes, so a completed mark
-     * writes nothing until the sweep finds it (reconcile_slots_test).
+     * A mark saved "In marking" fires submission_marked with draft set, which
+     * records nothing; completing it then does.
      *
      * @return void
      */
-    public function test_a_completed_mark_writes_nothing_by_itself(): void {
-        $env = $this->build_environment('manual');
-        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+    public function test_draft_mark_does_nothing(): void {
+        $env = $this->build_environment('average');
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
+        $this->assertNull($this->slots_by_marker($env)[(int) $env->markers[0]->id]->timemarked);
 
-        foreach ($this->slots($env) as $s) {
-            $this->assertNull($s->timemarked);
-        }
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $this->assertNotNull(
+            $this->slots_by_marker($env)[(int) $env->markers[0]->id]->timemarked,
+            'Control: the same marker completing is recorded.'
+        );
     }
 
     /**
-     * The first completion wins: a second stamp on the same slot changes
-     * nothing.
+     * The first completion wins: going back to "In marking" and completing
+     * again keeps the first instant.
      *
      * @return void
      */
     public function test_first_completion_wins(): void {
+        global $DB;
         $env = $this->build_environment('average');
-        $slot = $this->slots_by_marker($env)[(int) $env->markers[0]->id];
-        $first = time() + 100;
+        $markerid = (int) $env->markers[0]->id;
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
+        $slot = $this->slots_by_marker($env)[$markerid];
+        // An earlier instant than any the second completion could carry.
+        $first = (int) $slot->timemarked - 1000;
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', $first, ['id' => $slot->id]);
 
-        $this->assertTrue(slot_ledger::complete_slot((int) $slot->id, $first));
-        $this->assertFalse(slot_ledger::complete_slot((int) $slot->id, $first + 500));
+        $this->mark($env, $env->markers[0], 70, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
+        $this->assertSame($first, (int) $this->slots_by_marker($env)[$markerid]->timemarked, 'Back in marking clears nothing.');
+        $this->mark($env, $env->markers[0], 75, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
 
-        $this->assertSame($first, (int) $this->slots_by_marker($env)[(int) $env->markers[0]->id]->timemarked);
+        $this->assertSame($first, (int) $this->slots_by_marker($env)[$markerid]->timemarked);
     }
 
     /**
@@ -294,13 +291,15 @@ final class slot_ledger_test extends \advanced_testcase {
      */
     public function test_completion_measures_hours_and_days(): void {
         global $DB;
-        $env = $this->build_environment('average', $this->ts('2026-05-11 09:00:00'));
+        $env = $this->build_environment('average', 0, $this->ts('2026-05-11 09:00:00'));
         $this->seed_calendar();
         $markerid = (int) $env->markers[0]->id;
         $slot = $this->slots_by_marker($env)[$markerid];
         $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $this->ts('2026-05-12 10:00:00'), ['id' => $slot->id]);
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_INMARKING);
+        $markid = (int) $DB->get_field('assign_mark', 'id', ['marker' => $markerid], MUST_EXIST);
 
-        $this->assertTrue(slot_ledger::complete_slot((int) $slot->id, $this->ts('2026-05-14 15:00:00')));
+        $this->assertTrue(slot_ledger::mark_completed($markid, $this->ts('2026-05-14 15:00:00')));
 
         $slot = $this->slots_by_marker($env)[$markerid];
         $this->assertSame($this->ts('2026-05-14 15:00:00'), (int) $slot->timemarked);
@@ -319,7 +318,7 @@ final class slot_ledger_test extends \advanced_testcase {
      */
     public function test_turnaround_starts_no_earlier_than_the_hand_in(): void {
         global $DB;
-        $env = $this->build_environment('average', $this->ts('2026-05-11 09:00:00'));
+        $env = $this->build_environment('average', 0, $this->ts('2026-05-11 09:00:00'));
         $this->seed_calendar();
         $slot = $this->slots_by_marker($env)[(int) $env->markers[0]->id];
         $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $this->ts('2026-05-08 10:00:00'), ['id' => $slot->id]);
@@ -339,7 +338,7 @@ final class slot_ledger_test extends \advanced_testcase {
      */
     public function test_completion_before_the_allocation_measures_nothing(): void {
         global $DB;
-        $env = $this->build_environment('average', $this->ts('2026-05-11 09:00:00'));
+        $env = $this->build_environment('average', 0, $this->ts('2026-05-11 09:00:00'));
         $slot = $this->slots_by_marker($env)[(int) $env->markers[0]->id];
         $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $this->ts('2026-05-13 10:00:00'), ['id' => $slot->id]);
 
@@ -383,11 +382,11 @@ final class slot_ledger_test extends \advanced_testcase {
             $this->assertSame($resubmitted, (int) $s->timeallocated);
             $this->assertNull($s->timemarked);
         }
-        $this->assertCount(
-            2,
-            $DB->get_records('block_feedback_tracker_alloc', ['subid' => $closed->id]),
-            'The closed cycle keeps its own slot rows.'
-        );
+        $old = $DB->get_records('block_feedback_tracker_alloc', ['subid' => $closed->id]);
+        $this->assertCount(2, $old, 'The closed cycle keeps its own slot rows.');
+        foreach ($old as $s) {
+            $this->assertNotNull($s->timemarked);
+        }
     }
 
     /**
@@ -405,11 +404,12 @@ final class slot_ledger_test extends \advanced_testcase {
         $rows = [];
         foreach (['live' => $live, 'late' => $late] as $key => $handin) {
             $student = $this->getDataGenerator()->create_and_enrol($env->course, 'student');
-            $env->assign->update_allocated_markers(
-                (int) $student->id,
-                [(int) $env->markers[0]->id, (int) $env->markers[1]->id]
-            );
+            $env->assign->update_marker_allocations((int) $student->id, [
+                1 => [(int) $env->markers[0]->id, null],
+                2 => [(int) $env->markers[1]->id, null],
+            ]);
             $this->assertSame(0, $DB->count_records('block_feedback_tracker_alloc', ['userid' => $student->id]));
+            // Core may already have created the student's (new) submission row while allocating.
             $DB->delete_records('assign_submission', [
                 'assignment' => $env->assign->get_instance()->id,
                 'userid' => $student->id,
@@ -445,7 +445,7 @@ final class slot_ledger_test extends \advanced_testcase {
      */
     public function test_single_marker_activity_writes_nothing(): void {
         global $DB;
-        $env = $this->build_environment('average', null, 1);
+        $env = $this->build_environment('average', 0, null, 1);
         $this->assertSame(0, $DB->count_records('block_feedback_tracker_alloc'));
         $this->assertSame(
             (int) $env->markers[0]->id,
@@ -466,27 +466,30 @@ final class slot_ledger_test extends \advanced_testcase {
         $DB->delete_records('block_instances', ['blockname' => 'feedback_tracker']);
         course_access::reset_memo();
 
+        $this->mark($env, $env->markers[0], 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
         $extra = $this->create_marker($env);
-        $env->assign->update_allocated_markers(
-            (int) $env->student->id,
-            [(int) $env->markers[0]->id, (int) $extra->id]
-        );
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [(int) $extra->id, null]]);
 
         $this->assertSame($before, $DB->count_records('block_feedback_tracker_alloc'));
+        $this->assertNull($this->slots_by_marker($env)[(int) $env->markers[0]->id]->timemarked);
     }
 
     /**
      * Build a processable course with a multi-marker assign, one submitted
-     * student and the markers allocated after the ledger row exists.
-     *
-     * Core's generator leaves markercount at 0, so it is always set here.
+     * student and the required markers allocated after the ledger row exists.
      *
      * @param string $method The multimarkmethod.
+     * @param int $optional Number of optional marker slots.
      * @param int|null $submitted Hand-in instant; three days ago when null.
-     * @param int $required The activity's markercount, and the markers allocated.
+     * @param int $required Number of required marker slots.
      * @return \stdClass course, cm, assign, student and markers.
      */
-    private function build_environment(string $method, ?int $submitted = null, int $required = 2): \stdClass {
+    private function build_environment(
+        string $method,
+        int $optional = 0,
+        ?int $submitted = null,
+        int $required = 2
+    ): \stdClass {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -505,6 +508,7 @@ final class slot_ledger_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => $required,
+            'optionalmarkercount' => $optional,
             'multimarkmethod' => $method,
             'grade' => 100,
         ]);
@@ -521,10 +525,13 @@ final class slot_ledger_test extends \advanced_testcase {
 
         $env = (object) ['course' => $course, 'cm' => $cm, 'assign' => $assign, 'student' => $student];
         $env->markers = [];
+        $allocations = [];
         for ($pos = 1; $pos <= $required; $pos++) {
-            $env->markers[] = $this->create_marker($env);
+            $marker = $this->create_marker($env);
+            $env->markers[] = $marker;
+            $allocations[$pos] = [(int) $marker->id, null];
         }
-        $assign->update_allocated_markers((int) $student->id, array_map(fn($m) => (int) $m->id, $env->markers));
+        $assign->update_marker_allocations((int) $student->id, $allocations);
         return $env;
     }
 

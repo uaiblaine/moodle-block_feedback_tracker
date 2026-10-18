@@ -27,12 +27,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\db;
 
+use PHPUnit\Framework\Attributes\CoversFunction;
+
 /**
  * The upgrade from 1.1.0 into per-Moodle-version numbering, and the rule
  * that keeps savepoints at or below version.php.
- *
- * @covers ::xmldb_block_feedback_tracker_upgrade
  */
+#[CoversFunction('xmldb_block_feedback_tracker_upgrade')]
 final class upgrade_test extends \advanced_testcase {
     /**
      * A site that reached 1.1.0 and set its version below this branch's
@@ -50,8 +51,32 @@ final class upgrade_test extends \advanced_testcase {
     }
 
     /**
-     * The 2026042005 step adds the attribution label to the ledger on a site
-     * that lacks it; the steps after it run too, so the last savepoint is recorded.
+     * The 2026100505 step creates the per-marker slot table on a site that
+     * lacks it; the steps after it run too, so the last savepoint is recorded.
+     *
+     * @return void
+     */
+    public function test_the_slot_table_step_creates_the_table(): void {
+        global $DB;
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $dbman = $DB->get_manager();
+        $table = new \xmldb_table('block_feedback_tracker_alloc');
+        $dbman->drop_table($table);
+        $this->assertFalse($dbman->table_exists($table), 'Control: the table is gone.');
+        set_config('version', 2026100504, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100504));
+
+        $this->assertTrue($dbman->table_exists($table));
+        $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
+        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
+    }
+
+    /**
+     * The 2026100506 step adds the attribution label to the ledger on a site
+     * that lacks it, and records its savepoint.
      *
      * @return void
      */
@@ -65,40 +90,12 @@ final class upgrade_test extends \advanced_testcase {
         $field = new \xmldb_field('allocattrib', XMLDB_TYPE_CHAR, '12', null, null, null, null, 'allocsource');
         $dbman->drop_field($table, $field);
         $this->assertFalse($dbman->field_exists($table, $field), 'Control: the column is gone.');
-        set_config('version', 2026042004, 'block_feedback_tracker');
+        set_config('version', 2026100505, 'block_feedback_tracker');
 
-        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042004));
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100505));
 
         $this->assertTrue($dbman->field_exists($table, $field));
-        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
-    }
-
-    /**
-     * The 2026042006 step creates the per-marker slot table on a site that
-     * lacks it, with its unique index, and records its savepoint; on a site
-     * that has it (as the 5.3 branch's own step finds it) it changes nothing.
-     *
-     * @return void
-     */
-    public function test_the_slot_table_step_creates_the_table(): void {
-        global $DB;
-        $this->load_upgrade_lib();
-        $this->resetAfterTest();
-        $this->preventResetByRollback();
-        $dbman = $DB->get_manager();
-        $table = new \xmldb_table('block_feedback_tracker_alloc');
-        $dbman->drop_table($table);
-        $this->assertFalse($dbman->table_exists($table), 'Control: the table is gone.');
-        set_config('version', 2026042005, 'block_feedback_tracker');
-
-        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042005));
-
-        $this->assertTrue($dbman->table_exists($table));
-        $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
-        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
-
-        set_config('version', 2026042005, 'block_feedback_tracker');
-        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042005), 'An existing table is left as it is.');
+        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

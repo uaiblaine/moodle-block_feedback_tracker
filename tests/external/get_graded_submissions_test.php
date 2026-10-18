@@ -27,14 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers the graded listing: it returns only submitted work that now carries a
  * timegraded, partitions the result bands into counts, and respects the result
  * band filter.
- *
- * @covers \block_feedback_tracker\external\get_graded_submissions
  */
+#[CoversClass(get_graded_submissions::class)]
 final class get_graded_submissions_test extends \advanced_testcase {
     /**
      * The listing returns only graded rows; pending work never surfaces.

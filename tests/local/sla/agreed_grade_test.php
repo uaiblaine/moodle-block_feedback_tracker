@@ -26,22 +26,18 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
- * Multi-marker agreed grades on Moodle 5.2, driven through mod_assign's own API.
+ * Multi-marker agreed grades on Moodle 5.3, driven through mod_assign's own API.
  *
- * Every allocation goes through assign::update_allocated_markers() and every
- * mark through assign::update_mark(), so the grade row is the one core writes:
- * core 5.2 computes the agreed grade inside update_mark() as soon as every
- * allocated marker has a mark row ({@see \assign::get_marks()}), and never
- * under the manual method. A mark alone fires nothing on 5.2, so each pending
- * assertion re-derives the row first: the writer itself must not close it.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\observer
+ * Every mark goes through assign::update_mark() and every allocation through
+ * assign::update_marker_allocations(), so the events are the ones core fires.
+ * Only the release is announced by hand: core's release paths need a form,
+ * and the release itself is covered by observer_coverage_test.
  */
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(observer::class)]
 final class agreed_grade_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -55,8 +51,8 @@ final class agreed_grade_test extends \advanced_testcase {
     }
 
     /**
-     * Fewer marks than markercount leave the cycle pending: no agreed grade
-     * exists yet, and a re-derivation invents none.
+     * Fewer completed marks than required leave the cycle pending: no agreed
+     * grade exists yet, and none is invented.
      *
      * @return void
      */
@@ -64,73 +60,111 @@ final class agreed_grade_test extends \advanced_testcase {
         $env = $this->build_environment('average');
         $this->mark($env, $env->markers[0], 60);
 
-        $this->assertLessThan(0, (float) $this->grade($env)->grade, 'Control: core computed nothing from one mark of two.');
-        $this->rederive($env);
         $row = $this->row($env);
         $this->assertNull($row->timegraded, 'One mark of two is not a response.');
         $this->assertNull($row->timemarked);
 
         $this->mark($env, $env->markers[1], 80);
-        $this->assertEquals(70, $this->grade($env)->grade, 'Control: the second mark row forms the agreed grade.');
-        $this->assertNotNull($this->row($env)->timemarked, 'Control: the agreed grade closes the cycle.');
-    }
-
-    /**
-     * Under the manual method every mark in still computes nothing: core
-     * leaves the grade to whoever confirms it, so the cycle stays pending until
-     * that save.
-     *
-     * @return void
-     */
-    public function test_manual_all_marks_in_stays_pending(): void {
-        $env = $this->build_environment('manual');
-        $this->mark($env, $env->markers[0], 60);
-        $this->mark($env, $env->markers[1], 80);
-
-        $grade = $this->grade($env);
-        $this->assertCount(2, $env->assign->get_marks((int) $grade->id, (int) $env->student->id), 'Control: both marks are in.');
-        $this->assertLessThan(0, (float) $grade->grade, 'Control: manual computes nothing.');
-        $this->rederive($env);
         $row = $this->row($env);
-        $this->assertNull($row->timegraded);
-        $this->assertNull($row->timemarked);
-
-        $confirmer = $this->getDataGenerator()->create_and_enrol($env->course, 'editingteacher');
-        $grade->grade = 75.0;
-        $grade->grader = (int) $confirmer->id;
-        $this->assertTrue($env->assign->update_grade($grade));
-        $this->assertNotNull($this->row($env)->timegraded, 'Control: the confirmed grade closes the cycle.');
+        $this->assertNotNull($row->timemarked, 'Control: the second mark forms the agreed grade.');
     }
 
     /**
-     * Under the average method the last mark row makes core compute the agreed
-     * grade at once, and the cycle carries it.
+     * Clearing agreed grades from the activity settings does not take back a
+     * response already released to the student (owner decision D2).
      *
      * @return void
      */
-    public function test_average_all_marks_in_closes_the_cycle(): void {
+    public function test_bulk_clear_keeps_a_released_response(): void {
         $env = $this->build_environment('average');
         $this->mark($env, $env->markers[0], 60);
         $this->mark($env, $env->markers[1], 80);
+        $this->release($env);
+        $before = $this->row($env);
+        $this->assertNotNull($before->timegraded, 'Control: the released cycle is closed.');
+        $this->assertNotNull($before->timeclosed);
 
-        $grade = $this->grade($env);
-        $this->assertEquals(70, $grade->grade);
-        $row = $this->row($env);
-        $this->assertSame((int) $grade->timemodified, (int) $row->timemarked);
-        $this->assertSame((int) $grade->timemodified, (int) $row->timegraded);
-        $this->assertNull($row->timeclosed, 'Not released: the student has not seen it yet.');
+        $env->assign->recalculate_agreed_grades(ASSIGN_MULTIMARKING_ACTION_CLEAR);
+        $this->assertEquals(-1, $env->assign->get_user_grade((int) $env->student->id, false)->grade);
+
+        $after = $this->row($env);
+        $this->assertSame($before->timegraded, $after->timegraded);
+        $this->assertSame($before->timeclosed, $after->timeclosed);
+        $this->assertSame($before->timemarked, $after->timemarked);
+        $this->assertSame('released', $after->gradestate);
     }
 
     /**
-     * Build a processable course with a two-marker assign, one submitted
-     * student with a ledger row, and both markers allocated in one call.
+     * Once the state is taken back from released, clearing the grade reopens
+     * the cycle as before: the student no longer has a response.
      *
-     * Core's generator leaves markercount at 0, so it is always set here.
+     * @return void
+     */
+    public function test_clear_after_unrelease_reopens(): void {
+        $env = $this->build_environment('average');
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $env->markers[1], 80);
+        $this->release($env);
+        $this->set_state($env, ASSIGN_MARKING_WORKFLOW_STATE_READYFORRELEASE);
+
+        $env->assign->recalculate_agreed_grades(ASSIGN_MULTIMARKING_ACTION_CLEAR);
+
+        $row = $this->row($env);
+        $this->assertNull($row->timegraded);
+        $this->assertNull($row->timeclosed);
+    }
+
+    /**
+     * Enabling an optional marker on a graded, unreleased student clears the
+     * agreed grade, and the cycle is pending again until the extra mark is in.
+     *
+     * @return void
+     */
+    public function test_enabling_an_optional_marker_reopens_an_unreleased_grade(): void {
+        $env = $this->build_environment('average', 1);
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $env->markers[1], 80);
+        $this->assertNotNull($this->row($env)->timemarked, 'Control: the agreed grade exists.');
+
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
+
+        $this->assertEquals(-1, $env->assign->get_user_grade((int) $env->student->id, false)->grade);
+        $row = $this->row($env);
+        $this->assertNull($row->timemarked);
+        $this->assertNull($row->timegraded);
+    }
+
+    /**
+     * Recalculating under the maximum method rewrites the grade row but keeps
+     * the response instant: the first response wins.
+     *
+     * @return void
+     */
+    public function test_recalculation_keeps_the_response_instant(): void {
+        $env = $this->build_environment('maximum');
+        $this->mark($env, $env->markers[0], 60);
+        $this->mark($env, $env->markers[1], 80);
+        $this->release($env);
+        $before = $this->row($env);
+        $this->waitForSecond();
+
+        $env->assign->recalculate_agreed_grades(ASSIGN_MULTIMARKING_ACTION_RECALCULATE);
+
+        $after = $this->row($env);
+        $this->assertSame($before->timegraded, $after->timegraded);
+        $this->assertSame($before->timeclosed, $after->timeclosed);
+    }
+
+    /**
+     * Build a processable course with a multi-marker assign, one submitted
+     * student and the required markers allocated.
      *
      * @param string $method The multimarkmethod.
-     * @return \stdClass course, cm, assign, student and markers.
+     * @param int $optional Number of optional marker slots.
+     * @return \stdClass assign, cm, student and markers.
      */
-    private function build_environment(string $method): \stdClass {
+    private function build_environment(string $method, int $optional = 0): \stdClass {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -149,12 +183,12 @@ final class agreed_grade_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => 2,
+            'optionalmarkercount' => $optional,
             'multimarkmethod' => $method,
             'grade' => 100,
         ]);
         $cm = get_coursemodule_from_instance('assign', $inst->id);
         $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
-        $this->assertTrue($assign->is_using_multiple_marking(), 'Control: core sees multiple marking.');
 
         $t1 = time() - 3 * DAYSECS;
         $DB->insert_record('assign_submission', (object) [
@@ -165,12 +199,22 @@ final class agreed_grade_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $env = (object) ['course' => $course, 'cm' => $cm, 'assign' => $assign, 'student' => $student];
-        $env->markers = [
-            $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
-            $this->getDataGenerator()->create_and_enrol($course, 'editingteacher'),
-        ];
-        $assign->update_allocated_markers((int) $student->id, [(int) $env->markers[0]->id, (int) $env->markers[1]->id]);
+        $env->markers = [$this->create_marker($env), $this->create_marker($env)];
+        $assign->update_marker_allocations((int) $student->id, [
+            1 => [(int) $env->markers[0]->id, null],
+            2 => [(int) $env->markers[1]->id, null],
+        ]);
         return $env;
+    }
+
+    /**
+     * Create a teacher in the environment's course.
+     *
+     * @param \stdClass $env
+     * @return \stdClass The user record.
+     */
+    private function create_marker(\stdClass $env): \stdClass {
+        return $this->getDataGenerator()->create_and_enrol($env->course, 'editingteacher');
     }
 
     /**
@@ -188,23 +232,29 @@ final class agreed_grade_test extends \advanced_testcase {
     }
 
     /**
-     * Re-derive the student's row from core, as any later event or sweep would.
+     * Release the student's grade and announce it.
      *
      * @param \stdClass $env
      * @return void
      */
-    private function rederive(\stdClass $env): void {
-        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $env->student->id, 0);
+    private function release(\stdClass $env): void {
+        $this->set_state($env, ASSIGN_MARKING_WORKFLOW_STATE_RELEASED);
     }
 
     /**
-     * The student's grade row for attempt 0.
+     * Set the student's workflow state and fire the event core fires for it.
      *
      * @param \stdClass $env
-     * @return \stdClass
+     * @param string $state
+     * @return void
      */
-    private function grade(\stdClass $env): \stdClass {
-        return $env->assign->get_user_grade((int) $env->student->id, false);
+    private function set_state(\stdClass $env, string $state): void {
+        global $DB;
+        $flags = $env->assign->get_user_flags((int) $env->student->id, true);
+        $flags->workflowstate = $state;
+        $env->assign->update_user_flags($flags);
+        $user = $DB->get_record('user', ['id' => $env->student->id], '*', MUST_EXIST);
+        \mod_assign\event\workflow_state_updated::create_from_user($env->assign, $user, $state)->trigger();
     }
 
     /**

@@ -27,13 +27,13 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers cross-course aggregation, per-user capability filter, sort order,
  * limit ceiling, and bucket filtering for the "Grade Now" panel.
- *
- * @covers \block_feedback_tracker\external\get_grader_priority_list
  */
+#[CoversClass(get_grader_priority_list::class)]
 final class get_grader_priority_list_test extends \advanced_testcase {
     /**
      * Reset the dashboard_scope memo and grant site admins site-wide

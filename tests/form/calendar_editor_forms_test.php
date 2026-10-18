@@ -26,13 +26,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\form;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The calendar editor renders ten moodleforms on one page. Their element ids
  * must not repeat, each form type posts under its own submit name, and each
  * hours form still posts the weekday it edits.
- *
- * @covers \block_feedback_tracker\form\calendar_editor_forms
  */
+#[CoversClass(calendar_editor_forms::class)]
 final class calendar_editor_forms_test extends \advanced_testcase {
     /**
      * Build the forms the way the page does and render each one.

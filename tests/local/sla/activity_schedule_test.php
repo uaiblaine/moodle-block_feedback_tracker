@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Covers the catalog build, per-group date resolution (group override wins),
  * the SEPARATEGROUPS → 'override' branch, and the no-capability → 'norule' gate.
- *
- * @covers \block_feedback_tracker\local\sla\activity_schedule
  */
+#[CoversClass(activity_schedule::class)]
 final class activity_schedule_test extends \advanced_testcase {
     /**
      * A non-zero group override replaces the assign defaults and marks the row

@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\output;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Covers numfmt::count() — grouping integer submission counts with the active
  * language's thousands separator (langconfig 'thousandssep').
- *
- * @covers \block_feedback_tracker\local\output\numfmt
  */
+#[CoversClass(numfmt::class)]
 final class numfmt_test extends \advanced_testcase {
     /**
      * Counts are grouped every three digits with the active language's

@@ -28,15 +28,15 @@ namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\process_memos;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The task finishes a group change the observer handed to the background. It
  * re-checks the course when it runs, skips ids that are not users, and
  * re-dates as well as re-attributes. Each test runs the task on a row it would
  * move and asserts on a control row it does move.
- *
- * @covers \block_feedback_tracker\task\reattribute_users
  */
+#[CoversClass(reattribute_users::class)]
 final class reattribute_users_test extends \advanced_testcase {
     /**
      * Flush the memos the task consults.

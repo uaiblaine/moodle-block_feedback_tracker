@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers the observers for subplugin submission edits (whose event carries the
  * subplugin row id, not the submission id), marking-workflow release, marker
  * allocation and the blind-marking identity reveal.
- *
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
 final class observer_coverage_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -187,9 +187,9 @@ final class observer_coverage_test extends \advanced_testcase {
      * mod_assign keeps no column for, so it can only be captured from the event.
      *
      * The allocation goes through core's own API, so the test proves that the
-     * event core sends today reaches the observer: Moodle 5.3 stopped sending
-     * marker_updated from this path, and a test that fired the event by hand
-     * stayed green while production lost every stamp.
+     * event core sends today reaches the observer: Moodle 5.3 fires
+     * marker_added and no longer triggers marker_updated, and a test that fired
+     * the event by hand stayed green while production lost every stamp.
      *
      * @return void
      */
@@ -203,15 +203,17 @@ final class observer_coverage_test extends \advanced_testcase {
             'markingallocation' => 1,
             'markercount' => 1,
         ]);
-        $this->submit_student($assign, $student);
-        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+        $this->submit_and_track($cm, $assign, $student);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNull($row->timeallocated);
         $this->assertSame(0, (int) $row->allocmarkerid);
 
         $marker = $this->create_marker($cm);
-        $this->assign_object($cm, $context)->update_allocated_markers((int) $student->id, [(int) $marker->id]);
+        $this->assign_object($cm, $context)->update_marker_allocations(
+            (int) $student->id,
+            [1 => [(int) $marker->id, null]]
+        );
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNotNull($row->timeallocated, 'The allocation instant exists nowhere in core.');
@@ -221,16 +223,13 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
-     * Moodle 5.2 fires one marker_updated per marker, so allocating two markers
-     * in one call reaches the observer twice. The row is still stamped once, as
-     * observed, and on a multi-marking activity the marker is the one in
-     * position 1, the first allocation row core writes
-     * ({@see \assign::update_allocated_markers()}), not the lowest user id and
-     * not whichever event came last.
+     * Removing the only marker is seen at once: Moodle 5.3 fires marker_removed,
+     * where 5.2 deleted the allocation in silence. The first-allocation instant
+     * stays, because it closed the coordination queue.
      *
      * @return void
      */
-    public function test_two_markers_allocated_in_one_call_stamp_one_row(): void {
+    public function test_marker_removal_clears_the_allocated_marker(): void {
         global $DB;
         $this->resetAfterTest();
         $this->setAdminUser();
@@ -238,23 +237,53 @@ final class observer_coverage_test extends \advanced_testcase {
         [$student, $cm, $assign, $context] = $this->build_environment([
             'markingworkflow' => 1,
             'markingallocation' => 1,
-            'markercount' => 2,
+            'markercount' => 1,
         ]);
-        $this->submit_student($assign, $student);
-        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-
-        $first = $this->create_marker($cm);
-        $second = $this->create_marker($cm);
-        $this->assign_object($cm, $context)->update_allocated_markers(
+        $this->submit_and_track($cm, $assign, $student);
+        $marker = $this->create_marker($cm);
+        $this->assign_object($cm, $context)->update_marker_allocations(
             (int) $student->id,
-            [(int) $second->id, (int) $first->id]
+            [1 => [(int) $marker->id, null]]
+        );
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame((int) $marker->id, (int) $row->allocmarkerid, 'Control: the allocation was stamped.');
+        $allocated = (int) $row->timeallocated;
+
+        $this->assign_object($cm, $context)->update_marker_allocations((int) $student->id, [1 => [0, null]]);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
+        $this->assertSame(0, (int) $row->allocmarkerid, 'A removed marker must not stay attributed.');
+        $this->assertSame($allocated, (int) $row->timeallocated);
+    }
+
+    /**
+     * A marker allocated to an optional slot (Moodle 5.3) is stamped like a
+     * required one: enabling the slot and naming the marker fire
+     * marker_enabled_updated and marker_added.
+     *
+     * @return void
+     */
+    public function test_optional_marker_allocation_is_stamped(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $this->seed_calendar();
+        [$student, $cm, $assign, $context] = $this->build_environment([
+            'markingworkflow' => 1,
+            'markingallocation' => 1,
+            'markercount' => 1,
+            'optionalmarkercount' => 1,
+        ]);
+        $this->submit_and_track($cm, $assign, $student);
+        $marker = $this->create_marker($cm);
+
+        $this->assign_object($cm, $context)->update_marker_allocations(
+            (int) $student->id,
+            [2 => [(int) $marker->id, 1]]
         );
 
-        $this->assertLessThan((int) $second->id, (int) $first->id, 'Control: position 1 is not the lowest id.');
-        $this->assertSame(1, $DB->count_records('block_feedback_tracker_sub', ['cmid' => $cm->id]));
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
-        $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
-        $this->assertNotNull($row->timeallocated);
+        $this->assertSame((int) $marker->id, (int) $row->allocmarkerid);
         $this->assertSame(submission_ledger::ALLOC_SOURCE_OBSERVED, $row->allocsource);
     }
 
@@ -310,6 +339,39 @@ final class observer_coverage_test extends \advanced_testcase {
     }
 
     /**
+     * Hand in one submission for the student and create its ledger row.
+     *
+     * @param \stdClass $cm
+     * @param \stdClass $assign The {assign} row.
+     * @param \stdClass $student
+     * @return void
+     */
+    private function submit_and_track(\stdClass $cm, \stdClass $assign, \stdClass $student): void {
+        global $DB;
+        $t1 = $this->ts('2026-05-11 09:00:00');
+        $DB->insert_record('assign_submission', (object) [
+            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
+            'timecreated' => $t1, 'timemodified' => $t1,
+            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
+        ]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
+    }
+
+    /**
+     * Create a teacher in the activity's course to allocate as a marker.
+     *
+     * @param \stdClass $cm
+     * @return \stdClass The user record.
+     */
+    private function create_marker(\stdClass $cm): \stdClass {
+        global $DB;
+        return $this->getDataGenerator()->create_and_enrol(
+            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
+            'editingteacher'
+        );
+    }
+
+    /**
      * Build a processable course with an enrolled student and an assign.
      *
      * @param array $assignopts Extra {assign} settings.
@@ -333,37 +395,6 @@ final class observer_coverage_test extends \advanced_testcase {
         $context = \context_module::instance($cm->id);
         $assign = $DB->get_record('assign', ['id' => $inst->id], '*', MUST_EXIST);
         return [$student, $cm, $assign, $context];
-    }
-
-    /**
-     * Insert a submitted attempt for the student, at a fixed instant.
-     *
-     * @param \stdClass $assign The assign row.
-     * @param \stdClass $student The student.
-     * @return void
-     */
-    private function submit_student(\stdClass $assign, \stdClass $student): void {
-        global $DB;
-        $t1 = $this->ts('2026-05-11 09:00:00');
-        $DB->insert_record('assign_submission', (object) [
-            'assignment' => $assign->id, 'userid' => $student->id, 'attemptnumber' => 0,
-            'timecreated' => $t1, 'timemodified' => $t1,
-            'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
-        ]);
-    }
-
-    /**
-     * Create a teacher enrolled in the activity's course.
-     *
-     * @param \stdClass $cm The course module.
-     * @return \stdClass The teacher.
-     */
-    private function create_marker(\stdClass $cm): \stdClass {
-        global $DB;
-        return $this->getDataGenerator()->create_and_enrol(
-            $DB->get_record('course', ['id' => $cm->course], '*', MUST_EXIST),
-            'editingteacher'
-        );
     }
 
     /**

@@ -1,8 +1,6 @@
 # mod_assign → block_feedback_tracker: Scenario Matrix and Remediation Design (rev. 2)
 
-**Branch note.** This checkout is the Moodle 5.2 branch (`$plugin->supported = [502, 502]`); the matrix below was written when the plugin declared `[405, 502]`. Moodle 4.5 and 5.1 have their own branches.
-
-**Scope:** `/Users/uaiblaine/dev/moodle-block_feedback_tracker` audited against `mod_assign` in Moodle 4.5 (`/Users/uaiblaine/dev/moodle-405/mod/assign`), 5.1 (`/Users/uaiblaine/dev/moodle-501/public/mod/assign`) and 5.3-dev (`/Users/uaiblaine/dev/moodle/public/mod/assign`). Nothing was edited. Core line numbers are the **4.5** checkout unless stated.
+**Scope:** `/Users/uaiblaine/dev/moodle-block_feedback_tracker` audited against `mod_assign` in Moodle 4.5 (`/Users/uaiblaine/dev/moodle-405/mod/assign`), 5.1 (`/Users/uaiblaine/dev/moodle-501/public/mod/assign`) and 5.3-dev (`/Users/uaiblaine/dev/moodle/public/mod/assign`). Nothing was edited. This checkout is the 5.3 branch (`supported = [503, 503]`); the scenario facts marked 5.3-dev predate 5.3 final, for which moodle-53-assign-audit.md is authoritative. Core line numbers are the **4.5** checkout unless stated.
 
 **Revision note.** Three adversarial reviews were applied. The single decisive correction: rev. 1's replacement predicate **deleted** the `grade.timemodified >= submission.timemodified` comparison, which caused a freshly-opened resubmission cycle to be born *graded* with a fabricated 0-hour turnaround — strictly worse than the bug it replaced. The comparison is not the defect; applying it to a **single mutable row** is. Rev. 2 scopes it **per cycle**, where the reference (`timesubmitted`) is immutable once a cycle closes. Every other accepted correction is folded in; disagreements are recorded in **Disputed** notes and were re-verified against the checkouts before being rejected.
 
@@ -189,9 +187,13 @@ Consequence for FIX-13: a `dml_write_exception` out of the observer does **not**
 | C14 | Blind marking, graded before reveal | MISSED-no-event → FALSE-POSITIVE-pending (whole assign) | FIX-6.7, FIX-9 |
 | C15 | Identities revealed | MISSED-no-event | FIX-6.7 |
 | C16 | Marking anonymous (**4.5+**) | OK | — |
-| C17 | 5.3 multi-marker, partial marks | MISSED-no-event (correct outcome) | — |
-| C18 | 5.3 multi-marker, all marks in | OK | — |
-| C19 | 5.3 multimark method `manual` | MISSED-no-event | FIX-9 |
+| C17 | 5.3 multi-marker, partial marks | MISSED-no-event (correct outcome); covered by `agreed_grade_test` (P5) | — |
+| C18 | 5.3 multi-marker, all marks in | OK; covered by `agreed_grade_test` (P5) | — |
+| C19 | 5.3 multimark method `manual` | MISSED-no-event; not yet covered, see P2/P4 | FIX-9 |
+| C20 | 5.3 marker allocated (`marker_added`) | OK (observed, P1) | — |
+| C21 | 5.3 marker de-allocated (`marker_removed`) | OK (observed, P1) | — |
+| C22 | 5.3 marker marks (`submission_marked`) | OK (progress cue, P2) | — |
+| C23 | 5.3 agreed grade cleared in bulk from settings | decided D2, recorded in P5 | — |
 | D1 | Workflow: grade saved, state `inmarking` | FALSE-NEGATIVE-graded | FIX-2, FIX-7 |
 | D2 | Workflow: `readyforrelease` | FALSE-NEGATIVE-graded | FIX-2, FIX-7 |
 | D3 | Workflow: `released` | MISSED-no-event (clock already stopped) | FIX-6.5 |
@@ -1480,7 +1482,7 @@ The third branch is the revoke probe: once `extensionduedate` returns to 0 the s
 9. **Moodle tolerates observers on event class names that do not exist** — they simply never fire — so `db/events.php` never needs version guards. (`\assignfeedback_file\event\feedback_downloaded` is 5.1+ only; it is not registered anyway.)
 10. **5.1+ split layout:** never hardcode `public/` inside plugin code; the plugin's CLIs already resolve `config.php` via a relative `__DIR__` path that lands on both layouts.
 11. **Clock DI:** 5.1/5.3 replaced `time()` with `\core\di::get(\core\clock::class)->time()` inside `update_grade()`, `get_user_grade()` and the grading table. Values are still unix ints — no impact, but PHPUnit tests that freeze the clock must use the DI container on 5.1+ and plain `time()` on 4.5.
-12. **`$plugin->supported = [405, 502]`** (`version.php:31`) is unchanged by this work, so `ci.yml` and the README compatibility table are untouched. The 5.3 assertions (C17-C19) can only be exercised after bumping `max` to `503`, adding the matching reusable-workflow job, updating the README in the same commit, and re-running `mdl mounts`.
+12. **`$plugin->supported`** was `[405, 502]` when this was written. This checkout is the 5.3 branch with `supported = [503, 503]`, so the 5.3 assertions (C17-C23) run here; the 5.3-dev line references above predate 5.3 final.
 
 **Testing obligations (all runnable locally — do not push to find out).**
 - `mdl ci moodle-block_feedback_tracker --only phpcs,phpdoc`, then the full `mdl ci moodle-block_feedback_tracker`; the 4.5 leg explicitly with `--branch MOODLE_405_STABLE`, and `--db mariadb` because the reconciler adds SQL.

@@ -26,6 +26,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\external;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
+
 /**
  * For every function declared in db/services.php, asserts:
  *   - the class exists,
@@ -44,9 +46,8 @@ namespace block_feedback_tracker\external;
  * capability refusal, therefore fails the build. The checks also catch a
  * class renamed without updating services.php and a capability deleted while
  * still referenced.
- *
- * @coversNothing
  */
+#[CoversNothing]
 final class services_coverage_test extends \advanced_testcase {
     public function test_every_declared_service_has_a_valid_class(): void {
         $functions = self::load_functions();
@@ -136,9 +137,9 @@ final class services_coverage_test extends \advanced_testcase {
                 "WS function `{$name}` has no test file — expected tests/external/{$short}_test.php"
             );
             $this->assertStringContainsString(
-                '@covers \\' . $classname,
+                '#[CoversClass(' . $short . '::class)]',
                 (string) file_get_contents($path),
-                "tests/external/{$short}_test.php must declare @covers \\{$classname}"
+                "tests/external/{$short}_test.php must declare #[CoversClass({$short}::class)]"
             );
         }
     }
@@ -195,9 +196,9 @@ final class services_coverage_test extends \advanced_testcase {
 
         foreach ($tasks as $def) {
             $classname = (string) $def['classname'];
-            $this->assertStringContainsString(
-                $classname,
-                $claimed,
+            $short = substr($classname, (int) strrpos($classname, '\\') + 1);
+            $this->assertTrue(
+                str_contains($claimed, $classname) || str_contains($claimed, $short . '::class'),
                 "Scheduled task {$classname} is not named by any test in tests/task/"
             );
         }

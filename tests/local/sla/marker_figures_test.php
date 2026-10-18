@@ -26,23 +26,17 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
-use block_feedback_tracker\task\reconcile_ledger;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The Markers section: shown only to a viewer who may manage allocations, and
  * built from the slot rows of the page's scope.
  *
- * The slot rows are written by core's own API (allocations and marks) and, for
- * what Moodle 5.2 reports no event for (a completion, a removal), by the
- * reconcile sweep; then the stored measures and sources are set directly, so
- * the medians and coverage are known numbers and no assertion rests on the
- * clock.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\marker_figures
+ * The slot rows are written by core's own API (allocations and marks), then the
+ * stored measures and sources are set directly, so the medians and coverage
+ * are known numbers and no assertion rests on the clock.
  */
+#[CoversClass(marker_figures::class)]
 final class marker_figures_test extends \advanced_testcase {
     /**
      * Flush per-request statics that survive resetAfterTest().
@@ -174,8 +168,7 @@ final class marker_figures_test extends \advanced_testcase {
         $rows = $this->by_marker(marker_figures::for_page((int) $env->course->id, 0, (int) $env->coordinator->id, false));
         $this->assertSame(2, $rows[(int) $b->id]['open'], 'Control: two open slots.');
 
-        $env->assign->update_allocated_markers((int) $env->students[0]->id, [(int) $env->markers[0]->id]);
-        $this->sweep($env);
+        $env->assign->update_marker_allocations((int) $env->students[0]->id, [2 => [0, null]]);
         $DB->set_field('block_feedback_tracker_sub', 'timegraded', time(), ['userid' => $env->students[1]->id]);
 
         $rows = $this->by_marker(marker_figures::for_page((int) $env->course->id, 0, (int) $env->coordinator->id, false));
@@ -321,7 +314,10 @@ final class marker_figures_test extends \advanced_testcase {
             'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
         ]);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-        $assign->update_allocated_markers((int) $student->id, [(int) $markers[0]->id, (int) $markers[1]->id]);
+        $assign->update_marker_allocations((int) $student->id, [
+            1 => [(int) $markers[0]->id, null],
+            2 => [(int) $markers[1]->id, null],
+        ]);
         return (object) ['cm' => $cm, 'context' => $context, 'markers' => $markers];
     }
 
@@ -341,8 +337,7 @@ final class marker_figures_test extends \advanced_testcase {
     }
 
     /**
-     * Complete one marker's mark for a student through core, then let the
-     * reconcile sweep record it, as it does on 5.2.
+     * Complete one marker's mark for a student through core.
      *
      * @param \stdClass $env
      * @param \stdClass $student
@@ -353,20 +348,6 @@ final class marker_figures_test extends \advanced_testcase {
         $grade = $env->assign->get_user_grade((int) $student->id, true);
         $grade->grader = (int) $marker->id;
         $env->assign->update_mark($grade, 70, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);
-        $this->sweep($env);
-    }
-
-    /**
-     * Run the reconcile sweep over the slot table of the environment's course.
-     *
-     * @param \stdClass $env
-     * @return void
-     */
-    private function sweep(\stdClass $env): void {
-        $task = new reconcile_ledger();
-        (new \ReflectionProperty($task, 'sweepdeadline'))->setValue($task, time() + 60);
-        (new \ReflectionMethod($task, 'sweep_marker_slots'))->invoke($task, [(int) $env->course->id], 500, 'slots');
-        set_config('reconcile_cursor_slots', 0, 'block_feedback_tracker');
     }
 
     /**
@@ -416,7 +397,10 @@ final class marker_figures_test extends \advanced_testcase {
                 'status' => submission_status::SUBMITTED, 'groupid' => 0, 'latest' => 1,
             ]);
             submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
-            $assign->update_allocated_markers((int) $student->id, [(int) $env->markers[0]->id, (int) $env->markers[1]->id]);
+            $assign->update_marker_allocations((int) $student->id, [
+                1 => [(int) $env->markers[0]->id, null],
+                2 => [(int) $env->markers[1]->id, null],
+            ]);
             $env->students[] = $student;
         }
         return $env;

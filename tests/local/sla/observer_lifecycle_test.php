@@ -26,16 +26,17 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * The lifecycle events cover the three ways a ledger row stops describing
  * reality without any of its own values changing: the student left, the
  * account is gone, or the activity's settings changed what the stored row
  * means. Each is pinned against the real core event carrying the payload core
  * builds for it.
- *
- * @covers \block_feedback_tracker\local\sla\observer
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(observer::class)]
+#[CoversClass(submission_ledger::class)]
 final class observer_lifecycle_test extends \advanced_testcase {
     /**
      * Flush the per-request memos that survive resetAfterTest(); recycled

@@ -27,13 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Pins group_access's three-valued return: null means unrestricted, [] means
  * nothing is visible and the caller must short-circuit, and an int[] is a
  * whitelist that never contains groupid 0.
- *
- * @covers \block_feedback_tracker\local\sla\group_access
  */
+#[CoversClass(group_access::class)]
 final class group_access_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

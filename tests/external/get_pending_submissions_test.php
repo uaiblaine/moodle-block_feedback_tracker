@@ -27,14 +27,14 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Covers submission-status filtering: the default listing returns only
  * genuinely "submitted" work, the draft listing returns only drafts, and
  * new / reopened attempts never surface in either.
- *
- * @covers \block_feedback_tracker\external\get_pending_submissions
  */
+#[CoversClass(get_pending_submissions::class)]
 final class get_pending_submissions_test extends \advanced_testcase {
     /**
      * The default (submitted) listing excludes draft / new / reopened rows and
@@ -435,8 +435,8 @@ final class get_pending_submissions_test extends \advanced_testcase {
         $DB->set_field('assign', 'markingallocation', 1, ['id' => $multi->iteminstance]);
         $DB->set_field('assign', 'markercount', 2, ['id' => $multi->iteminstance]);
         $DB->set_field('assign', 'multimarkmethod', 'average', ['id' => $multi->iteminstance]);
-        /* The allocation below fires core's events, and the observers re-read
-         * the submission, so the handed-in work must exist as core sees it. */
+        /* The marking below fires core's events, and the observers re-read the
+         * submission, so the handed-in work must exist as core sees it. */
         $DB->insert_record('assign_submission', (object) [
             'assignment' => $multi->iteminstance, 'userid' => $multi->userid, 'attemptnumber' => 0,
             'timecreated' => $multi->timesubmitted, 'timemodified' => $multi->timesubmitted,
@@ -448,7 +448,10 @@ final class get_pending_submissions_test extends \advanced_testcase {
         $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
         $markera = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
         $markerb = $this->getDataGenerator()->create_and_enrol($course, 'editingteacher');
-        $assign->update_allocated_markers((int) $multi->userid, [(int) $markera->id, (int) $markerb->id]);
+        $assign->update_marker_allocations((int) $multi->userid, [
+            1 => [(int) $markera->id, null],
+            2 => [(int) $markerb->id, null],
+        ]);
         $grade = $assign->get_user_grade((int) $multi->userid, true);
         $grade->grader = (int) $markera->id;
         $assign->update_mark($grade, 60, ASSIGN_MARKING_WORKFLOW_STATE_READYFORREVIEW);

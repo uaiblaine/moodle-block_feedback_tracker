@@ -28,6 +28,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\external;
 
 use core_external\external_api;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Tests for save_pause_window.
@@ -35,9 +36,8 @@ use core_external\external_api;
  * The capability is checked at the context derived from the scope the caller
  * supplies and, on update, again at the stored row's context, so the
  * authorisation tests matter more than the happy paths.
- *
- * @covers \block_feedback_tracker\external\save_pause_window
  */
+#[CoversClass(save_pause_window::class)]
 final class save_pause_window_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

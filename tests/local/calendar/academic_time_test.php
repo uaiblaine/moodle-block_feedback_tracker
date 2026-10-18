@@ -26,14 +26,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\calendar;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Hand-computed worked examples: weekend gaps, holiday clusters, manual pause
  * overlap (course / group), split shifts, timezone-aware day boundaries, and
  * calver-driven cache invalidation. academic_time_fastpath_test relies on
  * these to trust the day-by-day walker as its oracle.
- *
- * @covers \block_feedback_tracker\local\calendar\academic_time
  */
+#[CoversClass(academic_time::class)]
 final class academic_time_test extends \advanced_testcase {
     /**
      * Submit Fri 17:00, grade Mon 09:00, Mon-Fri 08:00-18:00 business hours.

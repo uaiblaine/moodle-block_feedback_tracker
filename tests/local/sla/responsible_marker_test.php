@@ -28,27 +28,19 @@ namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\calendar\calendar;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * The responsible marker on Moodle 5.2, driven through mod_assign's own API.
+ * The responsible marker on Moodle 5.3, driven through mod_assign's own API.
  *
- * Allocations go through assign::update_allocated_markers(), marks through
+ * Allocations go through assign::update_marker_allocations(), marks through
  * assign::update_mark() and a manual final grade through assign::update_grade()
  * with the confirming teacher as grader, as apply_grade_to_user() saves it, so
  * the events are the ones core fires. Every hours figure runs from an instant
  * the test pins seven days back to the grading, which is the current time:
  * the width rule in CLAUDE.md, with the working hours set by the test.
- *
- * Moodle 5.2 keeps no allocation instant, so a marker's clock is their own
- * row in the slot table when there is one, and otherwise only the stamp of
- * the provisional marker in position 1; a responsible person whose start
- * nobody recorded gets a null turnaround.
- *
- * The class-level covers docblock is kept, not attributes: this branch family
- * still supports Moodle 4.5, whose moodle-cs leg cannot read attributes.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(submission_ledger::class)]
 final class responsible_marker_test extends \advanced_testcase {
     /** Exactly one week: worth 50.0 effective hours under Mon-Fri 08:00-18:00. */
     private const WEEK = 7 * 86400;
@@ -67,25 +59,30 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * While the cycle is pending the provisional marker is position 1, not the
-     * lowest user id: re-allocating with a second marker of lower id moves
-     * neither the marker nor their clock.
+     * lowest user id: adding a second marker with a lower id moves neither the
+     * marker nor their clock.
      *
      * @return void
      */
     public function test_pending_marker_is_position_one(): void {
-        $env = $this->build_environment('average', false);
+        global $DB;
+        $env = $this->build_environment('average', 0, false);
         $lower = $this->create_marker($env);
         $higher = $this->create_marker($env);
         $this->assertLessThan((int) $higher->id, (int) $lower->id, 'Control: the second marker has the lower id.');
         $this->seed_calendar();
 
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $higher->id]);
-        $this->assertSame((int) $higher->id, (int) $this->row($env)->allocmarkerid);
-        $start = $this->pin_marker_clock($env);
-        $this->rederive($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [1 => [(int) $higher->id, null]]);
+        $row = $this->row($env);
+        $this->assertSame((int) $higher->id, (int) $row->allocmarkerid);
+        $start = time() - self::WEEK;
+        $DB->update_record('block_feedback_tracker_sub', (object) [
+            'id' => $row->id, 'timeallocated' => $start, 'timeallocmarker' => $start,
+        ]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $env->student->id, 0);
         $this->assertEqualsWithDelta(50.0, (float) $this->row($env)->allochours, 0.01, 'Control: the clock runs.');
 
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $higher->id, (int) $lower->id]);
+        $env->assign->update_marker_allocations((int) $env->student->id, [2 => [(int) $lower->id, null]]);
 
         $row = $this->row($env);
         $this->assertSame((int) $higher->id, (int) $row->allocmarkerid);
@@ -96,23 +93,23 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * Manual method: the teacher who saves the final grade is responsible,
-     * though they are not allocated, from the last counted mark; a later
-     * feedback-only save by someone else moves nothing.
+     * though they hold no slot, from the moment the last expected mark was
+     * completed; a later feedback-only save by someone else moves nothing.
      *
      * @return void
      */
-    public function test_manual_confirmer_is_responsible_from_the_last_mark(): void {
+    public function test_manual_confirmer_is_responsible_from_the_last_completion(): void {
         global $DB;
         $env = $this->build_environment('manual');
         [$first, $second] = $env->markers;
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
-        $gradeid = (int) $this->grade($env)->id;
+        $slots = $this->slots_by_marker($env);
         $last = time() - self::WEEK;
-        $DB->set_field('assign_mark', 'timemodified', $last - 2 * DAYSECS, ['gradeid' => $gradeid, 'marker' => $first->id]);
-        $DB->set_field('assign_mark', 'timemodified', $last, ['gradeid' => $gradeid, 'marker' => $second->id]);
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', $last - 2 * DAYSECS, ['id' => $slots[(int) $first->id]->id]);
+        $DB->set_field('block_feedback_tracker_alloc', 'timemarked', $last, ['id' => $slots[(int) $second->id]->id]);
         $this->seed_calendar();
-        $this->rederive($env);
+        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $env->student->id, 0);
         $before = $this->row($env);
         $this->assertNull($before->timegraded, 'Control: manual waits for the final grade.');
         $this->assertNull($before->allocattrib, 'Control: nothing is decided while pending.');
@@ -133,7 +130,7 @@ final class responsible_marker_test extends \advanced_testcase {
         $this->save_grade($env, $other, 75.0);
         $this->assertSame(
             (int) $other->id,
-            (int) $DB->get_field('assign_grades', 'grader', ['id' => $gradeid]),
+            (int) $DB->get_field('assign_grades', 'grader', ['assignment' => $env->assign->get_instance()->id]),
             'Control: the later save overwrote the grader.'
         );
 
@@ -145,7 +142,7 @@ final class responsible_marker_test extends \advanced_testcase {
 
     /**
      * Manual method with no grader on the final grade (a restore stores 0):
-     * position 1, labelled as a fallback, keeping that marker's own clock.
+     * position 1, labelled as a fallback, from that marker's slot allocation.
      *
      * @return void
      */
@@ -154,21 +151,19 @@ final class responsible_marker_test extends \advanced_testcase {
         [$first, $second] = $env->markers;
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
-        $before = $this->row($env);
-        $this->assertSame((int) $first->id, (int) $before->allocmarkerid, 'Control: position 1 is provisional.');
-        $this->assertNotNull($before->timeallocmarker);
+        $slot = $this->slots_by_marker($env)[(int) $first->id];
 
         $this->save_grade($env, null, 75.0);
 
         $row = $this->row($env);
         $this->assertSame(submission_ledger::ATTRIB_FALLBACK, $row->allocattrib);
         $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertSame($before->timeallocmarker, $row->timeallocmarker);
+        $this->assertSame((int) $slot->timeallocated, (int) $row->timeallocmarker);
     }
 
     /**
-     * Maximum method: the marker of the higher mark is responsible though they
-     * sit in position 2, measured from their own slot allocation.
+     * Maximum method: the marker of the higher mark is responsible, from their
+     * own slot allocation, though they sit in position 2.
      *
      * @return void
      */
@@ -176,14 +171,11 @@ final class responsible_marker_test extends \advanced_testcase {
         global $DB;
         $env = $this->build_environment('maximum');
         [$first, $second] = $env->markers;
-        $this->pin_marker_clock($env);
         $start = time() - self::WEEK;
         $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $start, [
-            'userid' => $env->student->id,
-            'marker' => $second->id,
+            'id' => $this->slots_by_marker($env)[(int) $second->id]->id,
         ]);
         $this->seed_calendar();
-        $before = $this->row($env);
 
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
@@ -194,134 +186,66 @@ final class responsible_marker_test extends \advanced_testcase {
         $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
         $this->assertSame($start, (int) $row->timeallocmarker);
         $this->assertEqualsWithDelta(50.0, (float) $row->allochours, 0.01);
-        $this->assertSame($before->timeallocated, $row->timeallocated);
     }
 
     /**
-     * Maximum method: a winner in position 2 with no slot row (allocated
-     * before the slot table saw them) has an unknown start, so their
-     * turnaround is unmeasurable rather than borrowed from position 1.
-     *
-     * @return void
-     */
-    public function test_maximum_winner_without_a_slot_row_is_unmeasurable(): void {
-        global $DB;
-        $env = $this->build_environment('maximum');
-        [$first, $second] = $env->markers;
-        $this->pin_marker_clock($env);
-        $DB->delete_records('block_feedback_tracker_alloc', ['userid' => $env->student->id, 'marker' => $second->id]);
-
-        $this->mark($env, $first, 60);
-        $this->mark($env, $second, 80);
-
-        $row = $this->row($env);
-        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $row->allocattrib);
-        $this->assertSame((int) $second->id, (int) $row->allocmarkerid);
-        $this->assertNull($row->timeallocmarker);
-        $this->assertNull($row->allochours);
-    }
-
-    /**
-     * Maximum method: the winner in position 1 is the provisional marker, so
-     * their recorded clock carries over and the turnaround is measured.
-     *
-     * @return void
-     */
-    public function test_maximum_winner_in_position_one_keeps_the_clock(): void {
-        $env = $this->build_environment('maximum');
-        [$first, $second] = $env->markers;
-        $this->seed_calendar();
-        $start = $this->pin_marker_clock($env);
-
-        $this->mark($env, $first, 80);
-        $this->mark($env, $second, 60);
-
-        $row = $this->row($env);
-        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $row->allocattrib);
-        $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertSame($start, (int) $row->timeallocmarker);
-        $this->assertEqualsWithDelta(50.0, (float) $row->allochours, 0.01);
-    }
-
-    /**
-     * Maximum method: equal marks go to the lower position, whatever the ids.
+     * Maximum method: equal marks go to the lower position.
      *
      * @return void
      */
     public function test_maximum_tie_goes_to_position_one(): void {
-        $env = $this->build_environment('maximum', false);
-        $lower = $this->create_marker($env);
-        $higher = $this->create_marker($env);
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $higher->id, (int) $lower->id]);
+        $env = $this->build_environment('maximum');
+        [$first, $second] = $env->markers;
 
-        $this->mark($env, $higher, 80);
-        $this->mark($env, $lower, 80);
+        $this->mark($env, $first, 80);
+        $this->mark($env, $second, 80);
 
         $row = $this->row($env);
         $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $row->allocattrib);
-        $this->assertSame((int) $higher->id, (int) $row->allocmarkerid);
+        $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
     }
 
     /**
-     * Maximum method: a mark edited after the agreed grade makes core compute
-     * a new maximum from the other marker, and the attribution stays with the
-     * marker who produced the first one.
+     * Maximum method: removing the winning marker after the agreed grade
+     * recalculates the grade without them, and the attribution stays.
      *
      * @return void
      */
-    public function test_maximum_attribution_survives_a_mark_edit(): void {
-        $env = $this->build_environment('maximum');
+    public function test_maximum_attribution_survives_the_winner_removed(): void {
+        $env = $this->build_environment('maximum', 1);
         [$first, $second] = $env->markers;
+        $optional = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $optional->id, 1]]);
         $this->mark($env, $first, 60);
-        $this->mark($env, $second, 90);
+        $this->mark($env, $second, 70);
+        $this->mark($env, $optional, 90);
         $before = $this->row($env);
-        $this->assertSame((int) $second->id, (int) $before->allocmarkerid, 'Control: the higher mark won.');
+        $this->assertSame((int) $optional->id, (int) $before->allocmarkerid, 'Control: the optional marker won.');
+        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $before->allocattrib);
 
-        $this->mark($env, $second, 50);
-        $this->assertEquals(60, $this->grade($env)->grade, 'Control: core recalculated the maximum.');
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [0, 0]]);
+        $this->assertEquals(
+            70,
+            $env->assign->get_user_grade((int) $env->student->id, false)->grade,
+            'Control: core recalculated the grade without the removed marker.'
+        );
 
         $after = $this->row($env);
         $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $after->allocattrib);
-        $this->assertSame((int) $second->id, (int) $after->allocmarkerid);
+        $this->assertSame((int) $optional->id, (int) $after->allocmarkerid);
+        $this->assertSame($before->timeallocmarker, $after->timeallocmarker);
         $this->assertSame($before->timegraded, $after->timegraded);
     }
 
     /**
-     * Maximum method: replacing the winning marker after the agreed grade
-     * changes nothing, neither on a re-derivation nor on a later allocation
-     * event.
-     *
-     * @return void
-     */
-    public function test_maximum_attribution_survives_the_winner_replaced(): void {
-        $env = $this->build_environment('maximum');
-        [$first, $second] = $env->markers;
-        $this->mark($env, $first, 60);
-        $this->mark($env, $second, 90);
-        $before = $this->row($env);
-        $this->assertSame((int) $second->id, (int) $before->allocmarkerid, 'Control: the higher mark won.');
-
-        $third = $this->create_marker($env);
-        $env->assign->update_allocated_markers((int) $env->student->id, [(int) $third->id, (int) $first->id]);
-        $this->rederive($env);
-
-        $after = $this->row($env);
-        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $after->allocattrib);
-        $this->assertSame((int) $second->id, (int) $after->allocmarkerid);
-        $this->assertSame($before->timeallocmarker, $after->timeallocmarker);
-        $this->assertSame($before->allochours, $after->allochours);
-    }
-
-    /**
-     * Average method: position 1, whoever gave the higher mark, keeping the
-     * provisional marker's clock.
+     * Average method: position 1, whoever gave the higher mark.
      *
      * @return void
      */
     public function test_average_is_position_one(): void {
         $env = $this->build_environment('average');
         [$first, $second] = $env->markers;
-        $before = $this->row($env);
+        $slot = $this->slots_by_marker($env)[(int) $first->id];
 
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
@@ -329,59 +253,58 @@ final class responsible_marker_test extends \advanced_testcase {
         $row = $this->row($env);
         $this->assertSame(submission_ledger::ATTRIB_POSITION, $row->allocattrib);
         $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertSame($before->timeallocmarker, $row->timeallocmarker);
+        $this->assertSame((int) $slot->timeallocated, (int) $row->timeallocmarker);
     }
 
     /**
-     * A grade cleared by hand withdraws the agreed grade: the attribution is
-     * cleared and the provisional marker in position 1 is back, from their own
-     * slot allocation.
+     * Enabling an optional marker on a graded, unreleased student withdraws the
+     * agreed grade: the attribution is cleared and the provisional marker in
+     * position 1 is back, from their slot allocation.
      *
      * @return void
      */
-    public function test_cleared_grade_returns_to_the_provisional_marker(): void {
-        global $DB;
-        $env = $this->build_environment('maximum');
+    public function test_withdrawn_grade_returns_to_the_provisional_marker(): void {
+        $env = $this->build_environment('maximum', 1);
         [$first, $second] = $env->markers;
-        $slotstart = (int) $DB->get_field('block_feedback_tracker_alloc', 'timeallocated', [
-            'userid' => $env->student->id,
-            'marker' => $first->id,
-        ], MUST_EXIST);
+        $slot = $this->slots_by_marker($env)[(int) $first->id];
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
         $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $this->row($env)->allocattrib, 'Control: attributed.');
         $this->assertSame((int) $second->id, (int) $this->row($env)->allocmarkerid);
 
-        $this->save_grade($env, $this->create_marker($env), -1.0);
+        $extra = $this->create_marker($env);
+        $env->assign->update_marker_allocations((int) $env->student->id, [3 => [(int) $extra->id, 1]]);
 
         $row = $this->row($env);
         $this->assertNull($row->timegraded, 'Control: the cycle reopened.');
         $this->assertNull($row->allocattrib);
         $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertSame($slotstart, (int) $row->timeallocmarker);
+        $this->assertSame((int) $slot->timeallocated, (int) $row->timeallocmarker);
     }
 
     /**
-     * When position 1 was the responsible marker, a cleared grade hands the
-     * cycle back to them with the clock they had.
+     * A released response whose agreed grade is cleared in bulk stays recorded
+     * (owner decision D2), and so does its attribution.
      *
      * @return void
      */
-    public function test_cleared_grade_keeps_position_ones_clock(): void {
-        $env = $this->build_environment('average');
+    public function test_released_response_cleared_in_bulk_keeps_its_attribution(): void {
+        $env = $this->build_environment('maximum');
         [$first, $second] = $env->markers;
-        $before = $this->row($env);
         $this->mark($env, $first, 60);
         $this->mark($env, $second, 80);
-        $this->assertSame(submission_ledger::ATTRIB_POSITION, $this->row($env)->allocattrib, 'Control: attributed.');
+        $this->set_state($env, ASSIGN_MARKING_WORKFLOW_STATE_RELEASED);
+        $before = $this->row($env);
 
-        $this->save_grade($env, $this->create_marker($env), -1.0);
+        $env->assign->recalculate_agreed_grades(ASSIGN_MULTIMARKING_ACTION_CLEAR);
+        $this->assertEquals(-1, $env->assign->get_user_grade((int) $env->student->id, false)->grade);
+        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $env->student->id, 0);
 
-        $row = $this->row($env);
-        $this->assertNull($row->timegraded, 'Control: the cycle reopened.');
-        $this->assertNull($row->allocattrib);
-        $this->assertSame((int) $first->id, (int) $row->allocmarkerid);
-        $this->assertSame($before->timeallocmarker, $row->timeallocmarker);
+        $after = $this->row($env);
+        $this->assertSame($before->timegraded, $after->timegraded, 'Control: the response stays recorded.');
+        $this->assertSame(submission_ledger::ATTRIB_MAXMARK, $after->allocattrib);
+        $this->assertSame((int) $second->id, (int) $after->allocmarkerid);
+        $this->assertSame($before->timeallocmarker, $after->timeallocmarker);
     }
 
     /**
@@ -391,7 +314,7 @@ final class responsible_marker_test extends \advanced_testcase {
      * @return void
      */
     public function test_single_marker_activity_is_unchanged(): void {
-        $env = $this->build_environment('average', true, 1);
+        $env = $this->build_environment('average', 0, true, 1);
         $before = $this->row($env);
         $this->assertSame((int) $env->markers[0]->id, (int) $before->allocmarkerid, 'Control: the allocation was seen.');
 
@@ -409,14 +332,18 @@ final class responsible_marker_test extends \advanced_testcase {
      * Build a processable course with a multi-marker assign and one submitted
      * student whose ledger row exists before any allocation.
      *
-     * Core's generator leaves markercount at 0, so it is always set here.
-     *
      * @param string $method The multimarkmethod.
-     * @param bool $allocate Whether to allocate a new marker per marker slot, in one call.
-     * @param int $required The activity's markercount.
+     * @param int $optional Number of optional marker slots.
+     * @param bool $allocate Whether to allocate a new marker to each required slot.
+     * @param int $required Number of required marker slots.
      * @return \stdClass course, cm, assign, student and markers.
      */
-    private function build_environment(string $method, bool $allocate = true, int $required = 2): \stdClass {
+    private function build_environment(
+        string $method,
+        int $optional = 0,
+        bool $allocate = true,
+        int $required = 2
+    ): \stdClass {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -435,6 +362,7 @@ final class responsible_marker_test extends \advanced_testcase {
             'markingworkflow' => 1,
             'markingallocation' => 1,
             'markercount' => $required,
+            'optionalmarkercount' => $optional,
             'multimarkmethod' => $method,
             'grade' => 100,
         ]);
@@ -451,10 +379,13 @@ final class responsible_marker_test extends \advanced_testcase {
 
         $env = (object) ['course' => $course, 'cm' => $cm, 'assign' => $assign, 'student' => $student, 'markers' => []];
         if ($allocate) {
+            $allocations = [];
             for ($pos = 1; $pos <= $required; $pos++) {
-                $env->markers[] = $this->create_marker($env);
+                $marker = $this->create_marker($env);
+                $env->markers[] = $marker;
+                $allocations[$pos] = [(int) $marker->id, null];
             }
-            $assign->update_allocated_markers((int) $student->id, array_map(fn($m) => (int) $m->id, $env->markers));
+            $assign->update_marker_allocations((int) $student->id, $allocations);
         }
         return $env;
     }
@@ -489,7 +420,7 @@ final class responsible_marker_test extends \advanced_testcase {
      *
      * @param \stdClass $env
      * @param \stdClass|null $teacher The saving teacher; null stores grader 0, as a restore does.
-     * @param float $value The grade; -1 clears it.
+     * @param float $value
      * @return void
      */
     private function save_grade(\stdClass $env, ?\stdClass $teacher, float $value): void {
@@ -500,45 +431,19 @@ final class responsible_marker_test extends \advanced_testcase {
     }
 
     /**
-     * Move the row's first allocation and marker clock one week back, as if
-     * position 1 had been allocated then, with that marker's slot row, and
-     * return that instant.
+     * Set the student's workflow state and fire the event core fires for it.
      *
      * @param \stdClass $env
-     * @return int The pinned instant.
-     */
-    private function pin_marker_clock(\stdClass $env): int {
-        global $DB;
-        $start = time() - self::WEEK;
-        $row = $this->row($env);
-        $DB->update_record('block_feedback_tracker_sub', (object) [
-            'id' => $row->id, 'timeallocated' => $start, 'timeallocmarker' => $start,
-        ]);
-        $DB->set_field('block_feedback_tracker_alloc', 'timeallocated', $start, [
-            'subid' => $row->id,
-            'marker' => $row->allocmarkerid,
-        ]);
-        return $start;
-    }
-
-    /**
-     * Re-derive the student's row from core, as any later event or sweep would.
-     *
-     * @param \stdClass $env
+     * @param string $state
      * @return void
      */
-    private function rederive(\stdClass $env): void {
-        submission_ledger::upsert_for_cm_user_attempt((int) $env->cm->id, (int) $env->student->id, 0);
-    }
-
-    /**
-     * The student's grade row for attempt 0.
-     *
-     * @param \stdClass $env
-     * @return \stdClass
-     */
-    private function grade(\stdClass $env): \stdClass {
-        return $env->assign->get_user_grade((int) $env->student->id, false);
+    private function set_state(\stdClass $env, string $state): void {
+        global $DB;
+        $flags = $env->assign->get_user_flags((int) $env->student->id, true);
+        $flags->workflowstate = $state;
+        $env->assign->update_user_flags($flags);
+        $user = $DB->get_record('user', ['id' => $env->student->id], '*', MUST_EXIST);
+        \mod_assign\event\workflow_state_updated::create_from_user($env->assign, $user, $state)->trigger();
     }
 
     /**
@@ -555,6 +460,21 @@ final class responsible_marker_test extends \advanced_testcase {
             '*',
             MUST_EXIST
         );
+    }
+
+    /**
+     * The slot rows of the student's current cycle, keyed by marker id.
+     *
+     * @param \stdClass $env
+     * @return array
+     */
+    private function slots_by_marker(\stdClass $env): array {
+        global $DB;
+        $out = [];
+        foreach ($DB->get_records('block_feedback_tracker_alloc', ['subid' => $this->row($env)->id], 'id ASC') as $s) {
+            $out[(int) $s->marker] = $s;
+        }
+        return $out;
     }
 
     /**

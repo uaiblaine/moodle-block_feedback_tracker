@@ -27,14 +27,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\task;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * A resumable upgrade backfill: armed by config, walked with a keyset cursor,
  * finished by flipping a done flag. A paging or arming defect would silently
  * leave NULL effectivedays on an upgraded site, which makes the day-mode band
  * counts fall back to calendar days instead of the stored business-day count.
- *
- * @covers \block_feedback_tracker\task\backfill_effectivedays
  */
+#[CoversClass(backfill_effectivedays::class)]
 final class backfill_effectivedays_test extends \advanced_testcase {
     /**
      * Fetch the plugin generator.

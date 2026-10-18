@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\calendar\academic_time;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * A cycle is one measurement of teacher response. Work resubmitted after it
@@ -34,10 +35,9 @@ use block_feedback_tracker\local\calendar\academic_time;
  * one, so a completed response time survives and the re-look gets its own
  * clock. These tests pin that contract, the latest-attempt gate, the
  * marking-workflow release clock and the team-submission guard.
- *
- * @covers \block_feedback_tracker\local\sla\submission_ledger
- * @covers \block_feedback_tracker\local\sla\grading_state
  */
+#[CoversClass(submission_ledger::class)]
+#[CoversClass(grading_state::class)]
 final class grading_cycle_test extends \advanced_testcase {
     /**
      * Flush the ledger's per-request static memos; resetAfterTest() resets the

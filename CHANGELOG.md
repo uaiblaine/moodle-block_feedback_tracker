@@ -5,67 +5,139 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - Unreleased
+## [v5.3-r1] - 2026-10-18
+
+The Moodle 5.3 release, and the first under the fleet's release names: one
+release per Moodle branch, tagged `v<moodle>-r<N>` with the same name in
+`$plugin->release` (it was `1.3.0`). `main` is now the Moodle 5.3 branch, the
+same commit as `MOODLE_503_STABLE` (renamed from `MOODLE_503_DEV`); the 5.2
+line continues on `MOODLE_502_STABLE`. What 5.3 changed in `mod_assign` and what each change
+below answers is in `docs/moodle-53-assign-audit.md`.
 
 ### Added
-- **Per-marker figures on multi-marking activities** (version `2026042006`, new
-  table `block_feedback_tracker_alloc`). One row per ledger cycle and marker
-  records when the marker became responsible and when they first set
-  "Marking completed", with their own turnaround in effective hours and
-  business days. Moodle 5.2 reports allocations (`marker_updated`) but neither
-  removals nor a marker's completion, so the new `slots` reconcile sweep closes
-  a removed marker's slot when it finds it and stamps a completion from the
-  last change to the marker's mark: every completion instant on 5.2 is an
-  upper bound, accurate to the sweep period. A marker already allocated when
-  a cycle opens is carried onto it at its hand-in. The drill-down shows a
-  Markers section (open slots, completed marks, median own turnaround,
-  coverage), per activity, to a viewer who may manage marker allocations there
-  and can see the activity, over the groups they can see. The table is the
-  5.3 branch's, so a site moving there keeps it. Privacy: the student and the
-  marker are both data subjects; a marker's erasure deletes their rows and
-  keeps the student's, and only the marker's own export carries their
-  turnaround. Every path that deletes ledger rows deletes their slot rows.
-- **Grade Now lists an allocated submission only for its markers** (version
-  `2026042006`). On an activity with marker allocation, a submission with
-  allocated markers appears on an allocated marker's list until that marker's
-  own mark is "Marking completed" with a mark and while no agreed grade exists,
-  and on nobody else's; an unallocated submission stays on every teacher's
-  list, as the coordinator's queue. The rule is part of the query, so the
-  limit counts only the viewer's own rows. The pending report, the drill-down
-  and every course-level figure are unchanged.
-- **Multi-marker progress in the pending report and the drill-down** (version
-  `2026042005`). On an activity that uses multiple marking, a pending row shows
-  a secondary line under its status: "1 of 2 markers", "Awaiting marker
-  allocation" (fewer markers allocated than the marker count) or "Awaiting
-  agreed grade" (every mark in, nothing computed or confirmed yet). It is read
-  from core's tables when the page is built (`local\sla\marking_progress`), and
-  `get_pending_submissions` returns it as `markers_expected`,
-  `markers_completed` and `marking_wait`. A mark counts as Moodle 5.2 counts it
-  for the agreed grade: any mark row of an allocated marker, whatever that
-  marker's own workflow state. The headline counts are unchanged.
-- **Tests for partial marking and the manual method** (tests only, no version).
-  `tests/local/sla/agreed_grade_test.php` drives core 5.2: fewer marks than the
-  marker count stay pending, every mark in under `manual` stays pending until
-  someone confirms the grade, and every mark in under `average` closes the
-  cycle.
+- **The responsible marker follows "Calculate grade"** (version `2026100506`,
+  owner decision D1). On a multi-marking activity the ledger's `allocmarkerid`
+  is, while the cycle is pending, the marker in position 1 in core's order
+  rather than the lowest user id, so adding a second marker no longer moves the
+  first marker's clock. When the cycle first carries its agreed grade the
+  responsible person is decided once by the activity's method and stored: under
+  manual, the teacher who saved the final grade (from the last mark's "Marking
+  completed"); under maximum, the marker of the highest completed mark, a tie
+  going to the lower position (from their own slot allocation); under average,
+  position 1. A new nullable column on `block_feedback_tracker_sub`,
+  `allocattrib`, says how (`confirmer`, `maxmark`, `position`, or `fallback`
+  when the method's rule named nobody). It is sticky like the response time: a
+  later mark edit, recalculation or removed marker leaves it, and only the
+  activity withdrawing the agreed grade clears it and returns the row to the
+  provisional marker. Single-marker activities are unchanged.
+- **Per-marker attribution on multi-marking activities** (version
+  `2026100505`, owner decision D3). A new table,
+  `block_feedback_tracker_alloc`, keeps one row per measurement cycle and marker
+  slot, so each marker's own turnaround, from becoming responsible to their own
+  "Marking completed", is measured apart from the row-level figures. It is
+  written only by the new `local\sla\slot_ledger`: `marker_added` /
+  `marker_removed` stamp the allocation (`observed`), a new cycle inherits the
+  markers already allocated at its hand-in (`carried`), the newly observed
+  `submission_marked` records each marker's first completion (a draft mark
+  records nothing, and a later edit back to "In marking" clears nothing), and a
+  re-allocation after a removal starts a new clock. The turnaround is stored in
+  effective hours and in business days, each counted on its own, from the later
+  of the allocation and the hand-in. A new reconciler sweep, `slots`, repairs
+  what the events missed (an active allocation without a row, a row whose
+  marker no longer holds the slot, a completed mark without a completion), with
+  `reconciled` as the source. Every path that deletes ledger rows (course and
+  activity deletion, unenrolment, account deletion, the data reset, retention,
+  the orphan and departed-participant sweeps, privacy erasure) deletes their
+  slot rows. The privacy provider declares, exports and erases the table for
+  both its subjects, the student and the marker; a marker's erasure deletes the
+  rows where they are the marker and keeps the student's ledger row. The group
+  drill-down gains a "Markers" section (open slots, marks completed, median
+  own turnaround, coverage), shown only when the page's rows include
+  multi-marking work and the viewer has `mod/assign:manageallocations` in the
+  course. The figures are gated per activity: only for assign activities the
+  viewer can see and may manage allocations in (module context). A student's
+  data export omits the marker's turnaround.
+- **"Grade Now" lists a multi-marking submission only for the marker it is
+  pending for** (version `2026100504`, owner decision D3). On an activity that
+  uses multiple marking, the teacher dashboard's cross-course list now shows a
+  submission to a viewer who holds an active slot for the student (a required
+  slot, or an optional one that is enabled) and whose own mark is not yet
+  "Marking completed". A teacher with no slot, such as a coordinator, no longer
+  sees those rows there, and neither does a marker who has finished; rows
+  awaiting allocation or the agreed grade belong to no marker and stay in the
+  pending report and the drill-down, which still list every pending row. The
+  rule is SQL in `marking_progress::pending_for_viewer_sql()`, inside the query,
+  so the limit applies to the viewer's own queue. Other activities and the
+  course-level figures are unchanged.
+- **Multi-marker progress on the pending report and the drill-down** (version
+  `2026100503`, owner decision D4). On an activity that uses multiple marking,
+  a pending row now says under its status what it waits for: "1 of 2 markers",
+  "Awaiting marker allocation" (a required marker slot is empty) or "Awaiting
+  agreed grade" (every expected mark is complete and nobody has confirmed the
+  grade). The headline counts are unchanged. The figures reach the page as
+  three new fields of `get_pending_submissions` (`markers_expected`,
+  `markers_completed`, `marking_wait`), read when the page is built by the new
+  `local\sla\marking_progress`, which mirrors core's
+  `get_marker_allocations()`, `mark_is_marked()`, `expected_marker_count()` and
+  `all_markers_marked()` with one query per table for the whole page; nothing
+  is stored, so no new event is subscribed. Tests drive core's
+  `update_marker_allocations()` and `update_mark()`.
+
+### Fixed
+- **The slot sweep no longer completes a new cycle from the previous cycle's
+  mark** (version `2026100508`). Marks belong to the attempt, not to the
+  plugin's cycle, so after a resubmission the sweep stamped the new cycle's
+  slot complete at the old mark's time, an instant before the cycle opened,
+  with no hours, for good. A mark last changed before the hand-in is no longer
+  a completion; the slot waits for the marker's next edit.
+- **A released response stays recorded when its agreed grade is cleared**
+  (version `2026100502`). Moodle 5.3's "Update agreed grades" setting (Clear,
+  or Recalculate under the manual method) sets every latest grade to -1 with no
+  workflow check, so students who had already received their grade went back
+  to pending and the class lost their response times. A cycle closed by a
+  release keeps its instants while the state is still released; taking the
+  state back from released, or a resubmission, reopens it as before. New tests
+  drive multi-marker grading through `assign::update_mark()`: partial marking
+  stays pending, an optional marker enabled on an unreleased grade reopens it,
+  and a recalculation keeps the first response instant.
+- **Marker allocations are stamped again on Moodle 5.3** (version
+  `2026100501`). 5.3 no longer triggers `mod_assign\event\marker_updated`;
+  every allocation path fires `marker_added` / `marker_removed` instead, so the
+  observer never ran and allocation instants came only from the reconciliation
+  sweep, accurate to its period. Both events are now subscribed (the old one
+  stays for the deprecated `assign::update_allocated_markers()`), and removing
+  a marker clears `allocmarkerid` at once instead of on the next sweep. The
+  tests allocate through `assign::update_marker_allocations()`: the old one
+  fired the event by hand and stayed green while production lost every stamp.
 
 ### Changed
-- **The responsible marker of a multi-marking cycle follows the grade method**
-  (version `2026042005`, new column `allocattrib` on the ledger). While a cycle
-  is pending, its marker is the one in position 1 (the first allocation row),
-  no longer the lowest user id, so re-allocating with a second marker no
-  longer moved the first marker's clock. When the cycle first gets its agreed
-  grade the responsible marker is decided once and kept: under `manual` the
-  teacher who saved the final grade, from the last counted mark; under
-  `maximum` the marker of the highest mark, a tie going to the lower position;
-  otherwise position 1. A later mark edit, re-allocation or feedback save does
-  not move it; a grade cleared by hand hands the cycle back to position 1. A
-  responsible marker whose start nobody recorded (a winner who is not in
-  position 1; Moodle 5.2 keeps no allocation instant) gets no turnaround
-  figure rather than one borrowed from another marker. Single-marker
-  activities are unchanged. From `2026042006` a marker's start is read from
-  their own row in the per-marker slot table when it has one, so a winner in
-  position 2 is measured from their own allocation.
+- **"Pending for me" covers single-marker activities with marker allocation**
+  (version `2026100507`, owner decision D3). In Grade Now an allocated student's
+  row is listed only for the allocated marker, while their own mark is not
+  complete and no agreed grade exists; a student with no active allocation is
+  the coordinator's queue and stays listed for every teacher, including a
+  multi-marking student with no allocation at all, which was hidden from
+  everyone before. Activities without marker allocation are unchanged.
+- **This branch is the Moodle 5.3 branch** (version `2026100500`):
+  `$plugin->requires = 2026100500`, `$plugin->supported = [503, 503]`, one CI
+  job on `MOODLE_503_STABLE`. A site on the 5.2 release (`2026042003`) upgrades
+  in place; the number only grows, so no version reset is needed.
+- **A recompute or repair already pending is no longer reported as refused.**
+  Moodle 5.3 returns the pending task's id for a duplicate
+  `queue_adhoc_task($task, true)`, reviving it when its retries are exhausted
+  (MDL-86422), so `drain_queue` and `reconcile_ledger` count it as dispatched;
+  only a `false` return, now left for a deprecated component, is a refusal.
+- **The tests carry their coverage in PHPUnit attributes** (`#[CoversClass]`,
+  `#[CoversFunction]`, `#[CoversNothing]`, `#[DataProvider]`) instead of
+  docblock tags, which PHPUnit 11 deprecates: the suite's 99 PHPUnit
+  deprecations are gone. Its one notice is gone too: `ledger_rule_dates_test`
+  deleted overrides through `assign::delete_override()`, deprecated in 5.3
+  (MDL-86513), and now goes through `override_manager::delete_overrides_by_id()`.
+  Tests only: no version bump.
+
+## [1.2.0] - Unreleased
+
+### Changed
 - **Bulk removal shows its queue and works in batches** (version `2026042003`).
   `pages/bulk_remove.php` queues a task and cron removes the blocks on its next
   run, so the courses used to stay on the list and could be queued again.
@@ -125,14 +197,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached 1.1.0.
 
 ### Fixed
-- **Marker allocation is also observed from Moodle 5.3's events** (version
-  `2026042004`). `db/events.php` now subscribes `marker_added` and `marker_removed`
-  beside `marker_updated`; the classes exist only from 5.3, so here the lines are inert
-  and the file stays identical on every branch. The allocation test now allocates
-  through `assign::update_allocated_markers()` instead of firing `marker_updated` by
-  hand, so it fails if core stops sending the event; a second test covers two markers
-  allocated in one call. The `allocsource` column comment, the privacy note in
-  `CLAUDE.md` and the multi-marking and design docs no longer carry stale claims.
 - **The historical backfill honours the retention window.** With
   `retention_active` on, `backfill_history` no longer dispatches submissions
   last modified before `retention::cutoff()`, the floor `reconcile_ledger`'s

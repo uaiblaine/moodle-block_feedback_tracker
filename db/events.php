@@ -89,15 +89,11 @@ $observers = [
         'eventname' => '\mod_assign\event\workflow_state_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::workflow_state_changed',
     ],
-    /* Marker allocation, which core stores no timestamp for. On Moodle 4.5 and
-     * 5.1 only the batch "Set allocated marker" operation fires marker_updated;
-     * 5.2 fires it from every allocation path, once per marker. Moodle 5.3
-     * fires marker_added and marker_removed per slot change (an optional slot
+    /* Marker allocation, which core stores no timestamp for. Moodle 5.3 fires
+     * marker_added and marker_removed per slot change (an optional slot
      * included) and no longer triggers marker_updated, which only the
-     * deprecated assign::update_allocated_markers() still sends. The two 5.3
-     * classes exist only from Moodle 5.3 and core registers an observer by
-     * name without class_exists(), so here they are inert and this file stays
-     * identical on every branch. See observer::marker_changed(). */
+     * deprecated assign::update_allocated_markers() still sends. See
+     * observer::marker_changed(). */
     [
         'eventname' => '\mod_assign\event\marker_added',
         'callback' => '\block_feedback_tracker\local\sla\observer::marker_changed',
@@ -109,6 +105,15 @@ $observers = [
     [
         'eventname' => '\mod_assign\event\marker_updated',
         'callback' => '\block_feedback_tracker\local\sla\observer::marker_changed',
+    ],
+    /* A marker's own mark or workflow state (Moodle 5.3, update_mark()). The
+     * per-marker slot table records each marker's first "Marking completed".
+     * marker_enabled_updated is not observed: ticking an optional slot with no
+     * marker changes no slot row, and naming or unticking its marker fires
+     * marker_added / marker_removed. */
+    [
+        'eventname' => '\mod_assign\event\submission_marked',
+        'callback' => '\block_feedback_tracker\local\sla\observer::submission_marked',
     ],
     /* Blind marking suppresses submission_graded until identities are revealed.
      * See observer::identities_revealed(). */

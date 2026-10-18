@@ -29,15 +29,15 @@ namespace block_feedback_tracker\task;
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\sla\backfill_cursor;
 use block_feedback_tracker\local\sla\course_access;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The dispatcher keeps one cursor per block-enabled course and fans historical
  * ledger upserts out to backfill_one_submission adhoc tasks. It does nothing
  * until backfill_active is set, and each course's cursor row flips to
  * active=0 once that course's backfill completes.
- *
- * @covers \block_feedback_tracker\task\backfill_history
  */
+#[CoversClass(backfill_history::class)]
 final class backfill_history_test extends \advanced_testcase {
     /**
      * Buffer and discard the dispatcher's mtrace() output.

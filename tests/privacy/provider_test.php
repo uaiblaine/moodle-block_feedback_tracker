@@ -29,14 +29,14 @@ namespace block_feedback_tracker\privacy;
 use core_privacy\local\request\approved_contextlist;
 use core_privacy\local\request\approved_userlist;
 use core_privacy\local\request\writer;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Spot-checks the course-context ledger rows, the allocated-marker link and
  * the user preferences. System-context data is covered by
  * provider_system_context_test.
- *
- * @covers \block_feedback_tracker\privacy\provider
  */
+#[CoversClass(provider::class)]
 final class provider_test extends \core_privacy\tests\provider_testcase {
     /**
      * The plugin counts as compliant with the privacy API.

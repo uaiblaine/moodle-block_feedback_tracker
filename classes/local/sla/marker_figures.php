@@ -51,12 +51,6 @@ namespace block_feedback_tracker\local\sla;
  * - coverage: the share of completed slots whose allocation instant was
  *   recorded as it happened (observed or carried) rather than found by the
  *   reconciler.
- *
- * On Moodle 5.2 every completion instant is found by the reconciler (the
- * last edit of the marker's mark row, {@see slot_ledger::complete_slot()}),
- * and so is every removal, so a marker's open slots and completed marks lag
- * core by up to one sweep period. Coverage still speaks of the allocation
- * instant only.
  */
 final class marker_figures {
     /**

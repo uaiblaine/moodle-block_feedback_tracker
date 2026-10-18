@@ -26,12 +26,13 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Covers which courses a user may see on the dashboard — teacher-or-higher
  * enrolment, with the site-admin view-all opt-in.
- *
- * @covers \block_feedback_tracker\local\sla\dashboard_scope
  */
+#[CoversClass(dashboard_scope::class)]
 final class dashboard_scope_test extends \advanced_testcase {
     /**
      * An active enrolment with a teacher-or-higher role puts the course in

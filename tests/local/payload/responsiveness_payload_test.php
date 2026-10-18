@@ -26,14 +26,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\payload;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+
 /**
  * Verifies that titles and subtitles composed from group custom fields are
  * plain text for every field type: no entities, no markup. They reach
  * PARAM_TEXT web service fields and JS text nodes, both of which need the
  * plain spelling.
- *
- * @covers \block_feedback_tracker\local\payload\responsiveness_payload
  */
+#[CoversClass(responsiveness_payload::class)]
 final class responsiveness_payload_test extends \advanced_testcase {
     /** @var int Id of the group carrying the custom-field values. */
     private int $groupid;

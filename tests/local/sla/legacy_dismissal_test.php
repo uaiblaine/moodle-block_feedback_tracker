@@ -27,15 +27,15 @@ declare(strict_types=1);
 namespace block_feedback_tracker\local\sla;
 
 use block_feedback_tracker\local\audit\recompute_log;
+use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Only cycle-0 rows with no recorded response, whose attempt carries an older
  * mark and whose hand-in predates the cutoff, are selected; a dismissed row
  * leaves every population and the writer keeps it out until new work arrives.
- *
- * @covers \block_feedback_tracker\local\sla\legacy_dismissal
- * @covers \block_feedback_tracker\local\sla\submission_ledger
  */
+#[CoversClass(legacy_dismissal::class)]
+#[CoversClass(submission_ledger::class)]
 final class legacy_dismissal_test extends \advanced_testcase {
     /** @var int The instant every fixture time is counted from, read once per test. */
     private int $base;
