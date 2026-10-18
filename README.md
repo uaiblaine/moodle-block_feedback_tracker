@@ -93,7 +93,7 @@ The assignment's own **"Needs grading"** count (its grading summary and the *Req
 
 ## Requirements
 
-- Moodle 5.2 (this branch, the same as `MOODLE_502_STABLE`; `MOODLE_501_STABLE` is the Moodle 5.1 release)
+- Moodle 5.2 (this branch, `MOODLE_502_STABLE`; `main` and `MOODLE_503_STABLE` are the Moodle 5.3 release, `MOODLE_501_STABLE` the 5.1 one, `MOODLE_405_STABLE` the 4.5 one)
 - PHP 8.3 or later
 - PostgreSQL or MariaDB
 
