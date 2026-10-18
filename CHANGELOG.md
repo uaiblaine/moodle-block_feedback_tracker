@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - Unreleased
+## [v5.2-r1] - 2026-10-18
+
+The Moodle 5.2 release, and the first under the fleet's release names: one
+release per Moodle branch, tagged `v<moodle>-r<N>` with the same name in
+`$plugin->release` (it was `1.2.0`). `main` is now the Moodle 5.3 branch; the
+5.2 line continues on `MOODLE_502_STABLE`.
 
 ### Added
 - **Per-marker figures on multi-marking activities** (version `2026042006`, new
