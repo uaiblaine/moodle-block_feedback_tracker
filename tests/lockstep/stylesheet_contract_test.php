@@ -51,9 +51,9 @@ final class stylesheet_contract_test extends \basic_testcase {
      */
     private const DECORATIVE_OPACITY = [
         // The SVG band behind a sparkline's line: a fill, never text.
-        '.bft-sparkline-zone',
+        ':where(.block-feedback-tracker) .bft-sparkline-zone',
         // The aria-hidden sparkle icons of the responsiveness hero.
-        '.bft-rh-sparkle',
+        ':where(.block-feedback-tracker) .bft-rh-sparkle',
     ];
 
     /**
@@ -69,7 +69,7 @@ final class stylesheet_contract_test extends \basic_testcase {
      */
     private const INDICATORS = [
         // The sortable-column arrow of the drill-down table (core's generaltable).
-        'table.bft-sortable th[data-sort]::after',
+        ':where(.block-feedback-tracker) table.bft-sortable th[data-sort]::after',
     ];
 
     /**
@@ -386,5 +386,33 @@ final class stylesheet_contract_test extends \basic_testcase {
                 "{$selector} is under 3:1"
             );
         }
+    }
+
+    /**
+     * Every page that prints a header puts the stylesheet's scope class on
+     * its body before the header: styles.css applies only inside
+     * .block-feedback-tracker, so a page without it renders unstyled.
+     *
+     * @return void
+     */
+    public function test_every_page_carries_the_style_scope(): void {
+        $root = __DIR__ . '/../../';
+        $pages = 0;
+        $missing = [];
+        foreach (glob($root . 'pages/*.php') as $file) {
+            $source = (string) file_get_contents($file);
+            $header = strpos($source, '$OUTPUT->header()');
+            if ($header === false) {
+                continue;
+            }
+            $pages++;
+            $scope = strpos($source, "\$PAGE->add_body_class('block-feedback-tracker');");
+            if ($scope === false || $scope > $header) {
+                $missing[] = basename($file);
+            }
+        }
+        $this->assertGreaterThanOrEqual(9, $pages, 'Precondition: the pages that print a header were found.');
+        $this->assertSame([], $missing);
+        $this->assertStringContainsString(':where(.block-feedback-tracker) ', $this->stylesheet());
     }
 }

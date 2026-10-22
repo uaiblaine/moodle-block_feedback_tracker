@@ -36,6 +36,7 @@ $PAGE->set_context($context);
 $PAGE->set_title(get_string('audit_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('audit_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 $total = $DB->count_records('block_feedback_tracker_log');
 $dbrows = $DB->get_records(
