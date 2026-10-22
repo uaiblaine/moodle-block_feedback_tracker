@@ -3,8 +3,13 @@
  * Block Feedback tracker — block content styles.
  */
 
+/* Every selector is scoped by .block-feedback-tracker, the class on the block's own element
+ * (block_feedback_tracker::html_attributes()) and on the body of each page under pages/, so no rule
+ * reaches the rest of the site. The scope sits inside :where(), whose specificity is zero, so each
+ * rule meets the theme's rules with the specificity it had before the scope was added. */
+
 /* Type tokens. */
-:root {
+:where(.block-feedback-tracker) {
     --bft-font-display: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --bft-font-mono: 'JetBrains Mono', ui-monospace, "SFMono-Regular", Menlo, monospace;
 
@@ -25,16 +30,16 @@
     --bft-ls-label: 0.05em;
 }
 
-/* Colour tokens. Declared on body: it is an ancestor of everything the plugin paints, including
- * anything core appends to document.body, and a custom property is resolved on the element that
- * declares it, so body sees the --bs-* set whether the theme puts data-bs-theme on html or on body.
+/* Colour tokens. Declared on the scope element: it is an ancestor of everything the plugin paints
+ * (the plugin appends nothing to document.body), and a custom property is resolved on the element
+ * that declares it, which inherits the --bs-* set wherever the theme puts data-bs-theme.
  *
  * Neutrals and the brand read the theme: Moodle 5.1+ declares the --bs-* set and redefines it in
  * dark mode, Moodle 4.5 declares only the Bootstrap 4 names, and the literal is the last fallback.
  * The band, plum and sand families are the plugin's own, and the dark-mode rule below gives each
  * a counterpart. Each text colour keeps at least 4.5:1 on every surface colour it is painted on,
  * in both modes. */
-body {
+:where(.block-feedback-tracker) {
     --bft-surface: var(--bs-body-bg, var(--white, #fff));
     --bft-surface-alt: var(--bs-tertiary-bg, var(--light, #f7f8fa));
     --bft-surface-dim: var(--bs-secondary-bg, #f1f3f6);
@@ -96,8 +101,10 @@ body {
  * themes write on body. Anchored at body so a dark scope deeper in the page, such as a navbar,
  * does not match. Only the plugin's own colours need a counterpart: the --bs-* tokens above
  * already follow the mode, and the fills keep their light values. */
-body[data-bs-theme="dark"],
-[data-bs-theme="dark"] body {
+body[data-bs-theme="dark"]:where(.block-feedback-tracker),
+body[data-bs-theme="dark"] :where(.block-feedback-tracker),
+[data-bs-theme="dark"] body:where(.block-feedback-tracker),
+[data-bs-theme="dark"] body :where(.block-feedback-tracker) {
     --bft-shimmer: rgba(255, 255, 255, 0.08);
 
     --bft-band-excellent-fg: #6ee7b7;
@@ -128,7 +135,7 @@ body[data-bs-theme="dark"],
 
 /* Mono utility — for numeric cells, score values, hour units. Pair with
  * font-variant-numeric: tabular-nums where vertical alignment matters. */
-.bft-mono {
+:where(.block-feedback-tracker) .bft-mono {
     font-family: var(--bft-font-mono);
     font-variant-numeric: tabular-nums;
 }
@@ -186,7 +193,7 @@ body[data-bs-theme="dark"],
 /* Error banner and empty state. Global: also used on the standalone report
  * and dashboard pages, outside the block wrapper. */
 
-.bft-error {
+:where(.block-feedback-tracker) .bft-error {
     background: #fee2e2;
     color: #b91c1c;
     padding: 0.4rem 0.6rem;
@@ -200,7 +207,7 @@ body[data-bs-theme="dark"],
  * variant sits inline above content that is already present; the 'block'
  * variant is the centred standalone empty-state shown before any data loads. */
 
-.bft-retry {
+:where(.block-feedback-tracker) .bft-retry {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -212,29 +219,29 @@ body[data-bs-theme="dark"],
     font-size: var(--bft-fs-body);
 }
 
-.bft-retry-block {
+:where(.block-feedback-tracker) .bft-retry-block {
     align-items: center;
     text-align: center;
     gap: 0.75rem;
     padding: 1.25rem 1rem;
 }
 
-.bft-retry-msg {
+:where(.block-feedback-tracker) .bft-retry-msg {
     margin: 0;
 }
 
-.bft-retry-actions {
+:where(.block-feedback-tracker) .bft-retry-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
 }
 
-.bft-retry-block .bft-retry-actions {
+:where(.block-feedback-tracker) .bft-retry-block .bft-retry-actions {
     justify-content: center;
 }
 
-.bft-retry-btn {
+:where(.block-feedback-tracker) .bft-retry-btn {
     background: #c2410c;
     border: 1px solid #c2410c;
     border-radius: 4px;
@@ -245,8 +252,8 @@ body[data-bs-theme="dark"],
     cursor: pointer;
 }
 
-.bft-retry-btn:hover,
-.bft-retry-btn:focus-visible {
+:where(.block-feedback-tracker) .bft-retry-btn:hover,
+:where(.block-feedback-tracker) .bft-retry-btn:focus-visible {
     background: #9a3412;
     border-color: #9a3412;
     outline: none;
@@ -254,15 +261,15 @@ body[data-bs-theme="dark"],
 
 /* The busy state keeps a readable pair of its own instead of fading the
  * button: its label ("Loading…") is text. */
-.bft-retry-btn:disabled,
-.bft-retry-busy {
+:where(.block-feedback-tracker) .bft-retry-btn:disabled,
+:where(.block-feedback-tracker) .bft-retry-busy {
     background: #fff;
     border-color: #c2410c;
     color: #9a3412;
     cursor: progress;
 }
 
-.bft-retry-reload {
+:where(.block-feedback-tracker) .bft-retry-reload {
     background: none;
     border: none;
     padding: 0.3rem 0.4rem;
@@ -273,8 +280,8 @@ body[data-bs-theme="dark"],
     cursor: pointer;
 }
 
-.bft-retry-reload:hover,
-.bft-retry-reload:focus-visible {
+:where(.block-feedback-tracker) .bft-retry-reload:hover,
+:where(.block-feedback-tracker) .bft-retry-reload:focus-visible {
     color: #7c2d12;
     outline: none;
 }
@@ -533,7 +540,7 @@ body[data-bs-theme="dark"],
  * pages/teacher_dashboard.php and pages/spike_react.php, which sit outside the
  * block's .block_feedback_tracker wrapper. */
 
-.bft-refresh {
+:where(.block-feedback-tracker) .bft-refresh {
     background: none;
     border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
@@ -544,15 +551,15 @@ body[data-bs-theme="dark"],
     color: var(--bft-text-muted);
 }
 
-.bft-refresh:hover,
-.bft-refresh:focus-visible {
+:where(.block-feedback-tracker) .bft-refresh:hover,
+:where(.block-feedback-tracker) .bft-refresh:focus-visible {
     color: var(--bft-text);
     background: var(--bft-surface-dim);
     outline: none;
 }
 
-.bft-refresh:disabled,
-.bft-refresh-busy {
+:where(.block-feedback-tracker) .bft-refresh:disabled,
+:where(.block-feedback-tracker) .bft-refresh-busy {
     background: var(--bft-surface-dim);
     color: var(--bft-text-muted);
     cursor: progress;
@@ -634,7 +641,7 @@ body[data-bs-theme="dark"],
  * (.bft-dashboard), outside the block wrapper, where block-scoped rules would
  * leave the zone <rect> with the default black fill and the SVG narrower than
  * its cell. */
-.bft-sparkline {
+:where(.block-feedback-tracker) .bft-sparkline {
     width: 100%;
     height: 30px;
     max-width: 240px;
@@ -644,23 +651,23 @@ body[data-bs-theme="dark"],
  * 0 -> goal), solid green baseline at 0, dotted green line at the goal.
  * Geometry comes from the SVG attributes; colours live here. Keep in
  * lockstep with amd/src/components/Sparkline.js. */
-.bft-sparkline-zone {
+:where(.block-feedback-tracker) .bft-sparkline-zone {
     fill: var(--bft-band-excellent-bg);
     opacity: 0.6;
 }
 
-.bft-sparkline-zone-base {
+:where(.block-feedback-tracker) .bft-sparkline-zone-base {
     stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
 }
 
-.bft-sparkline-zone-top {
+:where(.block-feedback-tracker) .bft-sparkline-zone-top {
     stroke: var(--bft-band-excellent-fg);
     stroke-width: 1;
     stroke-dasharray: 3 2;
 }
 
-.bft-sparkline-zone-label {
+:where(.block-feedback-tracker) .bft-sparkline-zone-label {
     fill: var(--bft-band-excellent-fg);
     font-size: 7px;
     font-weight: 600;
@@ -716,7 +723,7 @@ body[data-bs-theme="dark"],
     font-weight: 700;
 }
 
-.bft-breakdown-footnote {
+:where(.block-feedback-tracker) .bft-breakdown-footnote {
     margin-top: 0.4rem;
     font-size: 0.7rem;
     color: var(--bft-text-muted);
@@ -728,7 +735,7 @@ body[data-bs-theme="dark"],
     font-size: 0.85rem;
 }
 
-.bft-empty {
+:where(.block-feedback-tracker) .bft-empty {
     color: var(--bft-text-muted);
     font-style: italic;
     font-size: 0.9rem;
@@ -737,7 +744,7 @@ body[data-bs-theme="dark"],
 /* Band badge. Global: <Badge> also renders on the report, dashboard and
  * simulator pages, outside the block wrapper. */
 
-.bft-badge {
+:where(.block-feedback-tracker) .bft-badge {
     display: inline-block;
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
@@ -747,67 +754,67 @@ body[data-bs-theme="dark"],
     letter-spacing: 0.04em;
 }
 
-.bft-badge-excellent {
+:where(.block-feedback-tracker) .bft-badge-excellent {
     background: var(--bft-band-excellent-bg);
     color: var(--bft-band-excellent-fg);
 }
 
-.bft-badge-good {
+:where(.block-feedback-tracker) .bft-badge-good {
     background: var(--bft-band-good-bg);
     color: var(--bft-band-good-fg);
 }
 
 /* Drafts take the lighter nodata pair rather than an opacity, which would take the label under
  * 4.5:1. */
-.bft-badge-draft {
+:where(.block-feedback-tracker) .bft-badge-draft {
     background: var(--bft-band-nodata-bg);
     color: var(--bft-band-nodata-fg);
 }
 
-.bft-badge-regular {
+:where(.block-feedback-tracker) .bft-badge-regular {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
 }
 
-.bft-badge-critical {
+:where(.block-feedback-tracker) .bft-badge-critical {
     background: var(--bft-band-critical-bg);
     color: var(--bft-band-critical-fg);
 }
 
-.bft-badge-pending {
+:where(.block-feedback-tracker) .bft-badge-pending {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
 }
 
-.bft-badge-nodata {
+:where(.block-feedback-tracker) .bft-badge-nodata {
     background: var(--bft-band-nodata-bg);
     color: var(--bft-band-nodata-fg);
 }
 
 /* Drilldown / table badges reuse the same tokens. */
-.badge.badge-excellent {
+:where(.block-feedback-tracker) .badge.badge-excellent {
     background: var(--bft-band-excellent-bg);
     color: var(--bft-band-excellent-fg);
 }
-.badge.badge-good {
+:where(.block-feedback-tracker) .badge.badge-good {
     background: var(--bft-band-good-bg);
     color: var(--bft-band-good-fg);
 }
-.badge.badge-regular {
+:where(.block-feedback-tracker) .badge.badge-regular {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
 }
-.badge.badge-critical {
+:where(.block-feedback-tracker) .badge.badge-critical {
     background: var(--bft-band-critical-bg);
     color: var(--bft-band-critical-fg);
 }
-.badge.badge-pending {
+:where(.block-feedback-tracker) .badge.badge-pending {
     background: var(--bft-band-pending-bg);
     color: var(--bft-band-pending-fg);
 }
 /* Needs its own rule: under Bootstrap 5 a bare .badge sets color: #fff and no
    background, so the label renders white on white. Same colours as .bft-badge-draft. */
-.badge.badge-draft {
+:where(.block-feedback-tracker) .badge.badge-draft {
     background: var(--bft-band-nodata-bg);
     color: var(--bft-band-nodata-fg);
 }
@@ -819,7 +826,7 @@ body[data-bs-theme="dark"],
  * page, outside the block wrapper.
  * ------------------------------------------------------------------------ */
 
-.bft-dashboard {
+:where(.block-feedback-tracker) .bft-dashboard {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
@@ -831,8 +838,8 @@ body[data-bs-theme="dark"],
  * dashboard (sort buttons, links, collapse/expand, CTAs). Outline-based so
  * it never shifts layout, and specific enough to override the per-control
  * `outline: none` rules that only signalled focus with a colour change. */
-.bft-dashboard a:focus-visible,
-.bft-dashboard button:focus-visible {
+:where(.block-feedback-tracker) .bft-dashboard a:focus-visible,
+:where(.block-feedback-tracker) .bft-dashboard button:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
     border-radius: 4px;
@@ -842,20 +849,20 @@ body[data-bs-theme="dark"],
  * Pending grading report page — pages/pending_report.php
  * ------------------------------------------------------------------------ */
 
-.bft-report {
+:where(.block-feedback-tracker) .bft-report {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
 }
 
-.bft-report-controls {
+:where(.block-feedback-tracker) .bft-report-controls {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 0.75rem;
     align-items: center;
 }
 
-.bft-search {
+:where(.block-feedback-tracker) .bft-search {
     flex: 1 1 220px;
     min-width: 160px;
     padding: 0.3rem 0.5rem;
@@ -866,7 +873,7 @@ body[data-bs-theme="dark"],
     font-size: 0.9rem;
 }
 
-.bft-filter-label {
+:where(.block-feedback-tracker) .bft-filter-label {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
@@ -874,13 +881,13 @@ body[data-bs-theme="dark"],
     color: var(--bft-text-muted);
 }
 
-.bft-filter-label > span {
+:where(.block-feedback-tracker) .bft-filter-label > span {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-size: 0.7rem;
 }
 
-.bft-filter-label select {
+:where(.block-feedback-tracker) .bft-filter-label select {
     border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
     padding: 0.2rem 0.4rem;
@@ -889,27 +896,27 @@ body[data-bs-theme="dark"],
     font-size: 0.85rem;
 }
 
-.bft-report-table {
+:where(.block-feedback-tracker) .bft-report-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.9rem;
 }
 
-.bft-report-table th,
-.bft-report-table td {
+:where(.block-feedback-tracker) .bft-report-table th,
+:where(.block-feedback-tracker) .bft-report-table td {
     padding: 0.4rem 0.6rem;
     text-align: left;
     border-bottom: 1px solid var(--bft-border-soft);
 }
 
-.bft-report-table thead th {
+:where(.block-feedback-tracker) .bft-report-table thead th {
     background: var(--bft-surface-alt);
     font-weight: 600;
     color: var(--bft-text-muted);
     border-bottom: 2px solid var(--bft-border-strong);
 }
 
-.bft-th-sortable-btn {
+:where(.block-feedback-tracker) .bft-th-sortable-btn {
     background: none;
     border: 0;
     padding: 0.15rem 0;
@@ -919,26 +926,26 @@ body[data-bs-theme="dark"],
     text-align: left;
 }
 
-.bft-th-sortable.is-active .bft-th-sortable-btn {
+:where(.block-feedback-tracker) .bft-th-sortable.is-active .bft-th-sortable-btn {
     color: var(--bft-text);
 }
 
-.bft-report-row {
+:where(.block-feedback-tracker) .bft-report-row {
     cursor: pointer;
 }
 
-.bft-report-row:hover,
-.bft-report-row:focus,
-.bft-report-row:focus-within {
+:where(.block-feedback-tracker) .bft-report-row:hover,
+:where(.block-feedback-tracker) .bft-report-row:focus,
+:where(.block-feedback-tracker) .bft-report-row:focus-within {
     background: var(--bft-surface-alt);
     outline: none;
 }
 
-.bft-report-row:focus-visible {
+:where(.block-feedback-tracker) .bft-report-row:focus-visible {
     box-shadow: inset 0 0 0 2px var(--bft-brand);
 }
 
-.bft-pagination {
+:where(.block-feedback-tracker) .bft-pagination {
     display: flex;
     justify-content: center;
     align-items: center;
@@ -947,7 +954,7 @@ body[data-bs-theme="dark"],
     font-size: 0.85rem;
 }
 
-.bft-pagination button {
+:where(.block-feedback-tracker) .bft-pagination button {
     background: var(--bft-surface);
     border: 1px solid var(--bft-border-strong);
     border-radius: 4px;
@@ -956,14 +963,14 @@ body[data-bs-theme="dark"],
     cursor: pointer;
 }
 
-.bft-pagination button:disabled {
+:where(.block-feedback-tracker) .bft-pagination button:disabled {
     background: var(--bft-surface-dim);
     border-color: var(--bft-border);
     color: var(--bft-text-muted);
     cursor: not-allowed;
 }
 
-.bft-pagination-state {
+:where(.block-feedback-tracker) .bft-pagination-state {
     color: var(--bft-text-muted);
     font-variant-numeric: tabular-nums;
 }
@@ -978,8 +985,8 @@ body[data-bs-theme="dark"],
      * semantics: the column headers stay in the accessibility tree (clipped,
      * not display:none) and each cell shows its column caption from
      * data-label. */
-    .bft-report-table,
-    .bft-report-table tbody {
+    :where(.block-feedback-tracker) .bft-report-table,
+    :where(.block-feedback-tracker) .bft-report-table tbody {
         display: block;
         /* Strip theme-applied table chrome (border, radius, shadow, padding)
          * so only the per-row cards draw a frame — without this the bare
@@ -992,7 +999,7 @@ body[data-bs-theme="dark"],
         background: transparent;
         box-shadow: none;
     }
-    .bft-report-table thead {
+    :where(.block-feedback-tracker) .bft-report-table thead {
         position: absolute;
         width: 1px;
         height: 1px;
@@ -1003,14 +1010,14 @@ body[data-bs-theme="dark"],
         white-space: nowrap;
         border: 0;
     }
-    .bft-report-row {
+    :where(.block-feedback-tracker) .bft-report-row {
         display: block;
         margin-bottom: 0.6rem;
         border: 1px solid var(--bft-border);
         border-radius: 10px;
         background: var(--bft-surface);
     }
-    .bft-report-table td {
+    :where(.block-feedback-tracker) .bft-report-table td {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -1021,7 +1028,7 @@ body[data-bs-theme="dark"],
         border-bottom: 0;
         white-space: normal;
     }
-    .bft-report-table td[data-label]::before {
+    :where(.block-feedback-tracker) .bft-report-table td[data-label]::before {
         content: attr(data-label);
         flex: 0 0 auto;
         font-size: var(--bft-fs-eyebrow, 0.6875rem);
@@ -1032,7 +1039,7 @@ body[data-bs-theme="dark"],
         text-align: left;
     }
     /* First cell (student) reads as the card title — full width, no caption. */
-    .bft-report-table td.bft-report-cell-title {
+    :where(.block-feedback-tracker) .bft-report-table td.bft-report-cell-title {
         justify-content: flex-start;
         border-top: 0;
         font-size: 0.95rem;
@@ -1040,17 +1047,17 @@ body[data-bs-theme="dark"],
         color: var(--bft-text);
     }
     /* Action button right-aligns at the card foot, like the dashboard CTA. */
-    .bft-report-table td.bft-report-col-action {
+    :where(.block-feedback-tracker) .bft-report-table td.bft-report-col-action {
         justify-content: flex-end;
     }
 
-    .bft-report-controls {
+    :where(.block-feedback-tracker) .bft-report-controls {
         gap: 0.4rem;
     }
 }
 
 /* Sortable pending-submissions table (AMD module pending_table.js). */
-table.bft-sortable th[data-sort] {
+:where(.block-feedback-tracker) table.bft-sortable th[data-sort] {
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
@@ -1060,7 +1067,7 @@ table.bft-sortable th[data-sort] {
  * non-text indicator. The header's colours belong to the theme (core's
  * generaltable), so the arrow brings its own pair: muted on the plugin surface
  * while idle, full text colour once the column sorts. */
-table.bft-sortable th[data-sort]::after {
+:where(.block-feedback-tracker) table.bft-sortable th[data-sort]::after {
     content: '↕';
     margin-left: 0.3em;
     padding: 0 0.2em;
@@ -1070,12 +1077,12 @@ table.bft-sortable th[data-sort]::after {
     font-size: 0.8em;
 }
 
-table.bft-sortable th.bft-sort-asc::after {
+:where(.block-feedback-tracker) table.bft-sortable th.bft-sort-asc::after {
     content: '▲';
     color: var(--bft-text);
 }
 
-table.bft-sortable th.bft-sort-desc::after {
+:where(.block-feedback-tracker) table.bft-sortable th.bft-sort-desc::after {
     content: '▼';
     color: var(--bft-text);
 }
@@ -1088,13 +1095,13 @@ table.bft-sortable th.bft-sort-desc::after {
  * ------------------------------------------------------------------------ */
 
 /* ScoreRing — flex: 0 0 auto so it never shrinks inside a hero row. */
-.bft-score-ring {
+:where(.block-feedback-tracker) .bft-score-ring {
     display: block;
     flex: 0 0 auto;
 }
 
 /* Overall banner. */
-.bft-overall-banner {
+:where(.block-feedback-tracker) .bft-overall-banner {
     background: var(--bft-surface-alt);
     border: 1px solid var(--bft-border-soft);
     border-radius: 10px;
@@ -1105,7 +1112,7 @@ table.bft-sortable th.bft-sort-desc::after {
     margin-bottom: 0.75rem;
 }
 
-.bft-overall-eyebrow {
+:where(.block-feedback-tracker) .bft-overall-eyebrow {
     font-size: 0.65rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1113,52 +1120,52 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.08em;
 }
 
-.bft-overall-row {
+:where(.block-feedback-tracker) .bft-overall-row {
     display: flex;
     align-items: center;
     gap: 0.625rem;
 }
 
-.bft-overall-text {
+:where(.block-feedback-tracker) .bft-overall-text {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
     min-width: 0;
 }
 
-.bft-overall-score-row {
+:where(.block-feedback-tracker) .bft-overall-score-row {
     display: flex;
     align-items: baseline;
     gap: 0.25rem;
 }
 
-.bft-overall-score {
+:where(.block-feedback-tracker) .bft-overall-score {
     font-size: 1.75rem;
     font-weight: 800;
     line-height: 1;
     letter-spacing: -0.04em;
 }
 
-.bft-overall-score-tone-excellent {
+:where(.block-feedback-tracker) .bft-overall-score-tone-excellent {
     color: var(--bft-band-excellent-fg);
 }
-.bft-overall-score-tone-good {
+:where(.block-feedback-tracker) .bft-overall-score-tone-good {
     color: var(--bft-band-good-fg);
 }
-.bft-overall-score-tone-regular {
+:where(.block-feedback-tracker) .bft-overall-score-tone-regular {
     color: var(--bft-band-regular-fg);
 }
-.bft-overall-score-tone-critical {
+:where(.block-feedback-tracker) .bft-overall-score-tone-critical {
     color: var(--bft-band-critical-fg);
 }
-.bft-overall-score-tone-pending {
+:where(.block-feedback-tracker) .bft-overall-score-tone-pending {
     color: var(--bft-band-pending-fg);
 }
-.bft-overall-score-tone-nodata {
+:where(.block-feedback-tracker) .bft-overall-score-tone-nodata {
     color: var(--bft-band-nodata-fg);
 }
 
-.bft-overall-score-of {
+:where(.block-feedback-tracker) .bft-overall-score-of {
     font-size: 0.7rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1167,32 +1174,32 @@ table.bft-sortable th.bft-sort-desc::after {
 /* Band tone of a hero or notice section (bft-rh-tone-<band>): the band's text, tint and edge
  * colours, for the section's own rules to read. The scheduled-pause notice paints with them; the
  * heroes carry the class too, and show their band through the ring, the score and the badge. */
-.bft-rh-tone-excellent {
+:where(.block-feedback-tracker) .bft-rh-tone-excellent {
     --bft-tone-fg: var(--bft-band-excellent-fg);
     --bft-tone-bg: var(--bft-band-excellent-bg);
     --bft-tone-edge: var(--bft-band-excellent-edge);
 }
-.bft-rh-tone-good {
+:where(.block-feedback-tracker) .bft-rh-tone-good {
     --bft-tone-fg: var(--bft-band-good-fg);
     --bft-tone-bg: var(--bft-band-good-bg);
     --bft-tone-edge: var(--bft-band-good-edge);
 }
-.bft-rh-tone-regular {
+:where(.block-feedback-tracker) .bft-rh-tone-regular {
     --bft-tone-fg: var(--bft-band-regular-fg);
     --bft-tone-bg: var(--bft-band-regular-bg);
     --bft-tone-edge: var(--bft-band-regular-edge);
 }
-.bft-rh-tone-critical {
+:where(.block-feedback-tracker) .bft-rh-tone-critical {
     --bft-tone-fg: var(--bft-band-critical-fg);
     --bft-tone-bg: var(--bft-band-critical-bg);
     --bft-tone-edge: var(--bft-band-critical-edge);
 }
-.bft-rh-tone-pending {
+:where(.block-feedback-tracker) .bft-rh-tone-pending {
     --bft-tone-fg: var(--bft-band-pending-fg);
     --bft-tone-bg: var(--bft-band-pending-bg);
     --bft-tone-edge: var(--bft-band-pending-edge);
 }
-.bft-rh-tone-nodata {
+:where(.block-feedback-tracker) .bft-rh-tone-nodata {
     --bft-tone-fg: var(--bft-band-nodata-fg);
     --bft-tone-bg: var(--bft-band-nodata-bg);
     --bft-tone-edge: var(--bft-band-nodata-edge);
@@ -1201,7 +1208,7 @@ table.bft-sortable th.bft-sort-desc::after {
 /* Scheduled-pause notice ("Upcoming pause"): attention card shared by the in-course block
    (compact variant), the dashboard and the report. It paints with the tone class beside it;
    ScheduledPauses passes bft-rh-tone-regular, the amber one. */
-.bft-scheduled {
+:where(.block-feedback-tracker) .bft-scheduled {
     display: flex;
     gap: 0.6rem;
     margin-top: 0.75rem;
@@ -1212,7 +1219,7 @@ table.bft-sortable th.bft-sort-desc::after {
     border-radius: 12px;
 }
 
-.bft-scheduled-swatch {
+:where(.block-feedback-tracker) .bft-scheduled-swatch {
     width: 12px;
     height: 12px;
     flex: 0 0 auto;
@@ -1222,12 +1229,12 @@ table.bft-sortable th.bft-sort-desc::after {
     border: 1px solid var(--bft-tone-edge);
 }
 
-.bft-scheduled-body {
+:where(.block-feedback-tracker) .bft-scheduled-body {
     flex: 1 1 auto;
     min-width: 0;
 }
 
-.bft-scheduled-eyebrow {
+:where(.block-feedback-tracker) .bft-scheduled-eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-size: 0.7rem;
@@ -1236,7 +1243,7 @@ table.bft-sortable th.bft-sort-desc::after {
     margin-bottom: 0.4rem;
 }
 
-.bft-scheduled-list {
+:where(.block-feedback-tracker) .bft-scheduled-list {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -1245,50 +1252,50 @@ table.bft-sortable th.bft-sort-desc::after {
     gap: 0.5rem;
 }
 
-.bft-scheduled-item {
+:where(.block-feedback-tracker) .bft-scheduled-item {
     display: flex;
     flex-direction: column;
     gap: 0.1rem;
     line-height: 1.35;
 }
 
-.bft-scheduled-item + .bft-scheduled-item {
+:where(.block-feedback-tracker) .bft-scheduled-item + .bft-scheduled-item {
     padding-top: 0.5rem;
     border-top: 1px dashed var(--bft-tone-edge);
 }
 
-.bft-scheduled-label {
+:where(.block-feedback-tracker) .bft-scheduled-label {
     font-weight: 600;
     color: var(--bft-text);
 }
 
-.bft-scheduled-when {
+:where(.block-feedback-tracker) .bft-scheduled-when {
     font-size: 0.85rem;
     color: var(--bft-tone-fg);
 }
 
-.bft-scheduled-type {
+:where(.block-feedback-tracker) .bft-scheduled-type {
     font-size: 0.78rem;
     color: var(--bft-text-muted);
 }
 
 /* Compact variant for the narrow in-course block. */
-.bft-scheduled-compact {
+:where(.block-feedback-tracker) .bft-scheduled-compact {
     margin-top: 0.6rem;
     padding: 0.6rem 0.7rem;
     border-radius: 8px;
 }
 
-.bft-scheduled-compact .bft-scheduled-eyebrow {
+:where(.block-feedback-tracker) .bft-scheduled-compact .bft-scheduled-eyebrow {
     font-size: 0.65rem;
 }
 
-.bft-scheduled-compact .bft-scheduled-when {
+:where(.block-feedback-tracker) .bft-scheduled-compact .bft-scheduled-when {
     font-size: 0.8rem;
 }
 
 /* KpiTile row in GroupCard: three tiles that wrap in a narrow block column. */
-.bft-kpi-row {
+:where(.block-feedback-tracker) .bft-kpi-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
     gap: 0.35rem;
@@ -1297,7 +1304,7 @@ table.bft-sortable th.bft-sort-desc::after {
     border-bottom: 1px dashed var(--bft-border-soft);
 }
 
-.bft-kpi-tile {
+:where(.block-feedback-tracker) .bft-kpi-tile {
     display: flex;
     flex-direction: column;
     gap: 0.1rem;
@@ -1305,7 +1312,7 @@ table.bft-sortable th.bft-sort-desc::after {
     min-width: 0;
 }
 
-.bft-kpi-tile-label {
+:where(.block-feedback-tracker) .bft-kpi-tile-label {
     font-size: 0.6rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1313,44 +1320,44 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.04em;
 }
 
-.bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-value {
     font-size: 1.05rem;
     font-weight: 800;
     line-height: 1;
     color: var(--bft-text);
 }
 
-.bft-kpi-tile-unit {
+:where(.block-feedback-tracker) .bft-kpi-tile-unit {
     font-size: 0.7rem;
     font-weight: 700;
     color: var(--bft-text-muted);
     margin-left: 0.1rem;
 }
 
-.bft-kpi-tile-sub {
+:where(.block-feedback-tracker) .bft-kpi-tile-sub {
     font-size: 0.6rem;
     color: var(--bft-text-faint);
     font-weight: 500;
 }
 
-.bft-kpi-tile-tone-excellent .bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-tone-excellent .bft-kpi-tile-value {
     color: var(--bft-band-excellent-fg);
 }
-.bft-kpi-tile-tone-good .bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-tone-good .bft-kpi-tile-value {
     color: var(--bft-band-good-fg);
 }
-.bft-kpi-tile-tone-regular .bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-tone-regular .bft-kpi-tile-value {
     color: var(--bft-band-regular-fg);
 }
-.bft-kpi-tile-tone-critical .bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-tone-critical .bft-kpi-tile-value {
     color: var(--bft-band-critical-fg);
 }
-.bft-kpi-tile-tone-muted .bft-kpi-tile-value {
+:where(.block-feedback-tracker) .bft-kpi-tile-tone-muted .bft-kpi-tile-value {
     color: var(--bft-text-muted);
 }
 
 /* TrendRow. */
-.bft-trend-row {
+:where(.block-feedback-tracker) .bft-trend-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1361,14 +1368,14 @@ table.bft-sortable th.bft-sort-desc::after {
     border-radius: 6px;
 }
 
-.bft-trend-row-text {
+:where(.block-feedback-tracker) .bft-trend-row-text {
     display: flex;
     flex-direction: column;
     gap: 0.05rem;
     min-width: 0;
 }
 
-.bft-trend-row-eyebrow {
+:where(.block-feedback-tracker) .bft-trend-row-eyebrow {
     font-size: 0.6rem;
     font-weight: 600;
     color: var(--bft-text-muted);
@@ -1376,52 +1383,52 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.04em;
 }
 
-.bft-trend-row-line {
+:where(.block-feedback-tracker) .bft-trend-row-line {
     display: flex;
     align-items: center;
     gap: 0.3rem;
 }
 
-.bft-trend-row-arrow,
-.bft-trend-row-pct {
+:where(.block-feedback-tracker) .bft-trend-row-arrow,
+:where(.block-feedback-tracker) .bft-trend-row-pct {
     font-size: 0.8rem;
     font-weight: 700;
     line-height: 1;
 }
 
-.bft-trend-row-label {
+:where(.block-feedback-tracker) .bft-trend-row-label {
     font-size: 0.7rem;
     color: var(--bft-text-muted);
     margin-left: 0.1rem;
 }
 
-.bft-trend-tone-stable .bft-trend-row-arrow,
-.bft-trend-tone-stable .bft-trend-row-pct {
+:where(.block-feedback-tracker) .bft-trend-tone-stable .bft-trend-row-arrow,
+:where(.block-feedback-tracker) .bft-trend-tone-stable .bft-trend-row-pct {
     color: var(--bft-text-muted);
 }
-.bft-trend-tone-faster .bft-trend-row-arrow,
-.bft-trend-tone-faster .bft-trend-row-pct {
+:where(.block-feedback-tracker) .bft-trend-tone-faster .bft-trend-row-arrow,
+:where(.block-feedback-tracker) .bft-trend-tone-faster .bft-trend-row-pct {
     color: var(--bft-band-excellent-fg);
 }
-.bft-trend-tone-slower .bft-trend-row-arrow,
-.bft-trend-tone-slower .bft-trend-row-pct {
+:where(.block-feedback-tracker) .bft-trend-tone-slower .bft-trend-row-arrow,
+:where(.block-feedback-tracker) .bft-trend-tone-slower .bft-trend-row-pct {
     color: var(--bft-band-critical-fg);
 }
 
-.bft-trend-row-spark {
+:where(.block-feedback-tracker) .bft-trend-row-spark {
     line-height: 0;
     flex: 0 0 auto;
 }
 
 /* StatTile: the clickable Waiting / Attention / Priority tiles in GroupCard. */
-.bft-stat-row {
+:where(.block-feedback-tracker) .bft-stat-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
     margin-top: 0.625rem;
 }
 
-.bft-stat-tile {
+:where(.block-feedback-tracker) .bft-stat-tile {
     /* Don't shrink below a label-friendly width — wrap the row instead so a
      * long translation reflows (3-up → 2/1 → one per line) rather than the
      * label leaking past the tile. */
@@ -1443,13 +1450,13 @@ table.bft-sortable th.bft-sort-desc::after {
 
 /* Hover and focus draw a ring in the tile's own text colour, which keeps at least 4.5:1 on the
  * tile in both colour modes. */
-.bft-stat-tile:hover,
-.bft-stat-tile:focus-visible {
+:where(.block-feedback-tracker) .bft-stat-tile:hover,
+:where(.block-feedback-tracker) .bft-stat-tile:focus-visible {
     box-shadow: inset 0 0 0 2px currentcolor;
     outline: none;
 }
 
-.bft-stat-tile-label {
+:where(.block-feedback-tracker) .bft-stat-tile-label {
     font-size: 0.6rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -1458,36 +1465,36 @@ table.bft-sortable th.bft-sort-desc::after {
     overflow-wrap: anywhere;
 }
 
-.bft-stat-tile-value {
+:where(.block-feedback-tracker) .bft-stat-tile-value {
     font-size: 1.1rem;
     font-weight: 800;
     line-height: 1;
 }
 
-.bft-stat-tile-tone-neutral {
+:where(.block-feedback-tracker) .bft-stat-tile-tone-neutral {
     background: var(--bft-surface-alt);
     color: var(--bft-text);
 }
 
-.bft-stat-tile-tone-warn {
+:where(.block-feedback-tracker) .bft-stat-tile-tone-warn {
     background: var(--bft-band-regular-bg);
     color: var(--bft-band-regular-fg);
 }
 
-.bft-stat-tile-tone-critical {
+:where(.block-feedback-tracker) .bft-stat-tile-tone-critical {
     background: var(--bft-band-critical-bg);
     color: var(--bft-band-critical-fg);
 }
 
 /* PeerContext. */
-.bft-peer-context {
+:where(.block-feedback-tracker) .bft-peer-context {
     margin-top: 0.75rem;
     padding: 0.5rem 0.625rem 0.4rem;
     border: 1px solid var(--bft-border-soft);
     border-radius: 6px;
 }
 
-.bft-peer-context-head {
+:where(.block-feedback-tracker) .bft-peer-context-head {
     font-size: 0.6rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1496,7 +1503,7 @@ table.bft-sortable th.bft-sort-desc::after {
     margin-bottom: 0.4rem;
 }
 
-.bft-peer-line {
+:where(.block-feedback-tracker) .bft-peer-line {
     display: grid;
     grid-template-columns: 70px 1fr auto auto;
     gap: 0.3rem;
@@ -1505,11 +1512,11 @@ table.bft-sortable th.bft-sort-desc::after {
     border-radius: 4px;
 }
 
-.bft-peer-line-highlight {
+:where(.block-feedback-tracker) .bft-peer-line-highlight {
     background: var(--bft-surface-alt);
 }
 
-.bft-peer-label {
+:where(.block-feedback-tracker) .bft-peer-label {
     font-size: 0.7rem;
     font-weight: 600;
     color: var(--bft-text);
@@ -1518,7 +1525,7 @@ table.bft-sortable th.bft-sort-desc::after {
     white-space: nowrap;
 }
 
-.bft-peer-track {
+:where(.block-feedback-tracker) .bft-peer-track {
     width: 100%;
     height: 5px;
     background: var(--bft-surface-dim);
@@ -1526,19 +1533,19 @@ table.bft-sortable th.bft-sort-desc::after {
     overflow: hidden;
 }
 
-.bft-peer-fill {
+:where(.block-feedback-tracker) .bft-peer-fill {
     height: 100%;
     border-radius: 3px;
 }
 
-.bft-peer-score {
+:where(.block-feedback-tracker) .bft-peer-score {
     font-size: 0.72rem;
     font-weight: 800;
     line-height: 1;
 }
 
 /* TimelineBar (activity open/close). */
-.bft-timeline-bar {
+:where(.block-feedback-tracker) .bft-timeline-bar {
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -1546,7 +1553,7 @@ table.bft-sortable th.bft-sort-desc::after {
     color: var(--bft-text-muted);
 }
 
-.bft-timeline-bar-empty {
+:where(.block-feedback-tracker) .bft-timeline-bar-empty {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
@@ -1560,12 +1567,12 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.04em;
 }
 
-.bft-timeline-bar-date-overdue {
+:where(.block-feedback-tracker) .bft-timeline-bar-date-overdue {
     color: var(--bft-band-critical-fg);
     font-weight: 700;
 }
 
-.bft-timeline-bar-track {
+:where(.block-feedback-tracker) .bft-timeline-bar-track {
     flex: 1;
     position: relative;
     height: 4px;
@@ -1574,7 +1581,7 @@ table.bft-sortable th.bft-sort-desc::after {
     background: var(--bft-surface-dim);
 }
 
-.bft-timeline-bar-fill {
+:where(.block-feedback-tracker) .bft-timeline-bar-fill {
     position: absolute;
     left: 0;
     top: 0;
@@ -1582,7 +1589,7 @@ table.bft-sortable th.bft-sort-desc::after {
     border-radius: 2px;
 }
 
-.bft-timeline-bar-thumb {
+:where(.block-feedback-tracker) .bft-timeline-bar-thumb {
     position: absolute;
     top: -2px;
     width: 8px;
@@ -1592,66 +1599,66 @@ table.bft-sortable th.bft-sort-desc::after {
 }
 
 /* Before the open date: teal track, thumb pinned at the left. */
-.bft-timeline-bar-before .bft-timeline-bar-track {
+:where(.block-feedback-tracker) .bft-timeline-bar-before .bft-timeline-bar-track {
     background: var(--bft-band-excellent-bg);
 }
-.bft-timeline-bar-before .bft-timeline-bar-fill,
-.bft-timeline-bar-before .bft-timeline-bar-thumb {
+:where(.block-feedback-tracker) .bft-timeline-bar-before .bft-timeline-bar-fill,
+:where(.block-feedback-tracker) .bft-timeline-bar-before .bft-timeline-bar-thumb {
     background: var(--bft-band-excellent-fg);
 }
 
 /* Running: orange fill up to today's position. */
-.bft-timeline-bar-running .bft-timeline-bar-track {
+:where(.block-feedback-tracker) .bft-timeline-bar-running .bft-timeline-bar-track {
     background: #fbe9d0;
 }
-.bft-timeline-bar-running .bft-timeline-bar-fill,
-.bft-timeline-bar-running .bft-timeline-bar-thumb {
+:where(.block-feedback-tracker) .bft-timeline-bar-running .bft-timeline-bar-fill,
+:where(.block-feedback-tracker) .bft-timeline-bar-running .bft-timeline-bar-thumb {
     background: #ea8a1f;
 }
 
 /* Closed (close date reached or passed): dark orange, thumb pinned at the end. */
-.bft-timeline-bar-closed .bft-timeline-bar-track {
+:where(.block-feedback-tracker) .bft-timeline-bar-closed .bft-timeline-bar-track {
     background: #f3dcc9;
 }
-.bft-timeline-bar-closed .bft-timeline-bar-fill,
-.bft-timeline-bar-closed .bft-timeline-bar-thumb {
+:where(.block-feedback-tracker) .bft-timeline-bar-closed .bft-timeline-bar-fill,
+:where(.block-feedback-tracker) .bft-timeline-bar-closed .bft-timeline-bar-thumb {
     background: #c2410c;
 }
 
 /* Hero row inside GroupCard. */
-.bft-card-hero {
+:where(.block-feedback-tracker) .bft-card-hero {
     display: flex;
     align-items: center;
     gap: 0.625rem;
     margin: 0.5rem 0 0.25rem;
 }
 
-.bft-card-hero-text {
+:where(.block-feedback-tracker) .bft-card-hero-text {
     display: flex;
     flex-direction: column;
     min-width: 0;
 }
 
-.bft-card-hero-score-row {
+:where(.block-feedback-tracker) .bft-card-hero-score-row {
     display: flex;
     align-items: baseline;
     gap: 0.25rem;
 }
 
-.bft-card-hero-score {
+:where(.block-feedback-tracker) .bft-card-hero-score {
     font-size: 1.5rem;
     font-weight: 800;
     line-height: 1;
     letter-spacing: -0.04em;
 }
 
-.bft-card-hero-score-of {
+:where(.block-feedback-tracker) .bft-card-hero-score-of {
     font-size: 0.7rem;
     font-weight: 700;
     color: var(--bft-text-muted);
 }
 
-.bft-card-hero-caption {
+:where(.block-feedback-tracker) .bft-card-hero-caption {
     font-size: 0.6rem;
     color: var(--bft-text-faint);
     font-weight: 600;
@@ -1660,7 +1667,7 @@ table.bft-sortable th.bft-sort-desc::after {
 }
 
 /* Activities list inside GroupCard. */
-.bft-activities {
+:where(.block-feedback-tracker) .bft-activities {
     margin-top: 0.75rem;
     padding-top: 0.5rem;
     border-top: 1px solid var(--bft-border-soft);
@@ -1669,7 +1676,7 @@ table.bft-sortable th.bft-sort-desc::after {
     gap: 0.4rem;
 }
 
-.bft-activities-head {
+:where(.block-feedback-tracker) .bft-activities-head {
     font-size: 0.6rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1677,7 +1684,7 @@ table.bft-sortable th.bft-sort-desc::after {
     letter-spacing: 0.05em;
 }
 
-.bft-activity {
+:where(.block-feedback-tracker) .bft-activity {
     background: var(--bft-surface-alt);
     border-radius: 4px;
     padding: 0.4rem 0.5rem;
@@ -1686,14 +1693,14 @@ table.bft-sortable th.bft-sort-desc::after {
     gap: 0.25rem;
 }
 
-.bft-activity-row {
+:where(.block-feedback-tracker) .bft-activity-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.4rem;
 }
 
-.bft-activity-title {
+:where(.block-feedback-tracker) .bft-activity-title {
     flex: 1;
     min-width: 0;
     font-size: 0.78rem;
@@ -1705,15 +1712,15 @@ table.bft-sortable th.bft-sort-desc::after {
     white-space: nowrap;
 }
 
-.bft-activity-title:hover,
-.bft-activity-title:focus {
+:where(.block-feedback-tracker) .bft-activity-title:hover,
+:where(.block-feedback-tracker) .bft-activity-title:focus {
     text-decoration: underline;
 }
 
 /* Activity action chip, a link to the group-override editor when the viewer
  * can edit it. Colour signals the state: done (teal), override (orange),
  * create (neutral). */
-.bft-activity-action {
+:where(.block-feedback-tracker) .bft-activity-action {
     flex: none;
     font-size: 0.55rem;
     font-weight: 700;
@@ -1725,22 +1732,22 @@ table.bft-sortable th.bft-sort-desc::after {
     white-space: nowrap;
 }
 
-a.bft-activity-action:hover,
-a.bft-activity-action:focus {
+:where(.block-feedback-tracker) a.bft-activity-action:hover,
+:where(.block-feedback-tracker) a.bft-activity-action:focus {
     text-decoration: underline;
 }
 
-.bft-activity-action-done {
+:where(.block-feedback-tracker) .bft-activity-action-done {
     color: var(--bft-band-excellent-fg);
     background: var(--bft-band-excellent-bg);
 }
 
-.bft-activity-action-override {
+:where(.block-feedback-tracker) .bft-activity-action-override {
     color: var(--bft-band-critical-fg);
     background: var(--bft-band-critical-bg);
 }
 
-.bft-activity-action-create {
+:where(.block-feedback-tracker) .bft-activity-action-create {
     color: var(--bft-text-muted);
     background: var(--bft-surface-dim);
     border: 1px solid var(--bft-border);
@@ -1748,7 +1755,7 @@ a.bft-activity-action:focus {
 
 /* "No rule" chip: the viewer cannot manage the activity and it has no
  * schedule. Rendered as a plain span, not a link. */
-.bft-activity-action-norule {
+:where(.block-feedback-tracker) .bft-activity-action-norule {
     color: var(--bft-text-muted);
     background: var(--bft-surface-dim);
     border: 1px dashed var(--bft-border);
@@ -1762,7 +1769,7 @@ a.bft-activity-action:focus {
  * ------------------------------------------------------------------------ */
 
 /* Breadcrumb above the title. */
-.bft-breadcrumb {
+:where(.block-feedback-tracker) .bft-breadcrumb {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -1770,29 +1777,29 @@ a.bft-activity-action:focus {
     margin-bottom: 0.75rem;
 }
 
-.bft-crumb-link {
+:where(.block-feedback-tracker) .bft-crumb-link {
     color: var(--bft-text-muted);
     text-decoration: none;
     font-weight: 500;
 }
 
-.bft-crumb-link:hover,
-.bft-crumb-link:focus-visible {
+:where(.block-feedback-tracker) .bft-crumb-link:hover,
+:where(.block-feedback-tracker) .bft-crumb-link:focus-visible {
     color: var(--bft-text);
     text-decoration: underline;
 }
 
-.bft-crumb-sep {
+:where(.block-feedback-tracker) .bft-crumb-sep {
     color: var(--bft-border-soft);
 }
 
-.bft-crumb-current {
+:where(.block-feedback-tracker) .bft-crumb-current {
     color: var(--bft-text);
     font-weight: 600;
 }
 
 /* Title row + overall band chip. */
-.bft-report-title-row {
+:where(.block-feedback-tracker) .bft-report-title-row {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -1800,11 +1807,11 @@ a.bft-activity-action:focus {
     margin-bottom: 1rem;
 }
 
-.bft-report-title-text {
+:where(.block-feedback-tracker) .bft-report-title-text {
     min-width: 0;
 }
 
-.bft-report-h1 {
+:where(.block-feedback-tracker) .bft-report-h1 {
     margin: 0;
     font-size: 1.4rem;
     font-weight: 800;
@@ -1812,7 +1819,7 @@ a.bft-activity-action:focus {
     letter-spacing: -0.02em;
 }
 
-.bft-report-subline {
+:where(.block-feedback-tracker) .bft-report-subline {
     margin-top: 0.25rem;
     font-size: 0.82rem;
     color: var(--bft-text-muted);
@@ -1822,7 +1829,7 @@ a.bft-activity-action:focus {
 }
 
 /* Status distribution bar — click a segment to filter. */
-.bft-dist {
+:where(.block-feedback-tracker) .bft-dist {
     margin-bottom: 0.875rem;
     padding: 0.875rem 1rem;
     background: var(--bft-surface);
@@ -1830,14 +1837,14 @@ a.bft-activity-action:focus {
     border: 1px solid var(--bft-border);
 }
 
-.bft-dist-head {
+:where(.block-feedback-tracker) .bft-dist-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 0.625rem;
 }
 
-.bft-dist-title {
+:where(.block-feedback-tracker) .bft-dist-title {
     font-size: 0.65rem;
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -1845,19 +1852,19 @@ a.bft-activity-action:focus {
     letter-spacing: 0.06em;
 }
 
-.bft-dist-hint {
+:where(.block-feedback-tracker) .bft-dist-hint {
     font-size: 0.65rem;
     color: var(--bft-text-faint);
 }
 
-.bft-dist-bar {
+:where(.block-feedback-tracker) .bft-dist-bar {
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem;
     min-height: 48px;
 }
 
-.bft-dist-seg {
+:where(.block-feedback-tracker) .bft-dist-seg {
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
@@ -1881,43 +1888,43 @@ a.bft-activity-action:focus {
     min-height: 48px;
 }
 
-.bft-dist-seg-excellent {
+:where(.block-feedback-tracker) .bft-dist-seg-excellent {
     --bft-dist-tone: var(--bft-band-excellent-fill);
 }
-.bft-dist-seg-good {
+:where(.block-feedback-tracker) .bft-dist-seg-good {
     --bft-dist-tone: var(--bft-band-good-fill);
 }
-.bft-dist-seg-regular {
+:where(.block-feedback-tracker) .bft-dist-seg-regular {
     --bft-dist-tone: var(--bft-band-regular-fill);
 }
-.bft-dist-seg-critical {
+:where(.block-feedback-tracker) .bft-dist-seg-critical {
     --bft-dist-tone: var(--bft-band-critical-fill);
 }
-.bft-dist-seg-aguardando {
+:where(.block-feedback-tracker) .bft-dist-seg-aguardando {
     --bft-dist-tone: var(--bft-band-pending-fill);
 }
-.bft-dist-seg-atencao {
+:where(.block-feedback-tracker) .bft-dist-seg-atencao {
     --bft-dist-tone: var(--bft-band-regular-fill);
 }
-.bft-dist-seg-prioridade {
+:where(.block-feedback-tracker) .bft-dist-seg-prioridade {
     --bft-dist-tone: var(--bft-band-critical-fill);
 }
 
 /* The segments not selected while one filters the table. They stay buttons,
  * so their labels keep a readable pair; the band shows as a stripe. */
-.bft-dist-seg.bft-dist-seg-dim {
+:where(.block-feedback-tracker) .bft-dist-seg.bft-dist-seg-dim {
     background: var(--bft-surface-dim);
     color: var(--bft-text-muted);
     box-shadow: inset 0 -4px 0 var(--bft-dist-tone);
 }
 
-.bft-dist-seg-n {
+:where(.block-feedback-tracker) .bft-dist-seg-n {
     font-size: 1.1rem;
     font-weight: 800;
     line-height: 1;
 }
 
-.bft-dist-seg-l {
+:where(.block-feedback-tracker) .bft-dist-seg-l {
     font-size: 0.65rem;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -1930,16 +1937,16 @@ a.bft-activity-action:focus {
 
 /* Spacer that pushes the controls after it to the end of the
    .bft-report-controls row. */
-.bft-report-controls-spacer {
+:where(.block-feedback-tracker) .bft-report-controls-spacer {
     flex: 1;
 }
 
 /* Dual-column table cells (Effective + Perceived). */
-.bft-report-effective {
+:where(.block-feedback-tracker) .bft-report-effective {
     font-weight: 800;
 }
 
-.bft-report-perceived {
+:where(.block-feedback-tracker) .bft-report-perceived {
     color: var(--bft-text-muted);
     font-weight: 700;
     display: inline-flex;
@@ -1948,18 +1955,18 @@ a.bft-activity-action:focus {
 }
 
 /* Graded result cell — band badge + optional paused-info chip, inline. */
-.bft-row-result {
+:where(.block-feedback-tracker) .bft-row-result {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
 }
 
-.bft-row-paused-wrap {
+:where(.block-feedback-tracker) .bft-row-paused-wrap {
     position: relative;
     display: inline-flex;
 }
 
-.bft-row-paused-tag {
+:where(.block-feedback-tracker) .bft-row-paused-tag {
     display: inline-flex;
     align-items: center;
     gap: 0.2rem;
@@ -1977,13 +1984,13 @@ a.bft-activity-action:focus {
     cursor: pointer;
 }
 
-.bft-row-paused-tag:hover,
-.bft-row-paused-tag[aria-expanded="true"] {
+:where(.block-feedback-tracker) .bft-row-paused-tag:hover,
+:where(.block-feedback-tracker) .bft-row-paused-tag[aria-expanded="true"] {
     background: var(--bft-surface-dim);
     color: var(--bft-text);
 }
 
-.bft-row-paused-i {
+:where(.block-feedback-tracker) .bft-row-paused-i {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1997,7 +2004,7 @@ a.bft-activity-action:focus {
     line-height: 1;
 }
 
-.bft-row-paused-pop {
+:where(.block-feedback-tracker) .bft-row-paused-pop {
     position: absolute;
     bottom: calc(100% + 6px);
     right: 0;
@@ -2018,7 +2025,7 @@ a.bft-activity-action:focus {
     text-align: left;
 }
 
-.bft-row-paused-swatch {
+:where(.block-feedback-tracker) .bft-row-paused-swatch {
     width: 7px;
     height: 7px;
     border-radius: 2px;
@@ -2029,34 +2036,34 @@ a.bft-activity-action:focus {
 /* Awaiting-release chip: a marked submission the marking workflow has not
  * released yet. Amber rather than a band colour — it is an outstanding action,
  * not a result. */
-.bft-row-release-wrap {
+:where(.block-feedback-tracker) .bft-row-release-wrap {
     position: relative;
     display: inline-flex;
     margin-left: 0.3rem;
 }
 
-.bft-badge-release {
+:where(.block-feedback-tracker) .bft-badge-release {
     border: 1px solid #f59e0b;
     background: #fef3c7;
     color: #92400e;
     cursor: pointer;
 }
 
-.bft-badge-release:focus-visible {
+:where(.block-feedback-tracker) .bft-badge-release:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
 
 /* Answered outside the activity. Blue rather than amber: it is a statement of
    provenance, not a warning — the response did reach the student. */
-.bft-badge-gradebook {
+:where(.block-feedback-tracker) .bft-badge-gradebook {
     border: 1px solid #3b82f6;
     background: #dbeafe;
     color: #1e40af;
     cursor: pointer;
 }
 
-.bft-badge-gradebook:focus-visible {
+:where(.block-feedback-tracker) .bft-badge-gradebook:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
@@ -2064,14 +2071,14 @@ a.bft-activity-action:focus {
 /* A grade the student cannot see. Grey rather than red: nothing is wrong, the
    feedback simply has not arrived yet, and the row says so instead of letting
    the closed clock imply otherwise. */
-.bft-badge-hiddengrade {
+:where(.block-feedback-tracker) .bft-badge-hiddengrade {
     border: 1px solid #94a3b8;
     background: #f1f5f9;
     color: #334155;
     cursor: pointer;
 }
 
-.bft-badge-hiddengrade:focus-visible {
+:where(.block-feedback-tracker) .bft-badge-hiddengrade:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
@@ -2080,18 +2087,18 @@ a.bft-activity-action:focus {
    says why the row is back, neither a warning nor a result. The .badge form is
    the drilldown's, qualified because a bare Bootstrap badge sets its own
    colours. */
-.bft-badge-resubmitted,
-.badge.bft-badge-resubmitted {
+:where(.block-feedback-tracker) .bft-badge-resubmitted,
+:where(.block-feedback-tracker) .badge.bft-badge-resubmitted {
     border: 1px solid var(--bft-plum-fg);
     background: var(--bft-plum-bg);
     color: var(--bft-plum-fg);
 }
 
-button.bft-badge-resubmitted {
+:where(.block-feedback-tracker) button.bft-badge-resubmitted {
     cursor: pointer;
 }
 
-button.bft-badge-resubmitted:focus-visible {
+:where(.block-feedback-tracker) button.bft-badge-resubmitted:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
@@ -2099,7 +2106,7 @@ button.bft-badge-resubmitted:focus-visible {
 /* Queue-to-turnaround chip: the response interval split by owner. Muted, so
  * it reads as annotation beside the result badge rather than competing with
  * it. */
-.bft-row-split {
+:where(.block-feedback-tracker) .bft-row-split {
     display: inline-flex;
     align-items: baseline;
     gap: 0.22rem;
@@ -2110,11 +2117,11 @@ button.bft-badge-resubmitted:focus-visible {
     white-space: nowrap;
 }
 
-.bft-row-split-alloc {
+:where(.block-feedback-tracker) .bft-row-split-alloc {
     font-weight: 700;
 }
 
-.bft-row-release-pop {
+:where(.block-feedback-tracker) .bft-row-release-pop {
     position: absolute;
     bottom: calc(100% + 6px);
     right: 0;
@@ -2141,18 +2148,18 @@ button.bft-badge-resubmitted:focus-visible {
  * ---------------------------------------------------------------------- */
 
 /* Header row — brandtag eyebrow, greeting, subline + refresh button. */
-.bft-dashboard-header {
+:where(.block-feedback-tracker) .bft-dashboard-header {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
 }
 
-.bft-dashboard-header-text {
+:where(.block-feedback-tracker) .bft-dashboard-header-text {
     min-width: 0;
 }
 
-.bft-dashboard-brandtag {
+:where(.block-feedback-tracker) .bft-dashboard-brandtag {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-text-faint);
@@ -2160,7 +2167,7 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-dashboard-h1 {
+:where(.block-feedback-tracker) .bft-dashboard-h1 {
     margin: 0.25rem 0 0;
     font-size: var(--bft-fs-hero);
     font-weight: 800;
@@ -2171,12 +2178,12 @@ button.bft-badge-resubmitted:focus-visible {
     gap: 0.5rem;
 }
 
-.bft-dashboard-wave {
+:where(.block-feedback-tracker) .bft-dashboard-wave {
     color: var(--bft-plum-fg);
     display: inline-flex;
 }
 
-.bft-dashboard-subline {
+:where(.block-feedback-tracker) .bft-dashboard-subline {
     margin-top: 0.4rem;
     font-size: var(--bft-fs-body);
     color: var(--bft-text-muted);
@@ -2186,18 +2193,18 @@ button.bft-badge-resubmitted:focus-visible {
     flex-wrap: wrap;
 }
 
-.bft-dashboard-dot {
+:where(.block-feedback-tracker) .bft-dashboard-dot {
     color: var(--bft-border-soft);
 }
 
-.bft-dashboard-business-chip {
+:where(.block-feedback-tracker) .bft-dashboard-business-chip {
     color: var(--bft-text-muted);
 }
 
 /* Most recent named optional event from the academic calendar, beside the
    business-hours chip in the subline. Plum, so the event reads as
    celebratory rather than alarmist. */
-.bft-dashboard-event-chip {
+:where(.block-feedback-tracker) .bft-dashboard-event-chip {
     color: var(--bft-text);
     background: var(--bft-plum-bg);
     padding: 0.1rem 0.5rem;
@@ -2209,7 +2216,7 @@ button.bft-badge-resubmitted:focus-visible {
     gap: 0.15rem;
 }
 
-.bft-dashboard-event-chip-label {
+:where(.block-feedback-tracker) .bft-dashboard-event-chip-label {
     color: var(--bft-plum-fg);
     font-weight: 700;
     text-transform: uppercase;
@@ -2218,7 +2225,7 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 /* Section eyebrows above the Insights / Priority / Courses blocks. */
-.bft-dashboard-section-eyebrow {
+:where(.block-feedback-tracker) .bft-dashboard-section-eyebrow {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -2228,7 +2235,7 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 /* ---------------------- Responsiveness hero (full) ---------------------- */
-.bft-rh {
+:where(.block-feedback-tracker) .bft-rh {
     position: relative;
     display: grid;
     grid-template-columns: 200px 1fr;
@@ -2241,27 +2248,27 @@ button.bft-badge-resubmitted:focus-visible {
     overflow: hidden;
 }
 
-.bft-rh-sparkle {
+:where(.block-feedback-tracker) .bft-rh-sparkle {
     position: absolute;
     opacity: 0.35;
     color: var(--bft-plum-fg);
 }
 
-.bft-rh-sparkle-1 {
+:where(.block-feedback-tracker) .bft-rh-sparkle-1 {
     top: 18px;
     left: 26px;
 }
-.bft-rh-sparkle-2 {
+:where(.block-feedback-tracker) .bft-rh-sparkle-2 {
     top: 32px;
     right: 220px;
     color: var(--bft-sand-fg);
 }
-.bft-rh-sparkle-3 {
+:where(.block-feedback-tracker) .bft-rh-sparkle-3 {
     bottom: 22px;
     left: 200px;
 }
 
-.bft-rh-collapse {
+:where(.block-feedback-tracker) .bft-rh-collapse {
     position: absolute;
     top: 16px;
     right: 18px;
@@ -2278,7 +2285,7 @@ button.bft-badge-resubmitted:focus-visible {
     letter-spacing: 0.02em;
 }
 
-.bft-rh-ring-col {
+:where(.block-feedback-tracker) .bft-rh-ring-col {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2287,7 +2294,7 @@ button.bft-badge-resubmitted:focus-visible {
     border-right: 1px dashed var(--bft-border-soft);
 }
 
-.bft-rh-ring-wrap {
+:where(.block-feedback-tracker) .bft-rh-ring-wrap {
     position: relative;
     width: 120px;
     height: 120px;
@@ -2296,7 +2303,7 @@ button.bft-badge-resubmitted:focus-visible {
     justify-content: center;
 }
 
-.bft-rh-ring-center {
+:where(.block-feedback-tracker) .bft-rh-ring-center {
     position: absolute;
     inset: 0;
     display: flex;
@@ -2306,28 +2313,28 @@ button.bft-badge-resubmitted:focus-visible {
     gap: 0.125rem;
 }
 
-.bft-rh-score {
+:where(.block-feedback-tracker) .bft-rh-score {
     font-size: var(--bft-fs-score);
     font-weight: 800;
     line-height: 1;
     letter-spacing: -0.08em;
 }
 
-.bft-rh-score-of {
+:where(.block-feedback-tracker) .bft-rh-score-of {
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     color: var(--bft-text-muted);
     letter-spacing: 0.02em;
 }
 
-.bft-rh-copy {
+:where(.block-feedback-tracker) .bft-rh-copy {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     min-width: 0;
 }
 
-.bft-rh-eyebrow {
+:where(.block-feedback-tracker) .bft-rh-eyebrow {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-plum-fg);
@@ -2338,7 +2345,7 @@ button.bft-badge-resubmitted:focus-visible {
     padding-right: 5rem;
 }
 
-.bft-rh-headline {
+:where(.block-feedback-tracker) .bft-rh-headline {
     font-size: 1.25rem;
     font-weight: 800;
     color: var(--bft-text);
@@ -2346,7 +2353,7 @@ button.bft-badge-resubmitted:focus-visible {
     line-height: 1.3;
 }
 
-.bft-rh-body {
+:where(.block-feedback-tracker) .bft-rh-body {
     font-size: var(--bft-fs-body);
     color: var(--bft-text-muted);
     line-height: 1.5;
@@ -2355,7 +2362,7 @@ button.bft-badge-resubmitted:focus-visible {
 
 /* Mini stats: a horizontal row at the foot of the copy column, like the slim
  * hero's stats. Wraps on narrow screens (see the 1024px breakpoint). */
-.bft-rh-mini-col {
+:where(.block-feedback-tracker) .bft-rh-mini-col {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
@@ -2366,19 +2373,19 @@ button.bft-badge-resubmitted:focus-visible {
     border-top: 1px dashed var(--bft-border-soft);
 }
 
-.bft-rh-mini {
+:where(.block-feedback-tracker) .bft-rh-mini {
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
 }
 
-.bft-rh-mini-divider {
+:where(.block-feedback-tracker) .bft-rh-mini-divider {
     width: 1px;
     align-self: stretch;
     background: var(--bft-border-soft);
 }
 
-.bft-rh-mini-label {
+:where(.block-feedback-tracker) .bft-rh-mini-label {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -2386,13 +2393,13 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-rh-mini-val {
+:where(.block-feedback-tracker) .bft-rh-mini-val {
     font-size: var(--bft-fs-stat);
     font-weight: 800;
     line-height: 1;
 }
 
-.bft-rh-mini-sub {
+:where(.block-feedback-tracker) .bft-rh-mini-sub {
     font-size: var(--bft-fs-meta);
     color: var(--bft-text-faint);
 }
@@ -2400,7 +2407,7 @@ button.bft-badge-resubmitted:focus-visible {
 /* Simulator entry button — sits as the trailing item of the mini-stat row
  * (after Trend) when the enable_teacher_simulator flag is on. Mirrors the
  * collapse button's subtle plum chip; centred so it doesn't stretch the row. */
-.bft-rh-sim-link {
+:where(.block-feedback-tracker) .bft-rh-sim-link {
     align-self: center;
     display: inline-flex;
     align-items: center;
@@ -2416,15 +2423,15 @@ button.bft-badge-resubmitted:focus-visible {
     white-space: nowrap;
 }
 
-.bft-rh-sim-link:hover,
-.bft-rh-sim-link:focus-visible {
+:where(.block-feedback-tracker) .bft-rh-sim-link:hover,
+:where(.block-feedback-tracker) .bft-rh-sim-link:focus-visible {
     background: rgba(109, 74, 172, 0.16);
     color: var(--bft-plum-fg);
     text-decoration: none;
 }
 
 /* ---------------------- Responsiveness hero (slim) ---------------------- */
-.bft-rh-slim {
+:where(.block-feedback-tracker) .bft-rh-slim {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -2437,40 +2444,40 @@ button.bft-badge-resubmitted:focus-visible {
     min-height: 78px;
 }
 
-.bft-rh-slim-hero {
+:where(.block-feedback-tracker) .bft-rh-slim-hero {
     display: flex;
     align-items: center;
     gap: 0.625rem;
     flex: 0 0 auto;
 }
 
-.bft-rh-slim-text {
+:where(.block-feedback-tracker) .bft-rh-slim-text {
     display: flex;
     flex-direction: column;
     gap: 0;
     line-height: 1;
 }
 
-.bft-rh-slim-row {
+:where(.block-feedback-tracker) .bft-rh-slim-row {
     display: flex;
     align-items: baseline;
     gap: 0.25rem;
 }
 
-.bft-rh-slim-score {
+:where(.block-feedback-tracker) .bft-rh-slim-score {
     font-size: var(--bft-fs-display);
     font-weight: 800;
     line-height: 1;
     letter-spacing: -0.06em;
 }
 
-.bft-rh-slim-of {
+:where(.block-feedback-tracker) .bft-rh-slim-of {
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     color: var(--bft-text-muted);
 }
 
-.bft-rh-slim-caption {
+:where(.block-feedback-tracker) .bft-rh-slim-caption {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-plum-fg);
@@ -2479,21 +2486,21 @@ button.bft-badge-resubmitted:focus-visible {
     margin-top: 0.2rem;
 }
 
-.bft-rh-slim-divider {
+:where(.block-feedback-tracker) .bft-rh-slim-divider {
     width: 1px;
     align-self: stretch;
     margin: 0.625rem 0;
     background: var(--bft-border-soft);
 }
 
-.bft-rh-slim-stat {
+:where(.block-feedback-tracker) .bft-rh-slim-stat {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
     flex: 0 0 auto;
 }
 
-.bft-rh-slim-stat-label {
+:where(.block-feedback-tracker) .bft-rh-slim-stat-label {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -2501,17 +2508,17 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-rh-slim-stat-val {
+:where(.block-feedback-tracker) .bft-rh-slim-stat-val {
     font-size: var(--bft-fs-stat-sm);
     font-weight: 800;
     line-height: 1;
 }
 
-.bft-rh-slim-spacer {
+:where(.block-feedback-tracker) .bft-rh-slim-spacer {
     flex: 1;
 }
 
-.bft-rh-slim-expand {
+:where(.block-feedback-tracker) .bft-rh-slim-expand {
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
     background: var(--bft-plum-fill);
@@ -2525,20 +2532,20 @@ button.bft-badge-resubmitted:focus-visible {
     flex: 0 0 auto;
 }
 
-.bft-rh-slim-expand:hover,
-.bft-rh-slim-expand:focus-visible {
+:where(.block-feedback-tracker) .bft-rh-slim-expand:hover,
+:where(.block-feedback-tracker) .bft-rh-slim-expand:focus-visible {
     background: var(--bft-plum-fill-hover);
     outline: none;
 }
 
 /* ------------------------ Insight cards (3-up) ------------------------ */
-.bft-insights-row {
+:where(.block-feedback-tracker) .bft-insights-row {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.75rem;
 }
 
-.bft-insight {
+:where(.block-feedback-tracker) .bft-insight {
     padding: 0.875rem 1rem;
     border-radius: 12px;
     border: 1px solid transparent;
@@ -2547,23 +2554,23 @@ button.bft-badge-resubmitted:focus-visible {
     gap: 0.375rem;
 }
 
-.bft-insight-tone-bright {
+:where(.block-feedback-tracker) .bft-insight-tone-bright {
     background: var(--bft-plum-bg);
 }
-.bft-insight-tone-climbing {
+:where(.block-feedback-tracker) .bft-insight-tone-climbing {
     background: var(--bft-band-excellent-bg);
 }
-.bft-insight-tone-watch {
+:where(.block-feedback-tracker) .bft-insight-tone-watch {
     background: var(--bft-sand-bg);
 }
 
-.bft-insight-head {
+:where(.block-feedback-tracker) .bft-insight-head {
     display: flex;
     align-items: center;
     gap: 0.4rem;
 }
 
-.bft-insight-eyebrow {
+:where(.block-feedback-tracker) .bft-insight-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
@@ -2573,59 +2580,59 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-insight-tone-bright .bft-insight-eyebrow {
+:where(.block-feedback-tracker) .bft-insight-tone-bright .bft-insight-eyebrow {
     color: var(--bft-plum-fg);
 }
-.bft-insight-tone-climbing .bft-insight-eyebrow {
+:where(.block-feedback-tracker) .bft-insight-tone-climbing .bft-insight-eyebrow {
     color: var(--bft-band-excellent-fg);
 }
-.bft-insight-tone-watch .bft-insight-eyebrow {
+:where(.block-feedback-tracker) .bft-insight-tone-watch .bft-insight-eyebrow {
     color: var(--bft-sand-fg);
 }
 
-.bft-insight-title {
+:where(.block-feedback-tracker) .bft-insight-title {
     font-size: var(--bft-fs-title);
     font-weight: 800;
     color: var(--bft-text);
     letter-spacing: -0.01em;
 }
 
-.bft-insight-group {
+:where(.block-feedback-tracker) .bft-insight-group {
     margin-top: 0.0625rem;
     font-size: var(--bft-fs-meta);
     font-weight: 600;
     color: var(--bft-text-muted);
 }
 
-.bft-insight-metric {
+:where(.block-feedback-tracker) .bft-insight-metric {
     display: inline-flex;
     align-items: baseline;
     gap: 0.25rem;
 }
 
-.bft-insight-metric-value {
+:where(.block-feedback-tracker) .bft-insight-metric-value {
     font-size: var(--bft-fs-display-sm);
     font-weight: 800;
     line-height: 1;
 }
 
-.bft-insight-tone-bright .bft-insight-metric-value {
+:where(.block-feedback-tracker) .bft-insight-tone-bright .bft-insight-metric-value {
     color: var(--bft-plum-fg);
 }
-.bft-insight-tone-climbing .bft-insight-metric-value {
+:where(.block-feedback-tracker) .bft-insight-tone-climbing .bft-insight-metric-value {
     color: var(--bft-band-excellent-fg);
 }
-.bft-insight-tone-watch .bft-insight-metric-value {
+:where(.block-feedback-tracker) .bft-insight-tone-watch .bft-insight-metric-value {
     color: var(--bft-sand-fg);
 }
 
-.bft-insight-metric-suffix {
+:where(.block-feedback-tracker) .bft-insight-metric-suffix {
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     color: var(--bft-text-muted);
 }
 
-.bft-insight-body {
+:where(.block-feedback-tracker) .bft-insight-body {
     margin-top: 0.125rem;
     font-size: var(--bft-fs-body);
     color: var(--bft-text-muted);
@@ -2633,13 +2640,13 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 /* -------------------- Priority cards (Grade Now) -------------------- */
-.bft-priority-row {
+:where(.block-feedback-tracker) .bft-priority-row {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.875rem;
 }
 
-.bft-priority-card {
+:where(.block-feedback-tracker) .bft-priority-card {
     padding: 1rem 1.125rem;
     border: 1px solid var(--bft-border);
     border-radius: 12px;
@@ -2648,19 +2655,19 @@ button.bft-badge-resubmitted:focus-visible {
     flex-direction: column;
 }
 
-.bft-priority-header {
+:where(.block-feedback-tracker) .bft-priority-header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
 }
 
-.bft-priority-idx {
+:where(.block-feedback-tracker) .bft-priority-idx {
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     color: var(--bft-text-faint);
 }
 
-.bft-priority-title {
+:where(.block-feedback-tracker) .bft-priority-title {
     margin-top: 0.625rem;
     font-size: var(--bft-fs-h3);
     font-weight: 800;
@@ -2668,7 +2675,7 @@ button.bft-badge-resubmitted:focus-visible {
     letter-spacing: -0.01em;
 }
 
-.bft-priority-course {
+:where(.block-feedback-tracker) .bft-priority-course {
     margin-top: 0.25rem;
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
@@ -2677,14 +2684,14 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-priority-student {
+:where(.block-feedback-tracker) .bft-priority-student {
     margin-top: 0.75rem;
     display: flex;
     align-items: center;
     gap: 0.5rem;
 }
 
-.bft-priority-avatar {
+:where(.block-feedback-tracker) .bft-priority-avatar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2698,18 +2705,18 @@ button.bft-badge-resubmitted:focus-visible {
     flex: 0 0 auto;
 }
 
-.bft-priority-name {
+:where(.block-feedback-tracker) .bft-priority-name {
     font-size: var(--bft-fs-body);
     color: var(--bft-text);
 }
 
-.bft-priority-waits {
+:where(.block-feedback-tracker) .bft-priority-waits {
     display: flex;
     gap: 1.125rem;
     margin-top: 0.875rem;
 }
 
-.bft-priority-wait-label {
+:where(.block-feedback-tracker) .bft-priority-wait-label {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     color: var(--bft-text-muted);
@@ -2717,7 +2724,7 @@ button.bft-badge-resubmitted:focus-visible {
     text-transform: uppercase;
 }
 
-.bft-priority-wait-value {
+:where(.block-feedback-tracker) .bft-priority-wait-value {
     font-size: var(--bft-fs-display-sm);
     font-weight: 800;
     line-height: 1;
@@ -2725,11 +2732,11 @@ button.bft-badge-resubmitted:focus-visible {
     margin-top: 0.2rem;
 }
 
-.bft-priority-wait-muted {
+:where(.block-feedback-tracker) .bft-priority-wait-muted {
     color: var(--bft-text-muted);
 }
 
-.bft-priority-cta {
+:where(.block-feedback-tracker) .bft-priority-cta {
     margin-top: 0.875rem;
     padding: 0.5rem 0.875rem;
     border-radius: 8px;
@@ -2742,8 +2749,8 @@ button.bft-badge-resubmitted:focus-visible {
     align-self: flex-start;
 }
 
-.bft-priority-cta:hover,
-.bft-priority-cta:focus-visible {
+:where(.block-feedback-tracker) .bft-priority-cta:hover,
+:where(.block-feedback-tracker) .bft-priority-cta:focus-visible {
     background: var(--bft-plum-fill-hover);
     color: var(--bft-on-fill);
     outline: none;
@@ -2754,7 +2761,7 @@ button.bft-badge-resubmitted:focus-visible {
 /* Visually-hidden but kept in the accessibility tree (column headers, the
  * action-column caption). Self-contained so it does not depend on core's
  * Bootstrap .sr-only being present on the page. */
-.bft-sr-only {
+:where(.block-feedback-tracker) .bft-sr-only {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -2766,12 +2773,12 @@ button.bft-badge-resubmitted:focus-visible {
     border: 0;
 }
 
-.bft-courses-table-wrap {
+:where(.block-feedback-tracker) .bft-courses-table-wrap {
     /* Safety net for mid-width viewports before the card reflow kicks in. */
     overflow-x: auto;
 }
 
-.bft-courses-table {
+:where(.block-feedback-tracker) .bft-courses-table {
     border: 1px solid var(--bft-border);
     border-radius: 12px;
     overflow: hidden;
@@ -2780,7 +2787,7 @@ button.bft-badge-resubmitted:focus-visible {
     width: 100%;
 }
 
-.bft-courses-table thead th {
+:where(.block-feedback-tracker) .bft-courses-table thead th {
     padding: 0.75rem 1.125rem;
     background: var(--bft-surface-alt);
     border-bottom: 1px solid var(--bft-border-soft);
@@ -2792,67 +2799,67 @@ button.bft-badge-resubmitted:focus-visible {
     text-align: left;
 }
 
-.bft-courses-row td {
+:where(.block-feedback-tracker) .bft-courses-row td {
     padding: 0.875rem 1.125rem;
     border-top: 1px solid var(--bft-border-soft);
     vertical-align: middle;
 }
 
-.bft-courses-name {
+:where(.block-feedback-tracker) .bft-courses-name {
     font-size: var(--bft-fs-title);
     font-weight: 700;
     color: var(--bft-text);
     letter-spacing: 0.01em;
 }
 
-.bft-courses-name-link {
+:where(.block-feedback-tracker) .bft-courses-name-link {
     color: inherit;
     text-decoration: none;
 }
 
-.bft-courses-name-link:hover,
-.bft-courses-name-link:focus {
+:where(.block-feedback-tracker) .bft-courses-name-link:hover,
+:where(.block-feedback-tracker) .bft-courses-name-link:focus {
     color: var(--bft-band-good-fg);
     text-decoration: underline;
 }
 
-.bft-courses-score-inline {
+:where(.block-feedback-tracker) .bft-courses-score-inline {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
 }
 
-.bft-courses-score-of {
+:where(.block-feedback-tracker) .bft-courses-score-of {
     font-size: var(--bft-fs-meta);
     font-weight: 700;
     color: var(--bft-text-faint);
 }
 
-.bft-courses-num {
+:where(.block-feedback-tracker) .bft-courses-num {
     font-size: 0.9rem;
     font-feature-settings: "tnum";
     text-align: right;
 }
 
-.bft-courses-num-alert {
+:where(.block-feedback-tracker) .bft-courses-num-alert {
     color: var(--bft-band-critical-fg);
     font-weight: 700;
 }
 
-.bft-courses-dim {
+:where(.block-feedback-tracker) .bft-courses-dim {
     color: var(--bft-text-faint);
 }
 
-.bft-courses-spark {
+:where(.block-feedback-tracker) .bft-courses-spark {
     line-height: 0;
 }
 
-.bft-courses-cta {
+:where(.block-feedback-tracker) .bft-courses-cta {
     width: 80px;
     text-align: right;
 }
 
-.bft-courses-open {
+:where(.block-feedback-tracker) .bft-courses-open {
     display: inline-block;
     padding: 0.4rem 0.875rem;
     border-radius: 6px;
@@ -2866,8 +2873,8 @@ button.bft-badge-resubmitted:focus-visible {
     cursor: pointer;
 }
 
-.bft-courses-open:hover,
-.bft-courses-open:focus-visible {
+:where(.block-feedback-tracker) .bft-courses-open:hover,
+:where(.block-feedback-tracker) .bft-courses-open:focus-visible {
     background: var(--bft-surface-alt);
     text-decoration: none;
     color: var(--bft-text);
@@ -2875,13 +2882,13 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 /* -------------------- Site benchmarks (SchoolComparison.js) -------------------- */
-.bft-comparison-heading {
+:where(.block-feedback-tracker) .bft-comparison-heading {
     margin: 0;
     font-size: var(--bft-fs-eyebrow);
     line-height: 1.4;
 }
 
-.bft-comparison-toggle {
+:where(.block-feedback-tracker) .bft-comparison-toggle {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
@@ -2897,11 +2904,11 @@ button.bft-badge-resubmitted:focus-visible {
     cursor: pointer;
 }
 
-.bft-comparison-toggle:hover {
+:where(.block-feedback-tracker) .bft-comparison-toggle:hover {
     color: var(--bft-text);
 }
 
-.bft-comparison-body {
+:where(.block-feedback-tracker) .bft-comparison-body {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -2909,25 +2916,25 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 /* The flex display above would otherwise override the hidden attribute. */
-.bft-comparison-body[hidden] {
+:where(.block-feedback-tracker) .bft-comparison-body[hidden] {
     display: none;
 }
 
-.bft-comparison-subtitle,
-.bft-comparison-note {
+:where(.block-feedback-tracker) .bft-comparison-subtitle,
+:where(.block-feedback-tracker) .bft-comparison-note {
     margin: 0;
     color: var(--bft-text-muted);
     font-size: var(--bft-fs-body);
     line-height: 1.5;
 }
 
-.bft-comparison-windows {
+:where(.block-feedback-tracker) .bft-comparison-windows {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
 }
 
-.bft-comparison-window {
+:where(.block-feedback-tracker) .bft-comparison-window {
     padding: 0.3rem 0.8rem;
     border: 1px solid var(--bft-border);
     border-radius: 999px;
@@ -2938,56 +2945,56 @@ button.bft-badge-resubmitted:focus-visible {
     cursor: pointer;
 }
 
-.bft-comparison-window:hover {
+:where(.block-feedback-tracker) .bft-comparison-window:hover {
     background: var(--bft-surface-dim);
 }
 
-.bft-comparison-window.is-active {
+:where(.block-feedback-tracker) .bft-comparison-window.is-active {
     background: var(--bft-band-good-bg);
     border-color: var(--bft-band-good-fg);
     color: var(--bft-band-good-fg);
     font-weight: 700;
 }
 
-.bft-comparison-chart {
+:where(.block-feedback-tracker) .bft-comparison-chart {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem 1rem;
 }
 
-.bft-comparison-chart .bft-sparkline {
+:where(.block-feedback-tracker) .bft-comparison-chart .bft-sparkline {
     flex: 1 1 240px;
     height: 48px;
     max-width: 360px;
 }
 
-.bft-comparison-chart-caption {
+:where(.block-feedback-tracker) .bft-comparison-chart-caption {
     color: var(--bft-text-muted);
     font-size: var(--bft-fs-meta);
 }
 
 /* Scrolls sideways on a narrow screen; focusable so a keyboard can scroll it. */
-.bft-comparison-table-wrap {
+:where(.block-feedback-tracker) .bft-comparison-table-wrap {
     overflow-x: auto;
     border: 1px solid var(--bft-border);
     border-radius: 12px;
     background: var(--bft-surface);
 }
 
-.bft-comparison-table-wrap:focus-visible {
+:where(.block-feedback-tracker) .bft-comparison-table-wrap:focus-visible {
     outline: 2px solid var(--bft-brand);
     outline-offset: 2px;
 }
 
-.bft-comparison-table {
+:where(.block-feedback-tracker) .bft-comparison-table {
     width: 100%;
     border-collapse: collapse;
     color: var(--bft-text);
     font-size: var(--bft-fs-body);
 }
 
-.bft-comparison-caption {
+:where(.block-feedback-tracker) .bft-comparison-caption {
     caption-side: top;
     padding: 0.75rem 1rem 0.5rem;
     color: var(--bft-text);
@@ -2995,7 +3002,7 @@ button.bft-badge-resubmitted:focus-visible {
     text-align: left;
 }
 
-.bft-comparison-table thead th {
+:where(.block-feedback-tracker) .bft-comparison-table thead th {
     padding: 0.6rem 1rem;
     background: var(--bft-surface-alt);
     border-bottom: 1px solid var(--bft-border-soft);
@@ -3008,19 +3015,19 @@ button.bft-badge-resubmitted:focus-visible {
     vertical-align: bottom;
 }
 
-.bft-comparison-table tbody th,
-.bft-comparison-table tbody td {
+:where(.block-feedback-tracker) .bft-comparison-table tbody th,
+:where(.block-feedback-tracker) .bft-comparison-table tbody td {
     padding: 0.5rem 1rem;
     border-top: 1px solid var(--bft-border-soft);
 }
 
-.bft-comparison-table tbody th {
+:where(.block-feedback-tracker) .bft-comparison-table tbody th {
     font-weight: 600;
     text-align: left;
     white-space: nowrap;
 }
 
-.bft-comparison-table .bft-comparison-num {
+:where(.block-feedback-tracker) .bft-comparison-table .bft-comparison-num {
     text-align: right;
     white-space: nowrap;
 }
@@ -3032,64 +3039,64 @@ button.bft-badge-resubmitted:focus-visible {
  * drop the vertical dividers (which read wrong once items wrap) and neutralise
  * the flex spacer, keeping the expand button right-aligned via margin-auto. */
 @media (max-width: 1154px) {
-    .bft-rh-slim-divider {
+    :where(.block-feedback-tracker) .bft-rh-slim-divider {
         display: none;
     }
-    .bft-rh-slim-spacer {
+    :where(.block-feedback-tracker) .bft-rh-slim-spacer {
         display: none;
     }
-    .bft-rh-slim-expand {
+    :where(.block-feedback-tracker) .bft-rh-slim-expand {
         margin-left: auto;
     }
 }
 
 @media (max-width: 1024px) {
-    .bft-rh {
+    :where(.block-feedback-tracker) .bft-rh {
         grid-template-columns: 1fr;
         gap: 1.25rem;
     }
-    .bft-rh-ring-col {
+    :where(.block-feedback-tracker) .bft-rh-ring-col {
         border-right: 0;
         padding-right: 0;
     }
-    .bft-rh-eyebrow {
+    :where(.block-feedback-tracker) .bft-rh-eyebrow {
         /* Ring stacks above the copy now, so the collapse button no longer
          * overlaps the eyebrow — drop the reserved clearance. */
         padding-right: 0;
     }
-    .bft-rh-mini-col {
+    :where(.block-feedback-tracker) .bft-rh-mini-col {
         gap: 1rem;
     }
-    .bft-rh-mini-divider {
+    :where(.block-feedback-tracker) .bft-rh-mini-divider {
         display: none;
     }
-    .bft-insights-row,
-    .bft-priority-row {
+    :where(.block-feedback-tracker) .bft-insights-row,
+    :where(.block-feedback-tracker) .bft-priority-row {
         grid-template-columns: 1fr 1fr;
     }
 }
 
 @media (max-width: 640px) {
-    .bft-dashboard {
+    :where(.block-feedback-tracker) .bft-dashboard {
         padding: 1rem;
     }
-    .bft-dashboard-h1 {
+    :where(.block-feedback-tracker) .bft-dashboard-h1 {
         font-size: 1.5rem;
     }
-    .bft-insights-row,
-    .bft-priority-row {
+    :where(.block-feedback-tracker) .bft-insights-row,
+    :where(.block-feedback-tracker) .bft-priority-row {
         grid-template-columns: 1fr;
     }
 
     /* Courses table → stacked cards. The native <table> keeps its semantics:
      * the column headers stay in the accessibility tree (clipped, not
      * display:none) and each cell shows its column caption from data-label. */
-    .bft-courses-table {
+    :where(.block-feedback-tracker) .bft-courses-table {
         border: 0;
         background: transparent;
         border-radius: 0;
     }
-    .bft-courses-table thead {
+    :where(.block-feedback-tracker) .bft-courses-table thead {
         position: absolute;
         width: 1px;
         height: 1px;
@@ -3100,7 +3107,7 @@ button.bft-badge-resubmitted:focus-visible {
         white-space: nowrap;
         border: 0;
     }
-    .bft-courses-row {
+    :where(.block-feedback-tracker) .bft-courses-row {
         display: block;
         margin-bottom: 0.75rem;
         border: 1px solid var(--bft-border);
@@ -3108,7 +3115,7 @@ button.bft-badge-resubmitted:focus-visible {
         background: var(--bft-surface);
         overflow: hidden;
     }
-    .bft-courses-row td {
+    :where(.block-feedback-tracker) .bft-courses-row td {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -3117,7 +3124,7 @@ button.bft-badge-resubmitted:focus-visible {
         padding: 0.55rem 0.875rem;
         border-top: 1px solid var(--bft-border-soft);
     }
-    .bft-courses-row td[data-label]::before {
+    :where(.block-feedback-tracker) .bft-courses-row td[data-label]::before {
         content: attr(data-label);
         flex: 0 0 auto;
         font-size: var(--bft-fs-eyebrow, 0.6875rem);
@@ -3128,35 +3135,35 @@ button.bft-badge-resubmitted:focus-visible {
         text-align: left;
     }
     /* Course name reads as the card title — full width, left-aligned, no caption. */
-    .bft-courses-row td.bft-courses-name {
+    :where(.block-feedback-tracker) .bft-courses-row td.bft-courses-name {
         justify-content: flex-start;
         border-top: 0;
         font-size: var(--bft-fs-title, 0.9375rem);
     }
-    .bft-courses-spark .bft-sparkline {
+    :where(.block-feedback-tracker) .bft-courses-spark .bft-sparkline {
         max-width: 160px;
     }
-    .bft-courses-cta {
+    :where(.block-feedback-tracker) .bft-courses-cta {
         width: auto;
         justify-content: flex-end;
     }
 }
 
 /* ===== Score simulator (pages/score_simulator.php) ===== */
-.bft-sim {
+:where(.block-feedback-tracker) .bft-sim {
     font-family: var(--bft-font-display);
     color: var(--bft-text);
     max-width: 1100px;
     margin: 0 auto;
 }
-.bft-sim-intro {
+:where(.block-feedback-tracker) .bft-sim-intro {
     background: var(--bft-surface-alt);
     border: 1px solid var(--bft-border);
     border-radius: 14px;
     padding: 1.25rem 1.5rem;
     margin-bottom: 1.5rem;
 }
-.bft-sim-intro-eyebrow {
+:where(.block-feedback-tracker) .bft-sim-intro-eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-size: 0.72rem;
@@ -3164,18 +3171,18 @@ button.bft-badge-resubmitted:focus-visible {
     color: var(--bft-band-excellent-fg);
     margin-bottom: 0.35rem;
 }
-.bft-sim-intro-heading {
+:where(.block-feedback-tracker) .bft-sim-intro-heading {
     font-size: 1.4rem;
     font-weight: 800;
     margin: 0 0 0.5rem;
 }
-.bft-sim-intro-body {
+:where(.block-feedback-tracker) .bft-sim-intro-body {
     color: var(--bft-text-muted);
     line-height: 1.5;
     margin: 0 0 1rem;
     max-width: 70ch;
 }
-.bft-sim-criteria {
+:where(.block-feedback-tracker) .bft-sim-criteria {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -3183,7 +3190,7 @@ button.bft-badge-resubmitted:focus-visible {
     gap: 0.5rem;
     grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
-.bft-sim-criteria li {
+:where(.block-feedback-tracker) .bft-sim-criteria li {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
@@ -3192,32 +3199,32 @@ button.bft-badge-resubmitted:focus-visible {
     border-radius: 10px;
     padding: 0.6rem 0.75rem;
 }
-.bft-sim-criteria strong {
+:where(.block-feedback-tracker) .bft-sim-criteria strong {
     font-size: 0.85rem;
 }
-.bft-sim-criteria span {
+:where(.block-feedback-tracker) .bft-sim-criteria span {
     font-size: 0.8rem;
     color: var(--bft-text-muted);
     line-height: 1.4;
 }
-.bft-sim-grid {
+:where(.block-feedback-tracker) .bft-sim-grid {
     display: grid;
     grid-template-columns: 1.3fr 1fr;
     gap: 1.5rem;
     align-items: start;
 }
-.bft-sim-controls {
+:where(.block-feedback-tracker) .bft-sim-controls {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
 }
-.bft-sim-panel {
+:where(.block-feedback-tracker) .bft-sim-panel {
     background: var(--bft-surface);
     border: 1px solid var(--bft-border);
     border-radius: 14px;
     padding: 1rem 1.25rem;
 }
-.bft-sim-panel-title {
+:where(.block-feedback-tracker) .bft-sim-panel-title {
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -3225,12 +3232,12 @@ button.bft-badge-resubmitted:focus-visible {
     font-weight: 700;
     margin: 0 0 0.75rem;
 }
-.bft-sim-scenarios {
+:where(.block-feedback-tracker) .bft-sim-scenarios {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
 }
-.bft-sim-scn {
+:where(.block-feedback-tracker) .bft-sim-scn {
     border: 1px solid var(--bft-border);
     background: var(--bft-surface-alt);
     color: var(--bft-text);
@@ -3240,52 +3247,52 @@ button.bft-badge-resubmitted:focus-visible {
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
 }
-.bft-sim-scn:hover {
+:where(.block-feedback-tracker) .bft-sim-scn:hover {
     background: var(--bft-surface-dim);
 }
-.bft-sim-scn.is-active {
+:where(.block-feedback-tracker) .bft-sim-scn.is-active {
     background: var(--bft-band-excellent-bg);
     border-color: var(--bft-band-excellent-fg);
     color: var(--bft-band-excellent-fg);
     font-weight: 700;
 }
-.bft-sim-slider {
+:where(.block-feedback-tracker) .bft-sim-slider {
     display: grid;
     grid-template-columns: 1fr 1.2fr auto;
     align-items: center;
     gap: 0.75rem;
     padding: 0.35rem 0;
 }
-.bft-sim-slider-label {
+:where(.block-feedback-tracker) .bft-sim-slider-label {
     font-size: 0.85rem;
 }
-.bft-sim-slider input[type="range"] {
+:where(.block-feedback-tracker) .bft-sim-slider input[type="range"] {
     width: 100%;
     accent-color: var(--bft-band-good-fg);
 }
-.bft-sim-slider-val {
+:where(.block-feedback-tracker) .bft-sim-slider-val {
     font-size: 0.85rem;
     text-align: right;
     min-width: 3.5rem;
 }
 /* Directional read-out for the trend slider: arrow + unsigned magnitude over a
  * small faster/slower/stable caption, coloured by the shared speed tone. */
-.bft-sim-slider-valwrap {
+:where(.block-feedback-tracker) .bft-sim-slider-valwrap {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     line-height: 1.15;
     min-width: 3.5rem;
 }
-.bft-sim-slider-hint {
+:where(.block-feedback-tracker) .bft-sim-slider-hint {
     font-size: 0.68rem;
     font-weight: 600;
     text-transform: lowercase;
 }
-.bft-sim-slider-off {
+:where(.block-feedback-tracker) .bft-sim-slider-off {
     color: var(--bft-text-muted);
 }
-.bft-sim-check {
+:where(.block-feedback-tracker) .bft-sim-check {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -3293,7 +3300,7 @@ button.bft-badge-resubmitted:focus-visible {
     color: var(--bft-text-muted);
     margin: 0.5rem 0;
 }
-.bft-sim-weights-foot {
+:where(.block-feedback-tracker) .bft-sim-weights-foot {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -3302,11 +3309,11 @@ button.bft-badge-resubmitted:focus-visible {
     padding-top: 0.75rem;
     border-top: 1px solid var(--bft-border-soft);
 }
-.bft-sim-weights-note {
+:where(.block-feedback-tracker) .bft-sim-weights-note {
     font-size: 0.78rem;
     color: var(--bft-band-regular-fg);
 }
-.bft-sim-reset {
+:where(.block-feedback-tracker) .bft-sim-reset {
     margin-left: auto;
     border: 1px solid var(--bft-border);
     background: var(--bft-surface-alt);
@@ -3316,10 +3323,10 @@ button.bft-badge-resubmitted:focus-visible {
     font-size: 0.8rem;
     cursor: pointer;
 }
-.bft-sim-reset:hover {
+:where(.block-feedback-tracker) .bft-sim-reset:hover {
     background: var(--bft-surface-dim);
 }
-.bft-sim-result-sticky {
+:where(.block-feedback-tracker) .bft-sim-result-sticky {
     position: sticky;
     top: 1rem;
     background: var(--bft-surface);
@@ -3327,7 +3334,7 @@ button.bft-badge-resubmitted:focus-visible {
     border-radius: 14px;
     padding: 1.25rem;
 }
-.bft-sim-gauge {
+:where(.block-feedback-tracker) .bft-sim-gauge {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3337,53 +3344,53 @@ button.bft-badge-resubmitted:focus-visible {
     margin-bottom: 1rem;
     background: var(--bft-band-pending-bg);
 }
-.bft-sim-tone-excellent {
+:where(.block-feedback-tracker) .bft-sim-tone-excellent {
     background: var(--bft-band-excellent-bg);
 }
-.bft-sim-tone-good {
+:where(.block-feedback-tracker) .bft-sim-tone-good {
     background: var(--bft-band-good-bg);
 }
-.bft-sim-tone-regular {
+:where(.block-feedback-tracker) .bft-sim-tone-regular {
     background: var(--bft-band-regular-bg);
 }
-.bft-sim-tone-critical {
+:where(.block-feedback-tracker) .bft-sim-tone-critical {
     background: var(--bft-band-critical-bg);
 }
-.bft-sim-tone-pending,
-.bft-sim-tone-nodata {
+:where(.block-feedback-tracker) .bft-sim-tone-pending,
+:where(.block-feedback-tracker) .bft-sim-tone-nodata {
     background: var(--bft-band-pending-bg);
 }
-.bft-sim-breakdown {
+:where(.block-feedback-tracker) .bft-sim-breakdown {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.85rem;
 }
-.bft-sim-breakdown th,
-.bft-sim-breakdown td {
+:where(.block-feedback-tracker) .bft-sim-breakdown th,
+:where(.block-feedback-tracker) .bft-sim-breakdown td {
     padding: 0.35rem 0.5rem;
     border-bottom: 1px solid var(--bft-border-soft);
     text-align: left;
 }
-.bft-sim-breakdown .bft-breakdown-num {
+:where(.block-feedback-tracker) .bft-sim-breakdown .bft-breakdown-num {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
-.bft-sim-breakdown thead th {
+:where(.block-feedback-tracker) .bft-sim-breakdown thead th {
     color: var(--bft-text-muted);
     font-weight: 600;
     font-size: 0.78rem;
 }
-.bft-sim-breakdown tfoot th {
+:where(.block-feedback-tracker) .bft-sim-breakdown tfoot th {
     border-top: 2px solid var(--bft-border);
     border-bottom: none;
     font-weight: 800;
 }
-.bft-sim-term-off {
+:where(.block-feedback-tracker) .bft-sim-term-off {
     color: var(--bft-text-muted);
     font-style: italic;
 }
-.bft-sim-nodata,
-.bft-sim-foot-note {
+:where(.block-feedback-tracker) .bft-sim-nodata,
+:where(.block-feedback-tracker) .bft-sim-foot-note {
     font-size: 0.82rem;
     color: var(--bft-text-muted);
     line-height: 1.5;
@@ -3391,7 +3398,7 @@ button.bft-badge-resubmitted:focus-visible {
 }
 
 @media (max-width: 880px) {
-    .bft-sim-grid {
+    :where(.block-feedback-tracker) .bft-sim-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -3402,14 +3409,14 @@ button.bft-badge-resubmitted:focus-visible {
  * ==================================================================== */
 
 /* Optional chips in the reused dashboard hero (SLA %, at-risk, critical). */
-.bft-rh-chips {
+:where(.block-feedback-tracker) .bft-rh-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
     margin-top: 0.75rem;
 }
 
-.bft-rh-chip {
+:where(.block-feedback-tracker) .bft-rh-chip {
     display: inline-flex;
     align-items: center;
     padding: 0.2rem 0.6rem;
@@ -3421,32 +3428,32 @@ button.bft-badge-resubmitted:focus-visible {
     border: 1px solid var(--bft-border);
 }
 
-.bft-rh-chip-excellent {
+:where(.block-feedback-tracker) .bft-rh-chip-excellent {
     color: var(--bft-band-excellent-fg);
     border-color: var(--bft-band-excellent-fg);
 }
 
-.bft-rh-chip-good {
+:where(.block-feedback-tracker) .bft-rh-chip-good {
     color: var(--bft-band-good-fg);
     border-color: var(--bft-band-good-fg);
 }
 
-.bft-rh-chip-regular {
+:where(.block-feedback-tracker) .bft-rh-chip-regular {
     color: var(--bft-band-regular-fg);
     border-color: var(--bft-band-regular-fg);
 }
 
-.bft-rh-chip-critical {
+:where(.block-feedback-tracker) .bft-rh-chip-critical {
     color: var(--bft-band-critical-fg);
     border-color: var(--bft-band-critical-fg);
 }
 
-.bft-rh-chip-pending {
+:where(.block-feedback-tracker) .bft-rh-chip-pending {
     color: var(--bft-band-pending-fg);
 }
 
 /* Distribution bar: the button that switches between the pending and graded views. */
-.bft-dist-modebtn {
+:where(.block-feedback-tracker) .bft-dist-modebtn {
     display: inline-flex;
     align-items: center;
     align-self: stretch;
@@ -3465,12 +3472,12 @@ button.bft-badge-resubmitted:focus-visible {
     cursor: pointer;
 }
 
-.bft-dist-modebtn:hover {
+:where(.block-feedback-tracker) .bft-dist-modebtn:hover {
     border-color: var(--bft-text-muted);
     color: var(--bft-text);
 }
 
-.bft-dist-modebtn-active {
+:where(.block-feedback-tracker) .bft-dist-modebtn-active {
     background: var(--bft-text);
     border-style: solid;
     border-color: var(--bft-text);
@@ -3480,14 +3487,14 @@ button.bft-badge-resubmitted:focus-visible {
 /* Keep the active (graded) toggle legible on hover — the base hover rule
  * darkens the text, which has no contrast on the dark active background. The
  * underline marks the hover without fading the pair. */
-.bft-dist-modebtn-active:hover {
+:where(.block-feedback-tracker) .bft-dist-modebtn-active:hover {
     color: var(--bft-surface);
     border-color: var(--bft-text);
     text-decoration: underline;
 }
 
 /* Last 30 academic days heatmap. */
-.bft-acaday {
+:where(.block-feedback-tracker) .bft-acaday {
     background: var(--bft-surface);
     border: 1px solid var(--bft-border);
     border-radius: 12px;
@@ -3495,7 +3502,7 @@ button.bft-badge-resubmitted:focus-visible {
     margin: 0 0 1rem;
 }
 
-.bft-acaday-head {
+:where(.block-feedback-tracker) .bft-acaday-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -3504,7 +3511,7 @@ button.bft-badge-resubmitted:focus-visible {
     margin-bottom: 0.75rem;
 }
 
-.bft-acaday-title {
+:where(.block-feedback-tracker) .bft-acaday-title {
     font-size: var(--bft-fs-eyebrow);
     font-weight: 700;
     text-transform: uppercase;
@@ -3512,13 +3519,13 @@ button.bft-badge-resubmitted:focus-visible {
     color: var(--bft-text-muted);
 }
 
-.bft-acaday-legend {
+:where(.block-feedback-tracker) .bft-acaday-legend {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem;
 }
 
-.bft-acaday-legend-item {
+:where(.block-feedback-tracker) .bft-acaday-legend-item {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
@@ -3526,20 +3533,20 @@ button.bft-badge-resubmitted:focus-visible {
     color: var(--bft-text-muted);
 }
 
-.bft-acaday-swatch {
+:where(.block-feedback-tracker) .bft-acaday-swatch {
     display: inline-block;
     width: 12px;
     height: 12px;
     border-radius: 3px;
 }
 
-.bft-acaday-grid {
+:where(.block-feedback-tracker) .bft-acaday-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
 }
 
-.bft-acaday-cell {
+:where(.block-feedback-tracker) .bft-acaday-cell {
     display: inline-block;
     width: 26px;
     height: 26px;
@@ -3547,57 +3554,57 @@ button.bft-badge-resubmitted:focus-visible {
     background: var(--bft-surface-dim);
 }
 
-.bft-acaday-ongoal {
+:where(.block-feedback-tracker) .bft-acaday-ongoal {
     background: var(--bft-band-excellent-fg);
 }
 
-.bft-acaday-good {
+:where(.block-feedback-tracker) .bft-acaday-good {
     background: var(--bft-band-good-fg);
 }
 
-.bft-acaday-regular {
+:where(.block-feedback-tracker) .bft-acaday-regular {
     background: var(--bft-band-regular-fg);
 }
 
-.bft-acaday-nodata {
+:where(.block-feedback-tracker) .bft-acaday-nodata {
     background: var(--bft-surface-dim);
     border: 1px solid var(--bft-border);
 }
 
-.bft-acaday-paused {
+:where(.block-feedback-tracker) .bft-acaday-paused {
     background: repeating-linear-gradient(45deg, #cbd5e1 0 2px, #e2e8f0 2px 4px);
 }
 
-.bft-acaday-summary {
+:where(.block-feedback-tracker) .bft-acaday-summary {
     margin-top: 0.75rem;
     font-size: var(--bft-fs-body);
     color: var(--bft-text-muted);
     line-height: 1.5;
 }
 
-.bft-acaday-summary strong {
+:where(.block-feedback-tracker) .bft-acaday-summary strong {
     color: var(--bft-text);
 }
 
-.bft-acaday-skeleton {
+:where(.block-feedback-tracker) .bft-acaday-skeleton {
     height: 26px;
     border-radius: 6px;
     background: linear-gradient(90deg, var(--bft-surface-dim), var(--bft-surface-alt), var(--bft-surface-dim));
 }
 
-.bft-acaday-loadnote {
+:where(.block-feedback-tracker) .bft-acaday-loadnote {
     margin-top: 0.5rem;
     font-size: var(--bft-fs-meta);
     color: var(--bft-text-faint);
 }
 
 /* Report table action column: the Grade / Review link. */
-.bft-report-col-action {
+:where(.block-feedback-tracker) .bft-report-col-action {
     text-align: right;
     white-space: nowrap;
 }
 
-.bft-report-action-grade {
+:where(.block-feedback-tracker) .bft-report-action-grade {
     display: inline-flex;
     align-items: center;
     padding: 0.3rem 0.7rem;
@@ -3610,8 +3617,8 @@ button.bft-badge-resubmitted:focus-visible {
     white-space: nowrap;
 }
 
-.bft-report-action-grade:hover,
-.bft-report-action-grade:focus {
+:where(.block-feedback-tracker) .bft-report-action-grade:hover,
+:where(.block-feedback-tracker) .bft-report-action-grade:focus {
     color: var(--bft-on-fill);
     text-decoration: underline;
 }
@@ -3622,43 +3629,43 @@ button.bft-badge-resubmitted:focus-visible {
  * elements: .btn sets display: inline-block at equal specificity and the theme
  * CSS loads after plugin CSS, so an unscoped .bft-hidden would lose on source
  * order. Moodle's stylelint config forbids !important. */
-.bft-bulk .bft-bulk-row-collapsed {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-row-collapsed {
     display: none;
 }
 
-.bft-bulk .bft-hidden {
+:where(.block-feedback-tracker) .bft-bulk .bft-hidden {
     display: none;
 }
 
-.bft-bulk-count {
+:where(.block-feedback-tracker) .bft-bulk-count {
     font-family: var(--bft-font-mono);
     font-weight: 700;
 }
 
-.bft-bulk-shortname {
+:where(.block-feedback-tracker) .bft-bulk-shortname {
     display: block;
     font-size: 0.75rem;
     color: var(--bft-text-muted);
 }
 
-.bft-bulk-hidden {
+:where(.block-feedback-tracker) .bft-bulk-hidden {
     background: #e2e8f0;
     color: #475569;
     margin-left: 0.35rem;
 }
 
-.bft-bulk-tablewrap {
+:where(.block-feedback-tracker) .bft-bulk-tablewrap {
     overflow-x: auto;
 }
 
-.bft-bulk-confirm {
+:where(.block-feedback-tracker) .bft-bulk-confirm {
     max-width: 22rem;
     margin: 1rem 0;
 }
 
 /* The queue and recent-runs panels sit above the filter, so an administrator
  * sees what is already on its way before choosing anything new. */
-.bft-bulk .bft-bulk-panel {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-panel {
     border: 1px solid var(--bft-border);
     border-radius: 0.5rem;
     background: var(--bft-surface-alt);
@@ -3667,26 +3674,26 @@ button.bft-badge-resubmitted:focus-visible {
     margin-bottom: 1rem;
 }
 
-.bft-bulk .bft-bulk-queue {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-queue {
     border-left: 4px solid var(--bft-band-pending-edge);
 }
 
-.bft-bulk .bft-bulk-panel-title {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-panel-title {
     font-size: 1rem;
     font-weight: 700;
     margin: 0 0 0.35rem;
 }
 
-.bft-bulk .bft-bulk-panel p {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-panel p {
     margin-bottom: 0.35rem;
 }
 
-.bft-bulk .bft-bulk-queue-list,
-.bft-bulk .bft-bulk-recent-list {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-queue-list,
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-recent-list {
     margin: 0.35rem 0 0;
     padding-left: 1.25rem;
 }
 
-.bft-bulk .bft-bulk-selectall {
+:where(.block-feedback-tracker) .bft-bulk .bft-bulk-selectall {
     margin: 0.5rem 0;
 }

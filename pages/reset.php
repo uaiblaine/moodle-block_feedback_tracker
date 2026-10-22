@@ -34,6 +34,7 @@ $PAGE->set_context($context);
 $PAGE->set_title(get_string('reset_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('reset_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 $form = new \block_feedback_tracker\form\reset_form($PAGE->url);
 $done = false;

@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The Moodle plugins directory's submission guidelines, checked by a test (version
+`2024100705`).
+
+### Added
+- `LICENSE` beside `COPYING.txt`, both the GPL v3 text: the directory asks for a
+  licence file in the package, and the MAH completeness check still asks for
+  `COPYING.txt`.
+- `tests/marketplace_readiness_test.php`, the fleet's file-reading check of the
+  guidelines: licence files shipped, English-only package, data-only lang files,
+  a README naming every table, capability and dependency, settings stored as
+  `block_feedback_tracker/<name>`, every stylesheet selector scoped to the
+  plugin, the GPL boilerplate in every source file, and the privacy cover of any
+  core row stamped with the component (the plugin writes none).
+- README sections *Settings*, *Capabilities*, *Data stored* (every table, what a
+  row holds, what removes it, and what a data request exports or deletes) and
+  *Translations*.
+- `mutations/gates.conf`: one mutation per new guard, each reddening the test
+  written for it.
+
+### Changed
+- **Every rule of `styles.css` is scoped to the plugin.** The tokens were declared
+  on `:root` and `body`, and the badge rules (`.badge.badge-excellent`, ...)
+  matched any page of the site. Each selector now starts with
+  `:where(.block-feedback-tracker)`: the block adds that class to its own element
+  (`html_attributes()`) and every page under `pages/` to its body. `:where()` has
+  no specificity, so each rule meets the theme with the specificity it had
+  before. `stylesheet_contract_test` checks that every page carries the class.
+- `settings.php` spells each setting's stored name as a literal
+  `block_feedback_tracker/<name>` instead of building it from a variable.
+- `lang/pt_br` is left out of the release package (`export-ignore`); the
+  translation stays in the repository and reaches sites through AMOS.
+- README: the peer context compares a group with every other scored group on the
+  site, not a department; the requirements name Moodle 4.5's database minimums;
+  the installation step says where the calendar itself is edited.
+
 ## [v4.5-r1] - 2026-10-18
 
 The Moodle 4.5 release, and the first under the fleet's release names: one

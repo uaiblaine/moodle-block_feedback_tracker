@@ -54,6 +54,7 @@ $PAGE->set_context($sysctx);
 $PAGE->set_title(get_string('sim_page_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('sim_page_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 $initial = [
     'config' => \block_feedback_tracker\local\output\bootstrap::config_bundle(),

@@ -49,6 +49,7 @@ $PAGE->set_context($context);
 $PAGE->set_title(get_string('drilldown_title', 'block_feedback_tracker'));
 $PAGE->set_heading(format_string($course->fullname));
 $PAGE->set_pagelayout('incourse');
+$PAGE->add_body_class('block-feedback-tracker');
 
 $result = \block_feedback_tracker\external\get_pending_submissions::execute(
     $courseid,
