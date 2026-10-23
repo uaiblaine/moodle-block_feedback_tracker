@@ -147,6 +147,21 @@ class block_feedback_tracker extends block_base {
     }
 
     /**
+     * Add the stylesheet's scope class to the block's own element.
+     *
+     * Every rule of styles.css applies only inside .block-feedback-tracker, so
+     * the plugin's CSS never reaches the rest of the page; the plugin's pages
+     * put the same class on their body.
+     *
+     * @return array
+     */
+    public function html_attributes() {
+        $attributes = parent::html_attributes();
+        $attributes['class'] .= ' block-feedback-tracker';
+        return $attributes;
+    }
+
+    /**
      * Where this block can be placed: course pages only.
      *
      * @return array<string, bool>

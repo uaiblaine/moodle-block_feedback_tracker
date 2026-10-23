@@ -20,3 +20,7 @@
 /phpcs.xml            export-ignore
 /phpmd.xml            export-ignore
 /.mdlshield          export-ignore
+/mutations           export-ignore
+
+# Only English ships in the package; other languages reach sites through AMOS.
+/lang/pt_br           export-ignore

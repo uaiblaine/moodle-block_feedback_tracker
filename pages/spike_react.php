@@ -36,6 +36,7 @@ $PAGE->set_context(\context_system::instance());
 $PAGE->set_title(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 \block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/spike_react', 'init');

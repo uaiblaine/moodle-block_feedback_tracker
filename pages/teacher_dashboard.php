@@ -46,6 +46,7 @@ $PAGE->set_context($sysctx);
 $PAGE->set_title(get_string('dashboard_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('dashboard_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 // The page ships no data: the app fetches it after mount (fetch order in
 // amd/src/views/DashboardView.js). Do not call the dashboard web services

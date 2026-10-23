@@ -39,6 +39,7 @@ $PAGE->set_context($context);
 $PAGE->set_title(get_string('bulk_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('bulk_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 $form = new \block_feedback_tracker\form\bulk_remove_form($pageurl);
 

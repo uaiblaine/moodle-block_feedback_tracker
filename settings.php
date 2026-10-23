@@ -31,7 +31,7 @@ if ($ADMIN->fulltree) {
 
     // Heading: Scoring.
     $settings->add(new admin_setting_heading(
-        $plugin . '/scoring',
+        'block_feedback_tracker/scoring',
         get_string('settings_scoring_heading', $plugin),
         get_string('settings_scoring_desc', $plugin)
     ));
@@ -54,7 +54,7 @@ if ($ADMIN->fulltree) {
     $weightpattern = '/^[0-9]+(\.[0-9]+)?$/';
     foreach ($weights as $key => $default) {
         $s = new admin_setting_configtext(
-            $plugin . '/' . $key,
+            'block_feedback_tracker/' . $key,
             get_string('settings_' . $key, $plugin),
             get_string('settings_' . $key . '_desc', $plugin),
             $default,
@@ -65,7 +65,7 @@ if ($ADMIN->fulltree) {
     }
 
     $s = new admin_setting_configtext(
-        $plugin . '/sla_goal_hours',
+        'block_feedback_tracker/sla_goal_hours',
         get_string('settings_sla_goal_hours', $plugin),
         get_string('settings_sla_goal_hours_desc', $plugin),
         '24',
@@ -78,7 +78,7 @@ if ($ADMIN->fulltree) {
     // tests them from the lowest up. The default, order and range of the three
     // cutoff settings are thresholds_setting::SETTINGS.
     $s = new \block_feedback_tracker\local\admin\thresholds_setting(
-        $plugin . '/bucket_thresholds_eff',
+        'block_feedback_tracker/bucket_thresholds_eff',
         get_string('settings_bucket_thresholds_eff', $plugin),
         get_string('settings_bucket_thresholds_eff_desc', $plugin),
         ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_eff']
@@ -91,7 +91,7 @@ if ($ADMIN->fulltree) {
     // (see bucket::for_effective_days()). Feeds the rollup's
     // critical_days/overgoal_days twins, hence the invalidate callback.
     $s = new \block_feedback_tracker\local\admin\thresholds_setting(
-        $plugin . '/bucket_thresholds_days',
+        'block_feedback_tracker/bucket_thresholds_days',
         get_string('settings_bucket_thresholds_days', $plugin),
         get_string('settings_bucket_thresholds_days_desc', $plugin),
         ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['bucket_thresholds_days']
@@ -99,8 +99,8 @@ if ($ADMIN->fulltree) {
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
     $settings->hide_if(
-        $plugin . '/bucket_thresholds_days',
-        $plugin . '/display_time_unit',
+        'block_feedback_tracker/bucket_thresholds_days',
+        'block_feedback_tracker/display_time_unit',
         'neq',
         'business_days'
     );
@@ -110,7 +110,7 @@ if ($ADMIN->fulltree) {
     // report's business-days pending band); the score keeps sla_goal_hours, so
     // switching the display unit never moves the score.
     $s = new admin_setting_configtext(
-        $plugin . '/sla_goal_days',
+        'block_feedback_tracker/sla_goal_days',
         get_string('settings_sla_goal_days', $plugin),
         get_string('settings_sla_goal_days_desc', $plugin),
         '2',
@@ -119,8 +119,8 @@ if ($ADMIN->fulltree) {
     $s->set_updatedcallback('block_feedback_tracker_invalidate_rollups');
     $settings->add($s);
     $settings->hide_if(
-        $plugin . '/sla_goal_days',
-        $plugin . '/display_time_unit',
+        'block_feedback_tracker/sla_goal_days',
+        'block_feedback_tracker/display_time_unit',
         'neq',
         'business_days'
     );
@@ -129,7 +129,7 @@ if ($ADMIN->fulltree) {
     // of the four bands, in decreasing order because
     // responsiveness_calculator::band_for() tests them from the highest down.
     $s = new \block_feedback_tracker\local\admin\thresholds_setting(
-        $plugin . '/score_thresholds_band',
+        'block_feedback_tracker/score_thresholds_band',
         get_string('settings_score_thresholds_band', $plugin),
         get_string('settings_score_thresholds_band_desc', $plugin),
         ...\block_feedback_tracker\local\admin\thresholds_setting::SETTINGS['score_thresholds_band']
@@ -149,14 +149,14 @@ if ($ADMIN->fulltree) {
         ],
     ]);
     $settings->add(new admin_setting_heading(
-        $plugin . '/scoring_simulator',
+        'block_feedback_tracker/scoring_simulator',
         get_string('sim_settings_heading', $plugin),
         get_string('sim_settings_desc', $plugin) . $simulatorlink
     ));
 
     // Heading: Calendar behaviour.
     $settings->add(new admin_setting_heading(
-        $plugin . '/calendar_behaviour',
+        'block_feedback_tracker/calendar_behaviour',
         get_string('settings_calendar_behaviour_heading', $plugin),
         get_string('settings_calendar_behaviour_desc', $plugin)
     ));
@@ -164,7 +164,7 @@ if ($ADMIN->fulltree) {
     $bools = ['excludeweekends', 'excludeholidays', 'excluderecesses', 'enablebusinesshours'];
     foreach ($bools as $key) {
         $s = new admin_setting_configcheckbox(
-            $plugin . '/' . $key,
+            'block_feedback_tracker/' . $key,
             get_string('settings_' . $key, $plugin),
             get_string('settings_' . $key . '_desc', $plugin),
             1
@@ -174,7 +174,7 @@ if ($ADMIN->fulltree) {
     }
 
     $s = new admin_setting_configtext(
-        $plugin . '/weekendmask',
+        'block_feedback_tracker/weekendmask',
         get_string('settings_weekendmask', $plugin),
         get_string('settings_weekendmask_desc', $plugin),
         '96',
@@ -188,7 +188,7 @@ if ($ADMIN->fulltree) {
         $tzoptions[$tz] = $label;
     }
     $s = new admin_setting_configselect(
-        $plugin . '/timezone',
+        'block_feedback_tracker/timezone',
         get_string('settings_timezone', $plugin),
         get_string('settings_timezone_desc', $plugin),
         'server',
@@ -202,7 +202,7 @@ if ($ADMIN->fulltree) {
         'live'    => get_string('settings_pausemode_live', $plugin),
     ];
     $s = new admin_setting_configselect(
-        $plugin . '/grading_during_pause_mode',
+        'block_feedback_tracker/grading_during_pause_mode',
         get_string('settings_grading_during_pause_mode', $plugin),
         get_string('settings_grading_during_pause_mode_desc', $plugin),
         'clipped',
@@ -213,7 +213,7 @@ if ($ADMIN->fulltree) {
 
     // Heading: Processing scope.
     $settings->add(new admin_setting_heading(
-        $plugin . '/processing_scope',
+        'block_feedback_tracker/processing_scope',
         get_string('settings_processing_scope_heading', $plugin),
         get_string('settings_processing_scope_desc', $plugin)
     ));
@@ -222,7 +222,7 @@ if ($ADMIN->fulltree) {
     // retroactive. The new rule applies to later writes; rows already stored
     // for hidden courses stay as they are.
     $settings->add(new admin_setting_configcheckbox(
-        $plugin . '/process_hidden_courses',
+        'block_feedback_tracker/process_hidden_courses',
         get_string('settings_process_hidden_courses', $plugin),
         get_string('settings_process_hidden_courses_desc', $plugin),
         0
@@ -233,7 +233,7 @@ if ($ADMIN->fulltree) {
     // every course to track. backfill_history reads it on each tick, so no
     // updated callback is needed.
     $settings->add(new admin_setting_configcheckbox(
-        $plugin . '/backfill_active',
+        'block_feedback_tracker/backfill_active',
         get_string('settings_backfill_active', $plugin),
         get_string('settings_backfill_active_desc', $plugin),
         0
@@ -241,7 +241,7 @@ if ($ADMIN->fulltree) {
 
     // Heading: Performance.
     $settings->add(new admin_setting_heading(
-        $plugin . '/performance',
+        'block_feedback_tracker/performance',
         get_string('settings_performance_heading', $plugin),
         get_string('settings_performance_desc', $plugin)
     ));
@@ -262,7 +262,7 @@ if ($ADMIN->fulltree) {
     ];
     foreach ($perf as $key => $default) {
         $settings->add(new admin_setting_configtext(
-            $plugin . '/' . $key,
+            'block_feedback_tracker/' . $key,
             get_string('settings_' . $key, $plugin),
             get_string('settings_' . $key . '_desc', $plugin),
             $default,
@@ -272,7 +272,7 @@ if ($ADMIN->fulltree) {
 
     // Heading: Views.
     $settings->add(new admin_setting_heading(
-        $plugin . '/views',
+        'block_feedback_tracker/views',
         get_string('settings_views_heading', $plugin),
         ''
     ));
@@ -294,7 +294,7 @@ if ($ADMIN->fulltree) {
     ];
     foreach ($viewbools as $key => $default) {
         $settings->add(new admin_setting_configcheckbox(
-            $plugin . '/' . $key,
+            'block_feedback_tracker/' . $key,
             get_string('settings_' . $key, $plugin),
             get_string('settings_' . $key . '_desc', $plugin),
             $default
@@ -306,7 +306,7 @@ if ($ADMIN->fulltree) {
      * and so it reads in the same currency as tool_recyclebin's own expiry
      * settings, which this can follow. */
     $settings->add(new admin_setting_configduration(
-        $plugin . '/removal_grace_seconds',
+        'block_feedback_tracker/removal_grace_seconds',
         get_string('settings_removal_grace_seconds', $plugin),
         get_string('settings_removal_grace_seconds_desc', $plugin),
         \block_feedback_tracker\local\sla\removal_grace::DEFAULT_SECONDS
@@ -317,7 +317,7 @@ if ($ADMIN->fulltree) {
     // holidays and recesses and ignore the time of day). The rollup stores
     // both, so this is display-only: no updated callback, no recompute.
     $settings->add(new admin_setting_configselect(
-        $plugin . '/display_time_unit',
+        'block_feedback_tracker/display_time_unit',
         get_string('settings_display_time_unit', $plugin),
         get_string('settings_display_time_unit_desc', $plugin),
         'hours',
@@ -331,7 +331,7 @@ if ($ADMIN->fulltree) {
     // group name. Display-only, no updated callback: the block payload cache
     // (15 minutes) or the block's refresh button picks up changes.
     $s = new admin_setting_configtext(
-        $plugin . '/group_title_fields',
+        'block_feedback_tracker/group_title_fields',
         get_string('settings_group_title_fields', $plugin),
         get_string('settings_group_title_fields_desc', $plugin),
         '',
@@ -340,7 +340,7 @@ if ($ADMIN->fulltree) {
     $settings->add($s);
 
     $s = new admin_setting_configtext(
-        $plugin . '/group_subtitle_fields',
+        'block_feedback_tracker/group_subtitle_fields',
         get_string('settings_group_subtitle_fields', $plugin),
         get_string('settings_group_subtitle_fields_desc', $plugin),
         '',
@@ -371,7 +371,7 @@ if ($ADMIN->fulltree) {
         ],
     ]);
     $settings->add(new admin_setting_heading(
-        $plugin . '/tools',
+        'block_feedback_tracker/tools',
         get_string('manage_title', $plugin),
         $toolslinks
     ));
