@@ -73,8 +73,9 @@ final class gradebook_response {
         global $CFG, $DB;
 
         /* GRADE_TYPE_NONE is defined in this file. PHPUnit always has it loaded
-         * but a web-service request may not, so without this line tests pass
-         * while the browser gets a fatal "undefined constant". */
+         * but a web-service request may not, so without this line the browser
+         * gets a fatal "undefined constant"; of the tests, only
+         * runtime_symbols_test notices. */
         require_once($CFG->libdir . '/grade/constants.php');
 
         $none = ['respondedat' => null, 'hidden' => false, 'hasgrade' => false];
