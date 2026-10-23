@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v5.2-r3] - 2026-10-23
+
+The teacher dashboard's undefined-constant fix, with two tests that guard the
+whole class of defect (version `2026042008`).
+
+### Fixed
+- **The teacher dashboard no longer fails with `Undefined constant
+  "block_feedback_tracker\local\grading\ASSIGN_FILTER_NONE"`.** It failed for
+  any teacher with a saved status filter on an assignment's grading page, on
+  every load except the first after a cache purge. The grade-link gate
+  (`grader_filters`, since v5.2-r1) compared that preference with mod_assign's
+  constant, which only `mod/assign/locallib.php` defines. The dashboard, the
+  pending report, the score simulator and the block do not load that file, and
+  a request loads it as a side effect only while it rebuilds the plugin caches.
+  The class now spells the value itself.
+
+### Added
+- `tests/runtime_symbols_test.php`: every global constant, function and class
+  that runtime code names must be loaded on every request (what `lib/setup.php`
+  loads), built into PHP, autoloaded, or declared by the file or a file it
+  requires. The test reads the files instead of asking the PHPUnit process,
+  which has every plugin's `lib.php`, mod_assign's `locallib.php` and the
+  gradebook constants loaded and so passed against this defect.
+- `tests/local/grading/grader_filters_without_locallib_test.php` runs the gate
+  in a child process booted as `admin/tool/phpunit/cli/util.php` boots, where
+  `locallib.php` is not loaded, and fails if it is.
+- `mutations/gates.conf`: four gates for these guards (G1-G4).
+
 ## [v5.2-r2] - 2026-10-23
 
 The Moodle plugins directory's submission guidelines, checked by a test (version
