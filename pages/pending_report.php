@@ -57,6 +57,7 @@ $PAGE->set_heading(
         . ' — ' . format_string($course->fullname)
 );
 $PAGE->set_pagelayout('incourse');
+$PAGE->add_body_class('block-feedback-tracker');
 
 // The page ships no data: the app fetches it after mount (fetch order in
 // amd/src/views/PendingReportView.js), as on teacher_dashboard.php. Do not

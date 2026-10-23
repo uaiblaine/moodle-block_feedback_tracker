@@ -41,6 +41,7 @@ $PAGE->set_context($context);
 $PAGE->set_title(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_heading(get_string('caleditor_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
+$PAGE->add_body_class('block-feedback-tracker');
 
 // The notice and its error lines are plain text; the template escapes them,
 // so an exception message can never inject markup.
