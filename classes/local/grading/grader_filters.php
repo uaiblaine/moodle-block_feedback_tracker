@@ -53,6 +53,13 @@ final class grader_filters {
     private const TABLE_PREF_PREFIX = 'flextable_mod_assign_grading-';
 
     /**
+     * @var string The value the status filter's "No filter" option stores, {@see ASSIGN_FILTER_NONE}.
+     * Spelt here because mod/assign/locallib.php, which defines that constant,
+     * is not loaded on the pages and blocks that call viewer_has_saved_state().
+     */
+    private const STATUS_FILTER_NONE = 'none';
+
+    /**
      * Whether the current user carries any saved state that can narrow a
      * grader's student list: a status, workflow or marker filter, a name
      * initial on any assignment's grading table, or a named active group in
@@ -263,7 +270,7 @@ final class grader_filters {
 
     /**
      * Whether a stored filter preference narrows the list. The status
-     * filter's "No filter" option is stored as 'none'.
+     * filter's "No filter" option is stored as {@see self::STATUS_FILTER_NONE}.
      *
      * @param string $name Preference name.
      * @param mixed $value Stored value.
@@ -274,7 +281,7 @@ final class grader_filters {
         if ($value === '') {
             return false;
         }
-        return !($name === 'assign_filter' && $value === ASSIGN_FILTER_NONE);
+        return !($name === 'assign_filter' && $value === self::STATUS_FILTER_NONE);
     }
 
     /**
