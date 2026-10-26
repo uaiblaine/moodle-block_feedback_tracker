@@ -257,6 +257,47 @@ final class marketplace_readiness_test extends \basic_testcase {
     }
 
     /**
+     * The selectors of a selector list, split at its top-level commas only.
+     *
+     * A comma inside parentheses or brackets belongs to one selector: .x:not(.a, .b) is one selector,
+     * as are :is(), :where(), :has() and an attribute value with a comma in it.
+     *
+     * @param string $prelude The selector list of one rule.
+     * @return array The selectors, trimmed.
+     */
+    private function selector_list(string $prelude): array {
+        $selectors = [];
+        $depth = 0;
+        $start = 0;
+        for ($i = 0, $length = strlen($prelude); $i < $length; $i++) {
+            $char = $prelude[$i];
+            if ($char === '(' || $char === '[') {
+                $depth++;
+            } else if ($char === ')' || $char === ']') {
+                $depth--;
+            } else if ($char === ',' && $depth === 0) {
+                $selectors[] = trim(substr($prelude, $start, $i - $start));
+                $start = $i + 1;
+            }
+        }
+        $selectors[] = trim(substr($prelude, $start));
+        return $selectors;
+    }
+
+    /**
+     * The scoping check reads a selector with a comma inside a functional pseudo-class as one
+     * scoped selector, and still reads each selector of a top-level list on its own.
+     *
+     * @return void
+     */
+    public function test_selector_lists_split_at_top_level_commas_only(): void {
+        $scoped = '.path-' . str_replace('_', '-', self::COMPONENT) . ':not(.a, .b) .c';
+        $this->assertSame([$scoped], $this->selector_list($scoped));
+        $this->assertSame([$scoped, '.d:is(.e, [data-f="g,h"])'], $this->selector_list($scoped . ', .d:is(.e, [data-f="g,h"])'));
+        $this->assertSame(['.a', '.b'], $this->selector_list('.a, .b'));
+    }
+
+    /**
      * Every stylesheet selector is scoped to the plugin (CSS styles), since
      * all plugin sheets are concatenated and served on every page.
      *
@@ -279,7 +320,7 @@ final class marketplace_readiness_test extends \basic_testcase {
             if ($prelude === '' || $prelude[0] === '@' || preg_match($keyframestep, $prelude)) {
                 continue;
             }
-            foreach (explode(',', $prelude) as $selector) {
+            foreach ($this->selector_list($prelude) as $selector) {
                 $scoped = false;
                 foreach ($prefixes as $prefix) {
                     $scoped = $scoped || str_contains($selector, $prefix);
