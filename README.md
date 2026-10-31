@@ -43,7 +43,7 @@ Added to a course, the block shows the course score and one card per group, read
 
 - **Course score** and its band, with any pause the academic calendar has coming up.
 - **Group score** for the class.
-- **Effective** feedback time in working hours, the **perceived** wait in calendar days, and the share answered within the goal (**SLA**).
+- **Effective** feedback time in working hours, the **perceived** wait in calendar days, and the share answered within the target time (**Within target**), a reference for the indicators rather than a contractual commitment.
 - **Last 14 days**: the trend, faster or slower than before.
 - **Waiting, Attention, Priority**: how many submissions sit in each band of waiting time.
 - **Activities**: each assignment's open and due dates for the group. A teacher who can manage overrides gets a link to give the group dates of its own.
@@ -56,7 +56,7 @@ Added to a course, the block shows the course score and one card per group, read
 
 ### Course report
 
-![Pending grading report for one course: score with SLA chips, the last 30 academic days, distribution by status and the list of submissions waiting](docs/screenshots/course-report.png)
+![Pending grading report for one course: score with within-target chips, the last 30 academic days, distribution by status and the list of submissions waiting](docs/screenshots/course-report.png)
 
 The pending-grading report for one course or group. The score card adds how many submissions were answered within the goal and how many are at risk or critical; the strip of the last 30 academic days shows which days met the goal and which were paused (weekends, holidays, recesses). The status bands filter the table, which lists every submission still waiting, longest wait first, with its effective and perceived time and a **Grade** button. **Graded** switches the table to the work already answered.
 

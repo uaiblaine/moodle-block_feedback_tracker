@@ -90,7 +90,7 @@ const SeriesTable = ({rows, days, i18n, config}) => {
         median: i18n.dashboard_comparison_col_median || 'Median (business hours)',
         p10: i18n.dashboard_comparison_col_p10 || '10th percentile (business hours)',
         p90: i18n.dashboard_comparison_col_p90 || '90th percentile (business hours)',
-        compliance: i18n.dashboard_comparison_col_compliance || 'Within SLA goal',
+        compliance: i18n.dashboard_comparison_col_compliance || 'Within target (%)',
         graded: i18n.dashboard_comparison_col_graded || 'Graded',
     };
     const caption = withDays(i18n.dashboard_comparison_caption || 'Site benchmarks per day, last {$a} days', days);
@@ -157,7 +157,7 @@ const SeriesTable = ({rows, days, i18n, config}) => {
 /**
  * @param {object} props
  * @param {object} props.i18n    Dashboard label map (i18n_bundle + dashboard_i18n).
- * @param {object} props.config  Config bundle (SLA goal, display unit).
+ * @param {object} props.config  Config bundle (target time, display unit).
  * @returns {object} vnode
  */
 export default function SchoolComparison({i18n, config}) {
