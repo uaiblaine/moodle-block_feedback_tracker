@@ -38,13 +38,22 @@ $PAGE->set_heading(get_string('spike_react_title', 'block_feedback_tracker'));
 $PAGE->set_pagelayout('admin');
 $PAGE->add_body_class('block-feedback-tracker');
 
+$initialjson = json_encode(
+    ['i18n' => \block_feedback_tracker\local\output\bootstrap::spike_i18n()],
+    JSON_HEX_TAG | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+);
+if ($initialjson === false) {
+    $initialjson = '{}';
+}
+$payload = '<script type="application/json" data-bft-init>' . $initialjson . '</script>';
+
 \block_feedback_tracker\local\output\vendor_bundle::load($PAGE);
 $PAGE->requires->js_call_amd('block_feedback_tracker/spike_react', 'init');
 
 echo $OUTPUT->header();
 // Two mount points exercise the multi-root querySelectorAll path that the
 // block, report and dashboard entrypoints rely on.
-echo '<div data-bft-spike-root></div>';
+echo '<div data-bft-spike-root>' . $payload . '</div>';
 echo '<hr aria-hidden="true">';
-echo '<div data-bft-spike-root></div>';
+echo '<div data-bft-spike-root>' . $payload . '</div>';
 echo $OUTPUT->footer();
