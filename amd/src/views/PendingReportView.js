@@ -572,7 +572,7 @@ export default function PendingReportView({initial}) {
     if (scope) {
         if (scopeCompliance !== null && scopeCompliance !== undefined) {
             chips.push({
-                label: Math.round(Number(scopeCompliance)) + '% ' + (i18n.report_chip_sla || 'within SLA'),
+                label: Math.round(Number(scopeCompliance)) + '% ' + (i18n.report_chip_sla || 'within target'),
                 tone: scopeBand,
             });
         }

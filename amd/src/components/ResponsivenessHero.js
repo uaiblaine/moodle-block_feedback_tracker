@@ -45,7 +45,7 @@ import {classifySpeed} from 'block_feedback_tracker/lib/trend';
  * @param {object} props.i18n
  * @param {() => void} [props.onCollapse]     Click handler for the floating collapse button.
  * @param {object} [props.config]             Dashboard config bundle (feature flags).
- * @param {Array<{label: string, tone: string}>} [props.chips]  Optional chips (e.g. SLA %, at-risk, critical).
+ * @param {Array<{label: string, tone: string}>} [props.chips]  Optional chips (e.g. within-target %, at-risk, critical).
  * @param {string} [props.eyebrow]            Overrides the default eyebrow copy.
  * @param {string} [props.headline]           Overrides the default headline copy.
  * @param {string} [props.body]               Overrides the default body copy.

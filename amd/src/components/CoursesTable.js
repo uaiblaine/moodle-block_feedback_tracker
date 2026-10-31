@@ -76,7 +76,7 @@ const SortHeader = ({label, sortKey, currentKey, currentOrder, onClick, i18n}) =
  * @param {string} props.sortOrder
  * @param {Function} props.onSort     Receives sortKey on header click.
  * @param {object|null} props.thresholds
- * @param {number|null} [props.goal]  SLA goal hours; drives the trend improvement zone.
+ * @param {number|null} [props.goal]  Target time in hours; drives the trend improvement zone.
  * @param {object} [props.config]     Config bundle (effective-time display unit).
  * @returns {object} vnode
  */
