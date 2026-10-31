@@ -95,7 +95,7 @@ All settings live under *Site administration → Plugins → Blocks → Feedback
 
 - **Scoring**: the five score weights `weight_compliance` (0.40), `weight_median` (0.25), `weight_critical` (0.15), `weight_pending` (0.10) and `weight_trend` (0.10), rescaled at read time when their sum is not close to 1; the goal `sla_goal_hours` (24 effective hours) or `sla_goal_days` (2 business days); the waiting-time bands `bucket_thresholds_eff` (24, 48, 120 hours) or `bucket_thresholds_days` (2, 5, 10 days); and the score bands `score_thresholds_band` (90, 70, 40).
 - **Calendar behaviour**: `excludeweekends`, `excludeholidays`, `excluderecesses` and `enablebusinesshours` (all on), `weekendmask` (Saturday and Sunday), `timezone` (the server's) and `grading_during_pause_mode` (clipped: time inside a pause never counts).
-- **Processing scope**: `process_hidden_courses` (off) and `backfill_active` (off: when on, submissions made before the block was added are measured too).
+- **Processing scope**: `process_hidden_courses` (off), `backfill_active` (off: when on, submissions made before the block was added are measured too) and `backup_ledger` (`rederive`: see *Backup and restore*).
 - **Performance**: batch sizes and time caps of the background tasks (`recompute_batch_size`, `pending_batch_size`, `drain_time_cap_seconds`, `backfill_chunk`, `backfill_chunk_per_course`, `backfill_sub_chunk`, `reconcile_batch_size`, `reconcile_time_cap_seconds`, `retention_batch_size`), the recent-statistics window `trend_window_days` (30), `purge_inactive_after_days` (730) and `retention_days` (365).
 - **Views**: `enable_admin_view_all` (off), `enable_teacher_simulator` (off), `show_perceived_time`, `show_paused_today_indicator`, `show_peer_context` and `exclude_grader_submissions` (on), `release_stops_clock` (off), `reconcile_active` (on), `retention_active` (off), `removal_cleanup_active` (off), `removal_grace_follow_recyclebin` (on), `removal_grace_seconds` (7 days), `display_time_unit` (business hours) and the group card's `group_title_fields` and `group_subtitle_fields` (empty).
 - **Tools**: links to the calendar editor, the recompute audit log, the bulk block removal and the data reset pages.
@@ -138,6 +138,17 @@ Removing the block from a course keeps that course's rows unless `removal_cleanu
 Everything above is covered by the Privacy API. A data request exports, per course, the user's submission cycles and the cycles where they were the allocated marker, and, at site level, the calendar rows and recomputes they are recorded against, plus both preferences. A deletion request deletes the student's cycles; for a marker it clears `allocmarkerid`, keeping the students' rows; for the calendar and the audit log it clears the user id and keeps the row. The course summaries hold no user and are recomputed from what remains.
 
 Opening a submission from the dashboard or the report may clear the viewer's own saved filters on the assignment's grading page (status, workflow, marker and name initial), when they would hide that student; those preferences belong to `mod_assign`.
+
+## Backup and restore
+
+What a course backup carries is the `backup_ledger` setting:
+
+- **`rederive`** (default): the backup carries nothing of the plugin. Once the course is restored, an adhoc task (`rederive_course`) rebuilds its measurements in the background from the restored submissions and grades. What Moodle itself does not store cannot be rebuilt: when feedback was released, when a marker was allocated, the cycles a resubmission superseded and the rows taken out with the legacy dismissal.
+- **`full`**: backups that include user data also carry every row of `block_feedback_tracker_sub` for the course. The restore maps them to the restored activities, students, groups and markers, leaves out the rows of anything not restored, and then runs the same rebuild for whatever the file did not hold. Backups without user data, course imports among them, carry no rows.
+
+A restore follows what the backup file holds, not the setting at the time of the restore. The block must be restored with the course for anything to be measured there.
+
+The cost, measured on Moodle 5.3 with PostgreSQL on a course of 300 students and 10 assignments (3,000 measurement rows): `full` made the backup file 220 KiB instead of 119 KiB and added about 1.5 s to the backup (7.9 s against 6.3 s) and 1.9 s to the restore (7.7 s against 5.8 s). The rebuild runs in cron afterwards in either mode and took about 7 s.
 
 ## Translations
 
