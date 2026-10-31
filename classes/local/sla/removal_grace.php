@@ -32,9 +32,9 @@ namespace block_feedback_tracker\local\sla;
  * Moodle's convention is to delete a block's data immediately, in
  * `instance_delete()`. That fits data owned by the instance (`block_html`
  * deleting its own files), not this block: it is a gate, the data belongs to
- * the course, removing the block is an easy mistake, and the plugin's tables
- * are not in course backups, so nothing could be restored. Hence a grace
- * period.
+ * the course, removing the block is an easy mistake, and by default a course
+ * backup does not carry the plugin's tables (`backup_ledger`), so what was
+ * measured could not be restored. Hence a grace period.
  *
  * By default the window follows the site's recycle-bin retention, the period
  * in which administrators already expect to be able to undo things: the

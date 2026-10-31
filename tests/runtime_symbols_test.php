@@ -44,8 +44,9 @@ namespace block_feedback_tracker;
  *
  * The check is per file, not per path: a require in one method covers a use in
  * another. Out of scope: tests/, db/ (run by the installer and upgrader, which
- * load upgradelib) and settings.php (built inside the admin tree, which loads
- * adminlib).
+ * load upgradelib), backup/ (loaded by core's backup and restore plans,
+ * which load their own libraries first) and settings.php (built inside the
+ * admin tree, which loads adminlib).
  *
  * @coversNothing
  */
@@ -146,7 +147,7 @@ final class runtime_symbols_test extends \basic_testcase {
             $rel = substr($file->getPathname(), strlen($root) + 1);
             if (
                 $file->getExtension() !== 'php'
-                || preg_match('~^(tests|db|lang|vendor|node_modules)/~', $rel)
+                || preg_match('~^(tests|db|backup|lang|vendor|node_modules)/~', $rel)
                 || in_array($rel, ['settings.php', 'version.php'], true)
             ) {
                 continue;
