@@ -46,31 +46,50 @@ const TREND = [
     8, 6, 7, 6, 5, 7, 6, 4, 5, 6,
 ];
 
-/** Slug → display label; hard-coded because this demo loads no lang strings. */
-const BAND_LABEL = {
-    excellent: 'Excellent',
-    good: 'Good',
-    regular: 'Up Next',
-    critical: 'Priority',
-    pending: 'Pending',
-};
-
-/** Demo breakdown rows in the BreakdownPanel row shape. */
-const BREAKDOWN_ROWS = [
-    {label: 'Compliance', valuestr: '0.78', weightstr: '0.40', ptsstr: '31.2 / 40.0'},
-    {label: 'Median', valuestr: '0.66', weightstr: '0.25', ptsstr: '16.5 / 25.0'},
-    {label: 'Priority', valuestr: '0.40', weightstr: '0.15', ptsstr: '6.0 / 15.0'},
-    {label: 'Pending', valuestr: '0.60', weightstr: '0.10', ptsstr: '6.0 / 10.0'},
-    {label: 'Trend', valuestr: '0.50', weightstr: '0.10', ptsstr: '5.0 / 10.0'},
+/**
+ * Demo breakdown rows in the BreakdownPanel row shape, labelled with the
+ * score-term strings.
+ *
+ * @param {object} i18n The page's label bundle.
+ * @returns {Array<object>} rows
+ */
+const breakdownRows = (i18n) => [
+    {label: i18n.breakdown_compliance, valuestr: '0.78', weightstr: '0.40', ptsstr: '31.2 / 40.0'},
+    {label: i18n.breakdown_median, valuestr: '0.66', weightstr: '0.25', ptsstr: '16.5 / 25.0'},
+    {label: i18n.breakdown_critical, valuestr: '0.40', weightstr: '0.15', ptsstr: '6.0 / 15.0'},
+    {label: i18n.breakdown_pending, valuestr: '0.60', weightstr: '0.10', ptsstr: '6.0 / 10.0'},
+    {label: i18n.breakdown_trend, valuestr: '0.50', weightstr: '0.10', ptsstr: '5.0 / 10.0'},
 ];
+
+/**
+ * The payload pages/spike_react.php embeds in each root.
+ *
+ * @param {HTMLElement} root
+ * @returns {object|null} Parsed payload, or null when missing or malformed.
+ */
+const readPayload = (root) => {
+    const tag = root.querySelector('script[type="application/json"][data-bft-init]');
+    if (!tag) {
+        return null;
+    }
+    try {
+        return JSON.parse(tag.textContent || '{}');
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('block_feedback_tracker: spike payload parse failed', e);
+        return null;
+    }
+};
 
 /**
  * Top-level demo component. Uses useState to make the score re-rollable,
  * proving the hook plumbing reaches all the way through.
  *
+ * @param {object} props
+ * @param {object} props.i18n The page's label bundle.
  * @returns {object} vnode
  */
-const Demo = () => {
+const Demo = ({i18n}) => {
     const [score, setScore] = useState(72);
     let band = 'critical';
     if (score >= 85) {
@@ -85,44 +104,45 @@ const Demo = () => {
         <div class="block_feedback_tracker">
             <div class="bft-card">
                 <div class="bft-card-head">
-                    <span class="bft-card-title">Spike demo (React)</span>
-                    <${Badge} band=${band} label=${BAND_LABEL[band]} />
+                    <span class="bft-card-title">${i18n.spike_react_title}</span>
+                    <${Badge} band=${band} label=${i18n.bands[band]} />
                 </div>
                 <div class="bft-card-body">
                     <div class="bft-card-gauge">
-                        <${ScoreGauge} score=${score} band=${band} size=${100} />
+                        <${ScoreGauge} score=${score} band=${band} size=${100} arialabel=${i18n.gauge_aria} />
                     </div>
                     <div class="bft-card-data">
                         <${Counts} items=${[
-                            {label: 'Pending', value: 12},
-                            {label: 'Priority', value: 3},
-                            {label: 'Over goal', value: 5},
+                            {label: i18n.card_pending, value: 12},
+                            {label: i18n.card_critical, value: 3},
+                            {label: i18n.card_overgoal, value: 5},
                         ]} />
                         <${MetricsRow} items=${[
-                            {label: 'Median', value: '8.4 h'},
-                            {label: 'Compliance', value: '78%'},
-                            {label: 'Trend 30d', value: '▼ 12%'},
+                            {label: i18n.breakdown_median, value: '8.4 h'},
+                            {label: i18n.breakdown_compliance, value: '78%'},
+                            {label: i18n.breakdown_trend, value: '▼ 12%'},
                         ]} />
                         <div class="bft-card-sparkline">
-                            <${Sparkline} values=${TREND} goal=${24} width=${240} height=${30} />
+                            <${Sparkline} values=${TREND} goal=${24} width=${240} height=${30}
+                                arialabel=${i18n.sparkline_aria} />
                         </div>
                     </div>
                 </div>
                 <div class="bft-card-foot">
                     <${BreakdownPanel}
-                        summary="Score breakdown"
-                        strterm="Term"
-                        strvalue="Value"
-                        strweight="Weight"
-                        strpts="Points"
-                        strtotal="Total"
-                        rows=${BREAKDOWN_ROWS}
+                        summary=${i18n.breakdown_summary}
+                        strterm=${i18n.breakdown_term}
+                        strvalue=${i18n.breakdown_value}
+                        strweight=${i18n.breakdown_weight}
+                        strpts=${i18n.breakdown_pts}
+                        strtotal=${i18n.breakdown_total}
+                        rows=${breakdownRows(i18n)}
                         totalstr="64.7 / 100.0" />
                 </div>
                 <div class="bft-card-foot">
                     <button type="button" class="bft-refresh"
                             onClick=${() => setScore(Math.floor(Math.random() * 100))}>
-                        Re-roll score
+                        ${i18n.spike_reroll}
                     </button>
                 </div>
             </div>
@@ -139,6 +159,10 @@ export const init = () => {
     }
     window.bftSpikeReactInitDone = true;
     document.querySelectorAll('[data-bft-spike-root]').forEach((root) => {
-        render(html`<${Demo} />`, root);
+        const initial = readPayload(root);
+        if (!initial || !initial.i18n) {
+            return;
+        }
+        render(html`<${Demo} i18n=${initial.i18n} />`, root);
     });
 };
