@@ -565,6 +565,7 @@ $string['sim_weights_reset'] = 'Restaurar valores atuais';
 $string['sparkline_aria'] = 'Tendência dos últimos 14 dias';
 $string['sparkline_zone_label'] = 'Velocidade desejada: 0 a {$a}';
 $string['spike_react_title'] = 'Feedback Flow — experimento React';
+$string['spike_reroll'] = 'Sortear outra pontuação';
 $string['status_awaiting_release'] = 'Aguardando liberação';
 $string['status_awaiting_release_help'] = 'Este envio já recebeu nota, mas o fluxo de avaliação ainda não chegou a "Liberado", então o estudante não consegue ver a nota nem o feedback. Liberar exige a permissão "Gerenciar fluxo de avaliação", que nem sempre é de quem avalia — se for o seu caso, peça a liberação a quem conduz o fluxo desta atividade.';
 $string['status_closed_in_gradebook'] = 'Avaliado no livro de notas';

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Version `2025100608`.
+
+### Fixed
+- **The component smoke test page (`pages/spike_react.php`) shows its labels in
+  the viewer's language** (issue #122). The demo card spelt its
+  card title, band labels, counts, metrics, score breakdown and button in
+  English inside `amd/src/spike_react.js`. The page now embeds
+  `bootstrap::spike_i18n()`, built from the strings the real surfaces use, and
+  the gauge and sparkline get their accessible names from it too. One new
+  string, `spike_reroll`.
+
 ## [v5.1-r3] - 2026-10-23
 
 The teacher dashboard's undefined-constant fix, with two tests that guard the

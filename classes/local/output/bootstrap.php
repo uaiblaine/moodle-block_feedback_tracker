@@ -465,4 +465,43 @@ class bootstrap {
             'trend_stable' => $s('trend_stable'),
         ];
     }
+
+    /**
+     * Label bundle for the component smoke test (pages/spike_react.php →
+     * spike_react). The demo card labels its figures with the strings the
+     * real surfaces use, so it shows them in the viewer's language.
+     *
+     * @return array
+     */
+    public static function spike_i18n(): array {
+        $s = static fn (string $k): string => get_string($k, 'block_feedback_tracker');
+        return [
+            'bands' => [
+                'excellent' => $s('band_excellent'),
+                'good'      => $s('band_good'),
+                'regular'   => $s('band_regular'),
+                'critical'  => $s('band_critical'),
+                'pending'   => $s('band_pending'),
+            ],
+            'breakdown_compliance' => $s('breakdown_compliance'),
+            'breakdown_critical'   => $s('breakdown_critical'),
+            'breakdown_median'     => $s('breakdown_median'),
+            'breakdown_pending'    => $s('breakdown_pending'),
+            'breakdown_pts'        => $s('breakdown_pts'),
+            'breakdown_summary'    => $s('breakdown_summary'),
+            'breakdown_term'       => $s('breakdown_term'),
+            'breakdown_total'      => $s('breakdown_total'),
+            'breakdown_trend'      => $s('breakdown_trend'),
+            'breakdown_value'      => $s('breakdown_value'),
+            'breakdown_weight'     => $s('breakdown_weight'),
+            'card_critical' => $s('card_critical'),
+            'card_overgoal' => $s('card_overgoal'),
+            'card_pending'  => $s('card_pending'),
+            // The gauge substitutes the score for the placeholder left in the string.
+            'gauge_aria' => $s('gauge_aria'),
+            'sparkline_aria' => $s('sparkline_aria'),
+            'spike_react_title' => $s('spike_react_title'),
+            'spike_reroll' => $s('spike_reroll'),
+        ];
+    }
 }
