@@ -74,6 +74,7 @@ final class save_calendar_day_test extends \advanced_testcase {
         $calver = \block_feedback_tracker\local\calendar\calendar::current_version();
 
         $result = save_calendar_day::execute(20260525, save_calendar_day::ACTION_REMOVE, '');
+        $this->run_requeue();
 
         $this->assertTrue($result['success']);
         $this->assertSame(0, $result['id']);
@@ -82,6 +83,7 @@ final class save_calendar_day_test extends \advanced_testcase {
 
         $generator->create_calendar_day(20260526, 'holiday');
         save_calendar_day::execute(20260526, save_calendar_day::ACTION_REMOVE, '');
+        $this->run_requeue();
 
         $this->assertFalse($DB->record_exists('block_feedback_tracker_cday', ['daydate' => 20260526]));
         $this->assertSame(1, $DB->count_records('block_feedback_tracker_queue', ['courseid' => (int) $course->id]));
@@ -98,5 +100,16 @@ final class save_calendar_day_test extends \advanced_testcase {
 
         $this->expectException(\required_capability_exception::class);
         save_calendar_day::execute(20260101, 'holiday', '');
+    }
+
+    /**
+     * Run the queued rollup re-queue tasks, discarding their cron output.
+     *
+     * @return void
+     */
+    private function run_requeue(): void {
+        ob_start();
+        $this->runAdhocTasks(\block_feedback_tracker\task\requeue_rollups::class);
+        ob_end_clean();
     }
 }
