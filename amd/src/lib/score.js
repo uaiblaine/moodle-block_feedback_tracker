@@ -110,7 +110,7 @@ export const effectiveWeights = (weights, available) => {
  *
  * @param {object} metrics    {compliancePct, medianEffH, critical, pending, numgraded30d, trendPct}
  * @param {object} weights    Raw (un-normalised) weights from the sliders.
- * @param {number} slaGoal    SLA goal hours (>0; falls back to 24).
+ * @param {number} slaGoal    Target time in hours (>0; falls back to 24).
  * @param {object} thresholds {excellent, good, regular} score-band cutoffs.
  * @returns {{score: number|null, band: string, nodata: boolean,
  *            normalized: object, effective: object,
