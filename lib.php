@@ -29,6 +29,7 @@ use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\calendar\academic_time;
 use block_feedback_tracker\local\calendar\calendar;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\task\requeue_rollups;
 
 /**
  * Returns true when the current request is part of an install / upgrade /
@@ -65,8 +66,10 @@ function block_feedback_tracker_is_bootstrapping(): bool {
 /**
  * Force a global recompute; the `set_updatedcallback()` of every rule-changing
  * setting in settings.php. Bumps `calver` so the calver-keyed caches roll over,
- * purges the calendar caches, resets per-request memos, enqueues every
- * existing (course, group) rollup, and writes an audit row.
+ * purges the calendar caches, resets per-request memos, queues the
+ * background re-queue of every existing (course, group) rollup
+ * ({@see \block_feedback_tracker\task\requeue_rollups}), and writes an audit
+ * row.
  *
  * Returns early while {@see block_feedback_tracker_is_bootstrapping()}: during
  * install, `admin_apply_default_settings()` fires this callback before the
@@ -75,8 +78,6 @@ function block_feedback_tracker_is_bootstrapping(): bool {
  * @return void
  */
 function block_feedback_tracker_invalidate_rollups(): void {
-    global $DB;
-
     if (block_feedback_tracker_is_bootstrapping()) {
         return;
     }
@@ -85,18 +86,8 @@ function block_feedback_tracker_invalidate_rollups(): void {
     academic_time::reset_memos();
 
     $started = time();
-    $count = 0;
-    $rs = $DB->get_recordset(
-        'block_feedback_tracker_group',
-        null,
-        '',
-        'id, courseid, groupid'
-    );
-    foreach ($rs as $row) {
-        dirty_queue::enqueue((int) $row->courseid, (int) $row->groupid, dirty_queue::REASON_BULK);
-        $count++;
-    }
-    $rs->close();
+    requeue_rollups::queue(0, dirty_queue::REASON_BULK);
+    $count = requeue_rollups::count_tuples(0);
 
     try {
         \cache_helper::purge_by_definition('block_feedback_tracker', 'calendar_effective_day');
