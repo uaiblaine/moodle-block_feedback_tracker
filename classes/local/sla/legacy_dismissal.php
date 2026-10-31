@@ -161,6 +161,9 @@ final class legacy_dismissal {
         foreach (array_chunk(array_keys($rows), self::CHUNK) as $ids) {
             [$isql, $iparams] = $DB->get_in_or_equal($ids, SQL_PARAMS_NAMED, 'ld');
             $now = time();
+            /* One raw UPDATE, not set_field_select() per column: the guard
+             * reads iscurrent, which this statement also writes, so the three
+             * columns must change together or the second write finds nothing. */
             $DB->execute(
                 "UPDATE {block_feedback_tracker_sub}
                     SET timedismissed = :dismissed, iscurrent = 0, timemodified = :modified
