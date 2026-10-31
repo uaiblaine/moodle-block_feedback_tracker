@@ -66,7 +66,7 @@ const perceivedDays = (days) => {
  * band slug still drives the badge colour. Other slugs fall back to the
  * score band label.
  *
- * @param {string} band   SLA bucket slug (excellent|good|regular|critical|…).
+ * @param {string} band   Turnaround band slug (excellent|good|regular|critical|…).
  * @param {object} i18n   Label bundle.
  * @returns {string}
  */

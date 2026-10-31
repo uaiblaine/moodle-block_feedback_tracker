@@ -379,8 +379,8 @@ final class rollup_service_test extends \advanced_testcase {
     // succeeds; a concurrent holder cannot be simulated without mocking the factory.
 
     /**
-     * The day-ruler over-goal count is bounded by the SLA goal in days, as the
-     * hour one is by the SLA goal in hours, not by the first bucket threshold.
+     * The day-ruler over-goal count is bounded by the target time in days, as the
+     * hour one is by the target time in hours, not by the first bucket threshold.
      *
      * "Now" is pinned to Thursday 12 March 2026, noon UTC, so the business-day
      * counts are fixed: three since the Monday before, eight since the Monday

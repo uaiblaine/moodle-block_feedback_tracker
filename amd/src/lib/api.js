@@ -198,7 +198,7 @@ export const getGraderPriorityList = ({limit = 10, bucket = ''} = {}) =>
  * Site-wide daily benchmarks for the dashboard's school comparison: one row
  * per day (a YYYYMMDD `day` in the plugin's calendar time zone) with the
  * median, 10th and 90th percentile of effective hours, the share graded
- * within the SLA goal and the number graded, oldest day first. The service
+ * within the target time and the number graded, oldest day first. The service
  * requires block/feedback_tracker:viewschoolcomparison at system context and
  * caps the window at get_school_comparison::MAX_DAYS.
  *

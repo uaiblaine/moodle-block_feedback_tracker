@@ -41,7 +41,7 @@ const ZONE_LABEL_MIN_WIDTH = 110;
 /**
  * @param {object} props
  * @param {Array<number|null>} props.values  Ordered (oldest → newest).
- * @param {number|null} [props.goal]         SLA goal hours; drives the zone.
+ * @param {number|null} [props.goal]         Target time in hours; drives the zone.
  * @param {number} [props.width]
  * @param {number} [props.height]
  * @param {string} [props.color]             Polyline stroke (band colour).
