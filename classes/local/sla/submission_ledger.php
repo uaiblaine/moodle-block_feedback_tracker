@@ -709,11 +709,11 @@ class submission_ledger {
 
         self::set_islatest($cmid, $userid, $attemptnumber, $latest);
         if ($newcycle) {
-            $DB->execute(
-                'UPDATE {block_feedback_tracker_sub}
-                    SET iscurrent = 0
-                  WHERE cmid = :cmid AND userid = :userid
-                    AND attemptnumber = :att AND cycle < :cycle',
+            $DB->set_field_select(
+                'block_feedback_tracker_sub',
+                'iscurrent',
+                0,
+                'cmid = :cmid AND userid = :userid AND attemptnumber = :att AND cycle < :cycle',
                 ['cmid' => $cmid, 'userid' => $userid, 'att' => $attemptnumber, 'cycle' => $cycle]
             );
         }
@@ -750,16 +750,12 @@ class submission_ledger {
      */
     private static function set_islatest(int $cmid, int $userid, int $attemptnumber, int $latest): void {
         global $DB;
-        $DB->execute(
-            'UPDATE {block_feedback_tracker_sub}
-                SET islatest = :islatest
-              WHERE cmid = :cmid AND userid = :userid AND attemptnumber = :att',
-            [
-                'islatest' => $latest,
-                'cmid' => $cmid,
-                'userid' => $userid,
-                'att' => $attemptnumber,
-            ]
+        $DB->set_field_select(
+            'block_feedback_tracker_sub',
+            'islatest',
+            $latest,
+            'cmid = :cmid AND userid = :userid AND attemptnumber = :att',
+            ['cmid' => $cmid, 'userid' => $userid, 'att' => $attemptnumber]
         );
     }
 
@@ -1383,7 +1379,9 @@ class submission_ledger {
         /* timeclosed and closedsource go through COALESCE: a cycle the
          * gradebook already closed carries a timeclosed with no timereleased,
          * and a plain assignment would move that recorded response later,
-         * breaking earliest-wins. The release itself is recorded either way. */
+         * breaking earliest-wins. The release itself is recorded either way.
+         * A raw UPDATE because the DML API has no set-based write of several
+         * columns, nor one whose new value reads the row's own. */
         $DB->execute(
             'UPDATE {block_feedback_tracker_sub}
                 SET timereleased = :when,
@@ -1400,12 +1398,12 @@ class submission_ledger {
         );
         /* Only rows the release policy left open are closed here; under the
          * default policy the mark already stopped their clock. */
-        $DB->execute(
-            'UPDATE {block_feedback_tracker_sub}
-                SET timegraded = :when
-              WHERE cmid = :cmid AND userid = :userid
-                AND timemarked IS NOT NULL AND timegraded IS NULL',
-            $params
+        $DB->set_field_select(
+            'block_feedback_tracker_sub',
+            'timegraded',
+            $when,
+            'cmid = :cmid AND userid = :userid AND timemarked IS NOT NULL AND timegraded IS NULL',
+            ['cmid' => $cmid, 'userid' => $userid]
         );
 
         $rows = $DB->get_records(
