@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2025100608`.
+Version `2025100609`.
+
+### Added
+- **Course backup and restore** (issue #118), chosen by a new setting,
+  `block_feedback_tracker/backup_ledger`. By default (`rederive`) a backup
+  carries nothing of the plugin, and a restore queues `rederive_course`, which
+  rebuilds the restored course's measurements from its submissions and grades
+  whatever `backfill_active` says. With `full`, backups that include user data
+  carry every ledger cycle of the course (`backup/moodle2/`); the restore
+  maps them to the restored activities, students, groups and markers, moves
+  the rule dates with the course start, and then rebuilds the rest. A restore follows the file, not the setting.
 
 ### Fixed
 - **The component smoke test page (`pages/spike_react.php`) shows its labels in

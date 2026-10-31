@@ -239,6 +239,18 @@ if ($ADMIN->fulltree) {
         0
     ));
 
+    // Read when a course backup is built; a restore follows the file instead.
+    $settings->add(new admin_setting_configselect(
+        'block_feedback_tracker/backup_ledger',
+        get_string('settings_backup_ledger', $plugin),
+        get_string('settings_backup_ledger_desc', $plugin),
+        'rederive',
+        [
+            'rederive' => get_string('settings_backup_ledger_rederive', $plugin),
+            'full' => get_string('settings_backup_ledger_full', $plugin),
+        ]
+    ));
+
     // Heading: Performance.
     $settings->add(new admin_setting_heading(
         'block_feedback_tracker/performance',

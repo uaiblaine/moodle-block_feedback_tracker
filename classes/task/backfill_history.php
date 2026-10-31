@@ -172,7 +172,7 @@ class backfill_history extends \core\task\scheduled_task {
             $courseid = (int) $row->courseid;
             $coursecursor = (int) $row->lastsubid;
             $remainingquota = min($percoursecap, $totalcap - $dispatchedtotal);
-            [$dispatched, $newcursor, $complete] = $this->dispatch_course_chunk(
+            [$dispatched, $newcursor, $complete] = self::dispatch_course_chunk(
                 $courseid,
                 $coursecursor,
                 $remainingquota,
@@ -217,8 +217,9 @@ class backfill_history extends \core\task\scheduled_task {
      *
      * The "complete" flag is set when the SELECT returned strictly fewer
      * rows than the per-course quota — meaning we've drained every row
-     * past this cursor for this course. The cursor row's active flag
-     * gets flipped to 0 by the caller.
+     * past this cursor for this course. The scheduled walk then flips the
+     * course's cursor row to active=0; {@see rederive_course} walks a
+     * restored course through this method without a cursor row.
      *
      * @param int $courseid
      * @param int $cursor    Current cursor value (rows with id > cursor are eligible).
@@ -227,7 +228,7 @@ class backfill_history extends \core\task\scheduled_task {
      * @param int $floor     Oldest `timemodified` dispatched, 0 for no floor.
      * @return array{0:int, 1:int, 2:bool}
      */
-    private function dispatch_course_chunk(int $courseid, int $cursor, int $quota, int $subchunk, int $floor): array {
+    public static function dispatch_course_chunk(int $courseid, int $cursor, int $quota, int $subchunk, int $floor): array {
         global $DB;
         if ($quota < 1) {
             return [0, $cursor, false];
