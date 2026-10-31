@@ -590,6 +590,7 @@ $string['sim_weights_reset'] = 'Reset to current settings';
 $string['sparkline_aria'] = 'Trend over the last 14 days';
 $string['sparkline_zone_label'] = 'Desired speed: 0 to {$a}';
 $string['spike_react_title'] = 'Feedback Flow — React spike';
+$string['spike_reroll'] = 'Re-roll score';
 $string['status_awaiting_release'] = 'Awaiting release';
 $string['status_awaiting_release_help'] = 'This submission has been marked, but the marking workflow has not reached "Released", so the student cannot see the grade or the feedback yet. Releasing needs the "Manage marking workflow" permission, which the marker does not always hold — if that is your case, ask whoever runs the workflow for this activity to release it.';
 $string['status_closed_in_gradebook'] = 'Graded in gradebook';
