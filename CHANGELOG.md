@@ -18,6 +18,14 @@ Version `2024100707`.
   the gauge and sparkline get their accessible names from it too. One new
   string, `spike_reroll`.
 
+### Changed
+- **Single-column ledger updates go through `set_field_select()`** (issue
+  #119): the `iscurrent` and `islatest` writes of `submission_ledger` and the
+  release's `timegraded` close. Two writes keep a raw `UPDATE`, each with a
+  comment saying why: the release stamp sets four columns, two of them through
+  `COALESCE` over the row's own value, and the legacy dismissal sets three
+  columns under a guard that reads one of them. Same statements, same counts.
+
 ## [v4.5-r3] - 2026-10-23
 
 The teacher dashboard's undefined-constant fix, with two tests that guard the
