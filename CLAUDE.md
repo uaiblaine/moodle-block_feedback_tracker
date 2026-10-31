@@ -807,6 +807,24 @@ Drafts are surfaced read-only and de-emphasised (report + drilldown only) via
   the rows where they marked; deleting a marker's account keeps them, as for
   `allocmarkerid`.
 
+## Backup and restore (`backup/moodle2/`)
+
+`block_feedback_tracker/backup_ledger` decides what a course backup carries:
+nothing (`rederive`, the default) or, in backups with user data, every
+`_sub` and `_alloc` row of the course (`full`). The restore follows the file,
+and every restore queues `task\rederive_course`, which walks the course's
+submissions through `backfill_history::dispatch_course_chunk()`.
+
+- **Core restores the course's blocks before its activities**, so the
+  restore step parks each row in `backup_ids_temp` and writes it in its
+  `after_restore()`, once the ids map. Don't move the writes into the
+  `process_*()` methods: no activity has a new id there.
+- **A new column** goes into `SUB_FIELDS` / `ALLOC_FIELDS`
+  (`backup_restore_test` pins them to `install.xml`), and a new column that
+  holds a user, group or activity id is mapped in `after_restore()` as well.
+  The rule dates are moved with `apply_date_offset()`; every other instant is
+  when something happened and is kept.
+
 ## Files `moodle-plugin-ci validate` parses
 
 `validate` bootstraps core in its own process and, on 5.2, dies with a PHP
