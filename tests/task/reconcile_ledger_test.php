@@ -743,7 +743,7 @@ final class reconcile_ledger_test extends \advanced_testcase {
      * A due date changed with no event is repaired.
      *
      * Due dates, cut-offs, overrides and extensions change with no per-row
-     * signal, so a stale stored rule would put every "within SLA" answer
+     * signal, so a stale stored rule would put every "within target" answer
      * against a deadline that no longer exists. Only the rule sweep notices.
      *
      * @return void

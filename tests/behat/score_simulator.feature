@@ -14,5 +14,5 @@ Feature: The score simulator writes each slider value as a number of the languag
     Given I log in as "admin"
     When I am on the "block_feedback_tracker > Score simulator" page
     Then I should see "Σ 1.00" in the "//section[contains(concat(' ', normalize-space(@class), ' '), ' bft-sim-panel ')][h3[normalize-space(.)='Criterion weights']]" "xpath_element"
-    And I should see "0.40" in the "//label[contains(concat(' ', normalize-space(@class), ' '), ' bft-sim-slider ')][span[normalize-space(.)='Compliance']]" "xpath_element"
+    And I should see "0.40" in the "//label[contains(concat(' ', normalize-space(@class), ' '), ' bft-sim-slider ')][span[normalize-space(.)='Within target']]" "xpath_element"
     And I should see "0.10" in the "//label[contains(concat(' ', normalize-space(@class), ' '), ' bft-sim-slider ')][span[normalize-space(.)='Trend']]" "xpath_element"

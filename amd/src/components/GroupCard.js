@@ -168,7 +168,7 @@ export default function GroupCard({group, courseid, i18n, config}) {
     const goal = config && config.sla_goal_hours ? Number(config.sla_goal_hours) : null;
 
     // Mutually-exclusive pending bands (sum = total pending): critical
-    // | over-goal | within-goal (the remainder within SLA).
+    // | over-goal | within-goal (the remainder within the target time).
     const critical = Number(group.critical) || 0;
     const overgoal = Number(group.overgoal) || 0;
     const waiting = Math.max(0, (Number(group.pending) || 0) - overgoal - critical);
@@ -186,7 +186,7 @@ export default function GroupCard({group, courseid, i18n, config}) {
     // The Perceived tile is in days in both display units, so it always shows
     // the date-based calendar-day median; days are never derived from hours.
     const perceivedvalue = fmtDayMedian(group.cur_median_perc_days);
-    // SLA compliance honours the display unit: business-days mode shows the
+    // The within-target share honours the display unit: business-days mode shows the
     // day-ruler twin (compliance_pct_days), hours mode the effective-hours
     // compliance. Both are display-only; the score is unaffected.
     const compliance = usesDays(config) ? group.compliance_pct_days : group.compliance_pct;
@@ -241,7 +241,6 @@ export default function GroupCard({group, courseid, i18n, config}) {
                             label=${i18n.card_sla}
                             value=${fmtPct(compliance)}
                             unit="%"
-                            sub=${i18n.card_sla_sub}
                             tone=${band} />
                     </div>
 

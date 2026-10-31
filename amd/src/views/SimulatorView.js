@@ -242,7 +242,7 @@ export default function SimulatorView({initial}) {
                             <span>${i18n.sim_in_trend_unavailable || 'Trend unavailable (course just started)'}</span>
                         </label>
                         <${Slider}
-                            label=${i18n.sim_in_slagoal || 'SLA goal (hours)'}
+                            label=${i18n.sim_in_slagoal || 'Target time (h)'}
                             value=${slaGoal} min=${1} max=${120} step=${1} unit="h"
                             disabled=${false}
                             onInput=${(v) => {
