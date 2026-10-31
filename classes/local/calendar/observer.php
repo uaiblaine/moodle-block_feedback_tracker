@@ -28,20 +28,23 @@ namespace block_feedback_tracker\local\calendar;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\task\requeue_rollups;
 
 /**
  * Listens for the three custom plugin events that announce calendar changes
  * (`cal_day_updated`, `cal_hours_updated`, `cal_pause_updated`) and:
  *  1) bumps the calver, so the calver-keyed caches stop being read, and drops
  *     the per-request memos used by the academic-time engine,
- *  2) enqueues the affected (courseid, groupid) tuples for rollup recompute,
+ *  2) re-queues the affected (courseid, groupid) tuples for rollup recompute,
  *  3) purges the two calver-keyed MUC definitions, which have no ttl, so the
  *     entries the bump made unreachable do not stay in the store,
  *  4) records one audit row with the number of tuples re-queued.
  *
  * Calendar-day and business-hour edits affect every rollup row site-wide;
  * pause-window edits are scoped (site → all, course → that course only,
- * group → that single tuple).
+ * group → that single tuple). A site or course scope is walked by
+ * {@see requeue_rollups} in the background, so the request costs the same
+ * however many tuples there are; a group scope is one tuple and is queued here.
  */
 class observer {
     /**
@@ -61,7 +64,7 @@ class observer {
         $started = time();
         $other = self::other($event);
         self::invalidate();
-        $count = self::enqueue_all_groups(dirty_queue::REASON_CALENDAR);
+        $count = self::requeue(0, dirty_queue::REASON_CALENDAR);
         self::purge_caches();
 
         $reason = ($other['daytype'] ?? null) === self::BULK_IMPORT_DAYTYPE
@@ -79,7 +82,7 @@ class observer {
     public static function hours_updated(\core\event\base $event): void {
         $started = time();
         self::invalidate();
-        $count = self::enqueue_all_groups(dirty_queue::REASON_CALENDAR);
+        $count = self::requeue(0, dirty_queue::REASON_CALENDAR);
         self::purge_caches();
         self::audit(recompute_log::REASON_BUSINESS_HOURS_SAVE, $count, $event, self::other($event), $started);
     }
@@ -101,10 +104,10 @@ class observer {
         $count = 0;
         switch ($scopelevel) {
             case 'site':
-                $count = self::enqueue_all_groups(dirty_queue::REASON_PAUSE);
+                $count = self::requeue(0, dirty_queue::REASON_PAUSE);
                 break;
             case 'course':
-                $count = self::enqueue_course_groups($scopeid);
+                $count = $scopeid > 0 ? self::requeue($scopeid, dirty_queue::REASON_PAUSE) : 0;
                 break;
             case 'group':
                 $count = self::enqueue_group($scopeid);
@@ -166,49 +169,15 @@ class observer {
     }
 
     /**
-     * Enqueue every existing (course, group) tuple in the rollup table.
+     * Queue the background re-queue of one scope.
      *
-     * @param string $reason
-     * @return int Tuples enqueued.
+     * @param int $courseid The course; 0 for every course.
+     * @param string $reason One of dirty_queue::REASON_*.
+     * @return int Tuples the walk will re-queue, as counted now.
      */
-    private static function enqueue_all_groups(string $reason): int {
-        global $DB;
-        $count = 0;
-        $rs = $DB->get_recordset(
-            'block_feedback_tracker_group',
-            null,
-            '',
-            'id, courseid, groupid'
-        );
-        foreach ($rs as $row) {
-            dirty_queue::enqueue((int) $row->courseid, (int) $row->groupid, $reason);
-            $count++;
-        }
-        $rs->close();
-        return $count;
-    }
-
-    /**
-     * Enqueue every (course, group) tuple for a single course.
-     *
-     * @param int $courseid
-     * @return int Tuples enqueued.
-     */
-    private static function enqueue_course_groups(int $courseid): int {
-        global $DB;
-        $count = 0;
-        $rs = $DB->get_recordset(
-            'block_feedback_tracker_group',
-            ['courseid' => $courseid],
-            '',
-            'id, courseid, groupid'
-        );
-        foreach ($rs as $row) {
-            dirty_queue::enqueue((int) $row->courseid, (int) $row->groupid, dirty_queue::REASON_PAUSE);
-            $count++;
-        }
-        $rs->close();
-        return $count;
+    private static function requeue(int $courseid, string $reason): int {
+        requeue_rollups::queue($courseid, $reason);
+        return requeue_rollups::count_tuples($courseid);
     }
 
     /**
