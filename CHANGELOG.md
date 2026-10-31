@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026042010`.
+Version `2026042011`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -36,6 +36,16 @@ Version `2026042010`.
   comment saying why: the release stamp sets four columns, two of them through
   `COALESCE` over the row's own value, and the legacy dismissal sets three
   columns under a guard that reads one of them. Same statements, same counts.
+- **A calendar edit or a settings save no longer walks every rollup tuple in
+  the request** (issue #120, stage 1). Saving a calendar day, business hours, a
+  site or course pause, or a rule-changing setting cost two statements per
+  tuple inside the admin's request (200,000 statements and about 19 s for
+  100,000 tuples). The request now bumps the calendar version, purges the
+  caches, writes the audit row and queues one `requeue_rollups` adhoc task; the
+  task walks the tuples in the background. Consecutive edits of one scope share
+  one task. A group pause still re-queues its one tuple in the request.
+  `tests/perf/observer_cost_bench.php` measures what each handler costs in the
+  request; it is not part of the testsuite.
 
 ## [v5.2-r3] - 2026-10-23
 
