@@ -431,11 +431,12 @@ final class observer_lifecycle_test extends \advanced_testcase {
     }
 
     /**
-     * Deleting a group with few users re-attributes their rows at once.
+     * Deleting a group leaves the request alone, however few users it held,
+     * and queues one task, which moves every row.
      *
      * @return void
      */
-    public function test_deleting_a_small_group_reattributes_its_users_inline(): void {
+    public function test_deleting_a_group_hands_the_reattribution_to_one_task(): void {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/group/lib.php');
         $this->resetAfterTest();
@@ -446,39 +447,19 @@ final class observer_lifecycle_test extends \advanced_testcase {
 
         groups_delete_group($group);
 
-        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]));
-        $this->assertSame(2, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
-        $this->assertCount(0, \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\reattribute_users::class));
-    }
-
-    /**
-     * Deleting a group with more users than one chunk leaves the request
-     * alone and hands the re-attribution to adhoc tasks, one per chunk.
-     *
-     * @return void
-     */
-    public function test_deleting_a_large_group_hands_the_reattribution_to_adhoc_tasks(): void {
-        global $CFG, $DB;
-        require_once($CFG->dirroot . '/group/lib.php');
-        $this->resetAfterTest();
-        $this->seed_calendar();
-        [$course] = $this->build_environment();
-        $group = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
-        $this->seed_group_rows((int) $course->id, (int) $group->id, 51);
-
-        groups_delete_group($group);
-
         $this->assertSame(
-            51,
+            2,
             $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]),
             'Nothing is re-attributed inside the request.'
         );
-        $this->assertCount(2, \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\reattribute_users::class));
+        $this->assertCount(1, \core\task\manager::get_adhoc_tasks(\block_feedback_tracker\task\reattribute_users::class));
 
+        ob_start();
         $this->runAdhocTasks('\block_feedback_tracker\task\reattribute_users');
+        ob_end_clean();
 
         $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $group->id]));
-        $this->assertSame(51, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
+        $this->assertSame(2, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
     }
 
     /**

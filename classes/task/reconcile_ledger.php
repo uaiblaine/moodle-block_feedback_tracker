@@ -32,7 +32,6 @@ use block_feedback_tracker\local\sla\dirty_queue;
 use block_feedback_tracker\local\sla\grading_state;
 use block_feedback_tracker\local\sla\process_memos;
 use block_feedback_tracker\local\sla\retention;
-use block_feedback_tracker\local\sla\rule_resolver;
 use block_feedback_tracker\local\sla\submission_ledger;
 use block_feedback_tracker\local\sla\submission_status;
 
@@ -51,14 +50,12 @@ use block_feedback_tracker\local\sla\submission_status;
  *  - A gradebook-side override or lock silences the event too.
  *  - `assign::reset_userdata()` bulk-deletes submissions with
  *    `delete_records_select()`, leaving orphan ledger rows behind.
- *  - Due dates, cut-offs, overrides and extensions change with no per-row
- *    signal.
  *
  * Each sweep walks its driving set in windows of `reconcile_batch_size` rows
  * behind its own keyset cursor, as many windows as its share of the tick's
  * time cap allows ({@see self::walk()}), and every sweep but the orphan one is
  * limited to the courses {@see course_access::processable_course_ids()}
- * returns. Seven sweeps dispatch their repairs — six as
+ * returns. Six sweeps dispatch their repairs — five as
  * {@see backfill_one_submission}, the allocation one as
  * {@see stamp_allocations} — which keeps the academic-time engine out of this
  * task's own time budget.
@@ -177,7 +174,7 @@ class reconcile_ledger extends \core\task\scheduled_task {
         }
         $batch = min($batch, self::MAX_BATCH);
         /* A cap of its own rather than drain_time_cap_seconds: the drain only
-         * queues a few hundred rows, while this runs nine diffs against the
+         * queues a few hundred rows, while this runs eight diffs against the
          * assignment tables. The upgrade step that introduced the setting
          * seeded it from drain_time_cap_seconds. */
         $timecap = (int) (get_config('block_feedback_tracker', 'reconcile_time_cap_seconds')
@@ -192,7 +189,6 @@ class reconcile_ledger extends \core\task\scheduled_task {
             'latest' => 'sweep_latest_drift',
             'orphan' => 'sweep_orphans',
             'participant' => 'sweep_departed_participants',
-            'rules' => 'sweep_rule_drift',
             'allocation' => 'sweep_unstamped_allocations',
         ];
         /* Resume after the last sweep that ran, so the tail of the registry is
@@ -991,51 +987,6 @@ class reconcile_ledger extends \core\task\scheduled_task {
             dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
         }
         return count($rows);
-    }
-
-    /**
-     * Ledger rows whose stored rule no longer matches the activity.
-     *
-     * Covers a changed open date, due date or cut-off, an override or an
-     * extension whose event was lost, a group override edit that moved it to
-     * another group, a reordering of group overrides (core fires no event for
-     * it), and the group changes the observer does not re-date: a membership
-     * event that was lost, and a deleted group's former member whose rows
-     * report under another group ({@see \block_feedback_tracker\local\sla\observer::group_deleted()}).
-     *
-     * The expected dates come from the same SQL the writer stores them with
-     * ({@see rule_resolver::drift_sql()}), so a row is selected exactly when a
-     * repair would change it; the repair writes only the current cycle, hence
-     * `iscurrent = 1`.
-     *
-     * @param array $processable Course ids in scope.
-     * @param int $batch Window size.
-     * @param string $key Cursor key.
-     * @return int Rows dispatched for repair.
-     */
-    private function sweep_rule_drift(array $processable, int $batch, string $key): int {
-        global $DB;
-        [$csql, $cparams] = $DB->get_in_or_equal($processable, SQL_PARAMS_NAMED, 'c');
-        $acted = $this->walk(
-            $key,
-            $batch,
-            $this->ledger_window("AND l.iscurrent = 1 AND l.courseid $csql", $cparams, $batch),
-            $this->repair_probe(
-                "SELECT l.id AS subid, l.cmid, l.courseid, l.userid, l.groupid,
-                        l.teamgroupid, l.attemptnumber, a.teamsubmission AS isteam
-                   FROM {block_feedback_tracker_sub} l
-                   JOIN {course_modules} cm ON cm.id = l.cmid
-                   JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-                   JOIN {assign} a ON a.id = cm.instance
-                   " . rule_resolver::joins_sql('a.id', 'l.userid') . "
-                  WHERE l.id " . self::WINDOW_TOKEN . "
-                    AND " . rule_resolver::drift_sql('l', 'a') . "
-               ORDER BY l.id ASC",
-                ['modname' => 'assign']
-            )
-        );
-        $this->flush_repairs($key);
-        return $acted;
     }
 
     /**
