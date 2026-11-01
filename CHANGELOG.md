@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026042013`.
+Version `2026042014`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -62,6 +62,20 @@ Version `2026042013`.
   debugging notice as the only trace. The request now queues one
   `rederive_activity` adhoc task, which walks the activity in windows of ids
   with no ceiling; consecutive saves of one activity share one walk.
+- **Deleting a group re-attributes its rows in the background, and no group,
+  override or extension change re-dates rows** (issue #120, stage 3). Deleting a
+  group read up to 20,000 users in the request and moved up to 50 of them there;
+  it now queues one `reattribute_users` task for the course and group, which
+  walks the group's users in pages with no ceiling. The open, due and cut-off
+  dates a row stores are now frozen when its cycle closes: the writer resolves
+  them from live state while the cycle is open and keeps them once it has
+  closed, so a closed cycle records the dates in force when the teacher
+  answered. With that, the seven group override, user override and extension
+  observers, the re-dating after a membership change and the reconciler's
+  `rules` sweep are removed: saving a group override no longer rewrites every
+  member's rows in the teacher's request (200,009 statements and 425 s for
+  100,000 members), and no rollup is re-queued for a date change. An upgrade
+  step removes the sweep's cursor.
 
 ## [v5.2-r3] - 2026-10-23
 

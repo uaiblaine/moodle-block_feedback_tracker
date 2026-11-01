@@ -580,8 +580,7 @@ The gate is applied at every **write-path entry**:
 - Event observers in `classes/local/sla/observer.php`
   (submission_changed / submission_graded / workflow_state_changed /
   identities_revealed / course_module_updated / marker_changed (which also
-  feeds the per-marker slot table) /
-  override_changed / user_rule_changed / gradebook_changed /
+  feeds the per-marker slot table) / gradebook_changed /
   group_membership_changed / group_deleted).
 - Batch jobs through `course_access::processable_course_ids()`:
   `backfill_history` and `reconcile_ledger` restrict their scans to those
@@ -700,44 +699,32 @@ Retention (`prune_ledger`) deletes closed rows by `timegraded`, which a
 dismissed row never gets, so it prunes dismissed rows by `timedismissed` in a
 query of its own.
 
-## Group changes re-date rows (`local/sla/observer.php`)
+## Rule dates freeze at close (`local/sla/submission_ledger.php`)
 
-A student's groups decide their dates through the governing group override
-(`rule_resolver`), and core fires no override event when membership changes.
-So `group_member_added` / `group_member_removed` run
-`observer::group_membership_changed()`, which moves the user's rows to the
-group they report under (`submission_ledger::reattribute_user()`) and then
-re-dates them with `submission_ledger::re_resolve_rules_for_group_change()`.
+Each ledger row stores the open, due and cut-off dates its student was judged
+against (`timeopens`, `timecloses`, `timecutoff`, `hasrule`), resolved by
+`rule_resolver::resolve_rule()`: the student's override, then the governing
+group override, then the activity, with any extension on top. Nothing in the
+plugin reads them yet; they are kept as a record, because core keeps no
+history of overrides and extensions.
 
-The cost is bounded on purpose, because this runs inside whatever request
-edits the group:
-
-- **One query over that user's current rows in the course**, limited to
-  activities that still carry a group override, or to rows storing dates
-  other than the activity's own (a deleted group's overrides may already be
-  gone when this runs). On a course with no group override, whose rows store
-  the dates they resolve to, that one query returns nothing and nothing is
-  written; `group_change_dates_test` counts the reads.
-- **Only rows whose dates drift are written**, selected with
-  `rule_resolver::drift_sql()`, the predicate `reconcile_ledger`'s rule-drift
-  sweep uses; the writer, this path and that sweep all read the dates through
-  `rule_resolver::joins_sql()` / `select_sql()`, so they cannot disagree.
-  Only the current cycle (`iscurrent = 1`) is written, as the writer and the
-  sweep do. Each written row's tuple is re-queued with `REASON_PAUSE`.
-- **At most `observer::BULK_CHUNK` (50) rows inline.** When more would move,
-  nothing is written in the request and a `reattribute_users` adhoc task is
-  queued for that one user; it re-attributes again (moving nothing the second
-  time) and re-dates without a limit.
-
-`group_deleted` re-dates the users whose rows reported under the deleted
-group, in the request up to `BULK_CHUNK` users and in `reattribute_users`
-chunks above that. A former member whose rows report under another of their
-groups is not found (nothing left in the database says they were a member) and
-keeps the deleted group's dates until the rule-drift sweep reaches the row.
-The older override-event paths, `re_resolve_rules_for_assign_group()` and
-`re_resolve_rules_for_assign_user()`, still rewrite closed cycles as well;
-which rule is right is an open decision, so don't copy either into new code
-without choosing.
+- **The writer is the only path that writes them.** While a cycle is open,
+  `build_and_store()` resolves them from live state at every write; once the
+  cycle has closed (`timegraded` stored before this write and still set), it
+  keeps the stored values. So the write that closes a cycle records the dates
+  in force when the teacher answered, and a re-grade, a settings save or a
+  reconciler repair never moves them. A withdrawn grade opens the cycle
+  again, and it follows live state until it closes again.
+- **No override, extension or group event re-dates rows.** An open cycle
+  takes a new override at its next write. Don't add an observer or a sweep
+  that rewrites these columns: one that reached closed cycles would erase the
+  record, and one over open cycles only would run a group-sized write in a
+  teacher's request for columns nothing reads.
+- **Group changes move rows, not dates.** `group_member_added` /
+  `group_member_removed` run `submission_ledger::reattribute_user()` for the
+  one user; `group_deleted` queues one `reattribute_users` task for the
+  course and group (core's duplicate check), which walks the users whose rows
+  reported under the group in pages, with no ceiling.
 
 ## Submission-status scope (submitted-only)
 
