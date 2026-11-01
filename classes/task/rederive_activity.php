@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\course_access;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Queued by the two events that change what an activity's rows mean
@@ -92,6 +93,7 @@ class rederive_activity extends \core\task\adhoc_task {
      */
     public function execute(): void {
         global $DB;
+        process_memos::reset();
         $data = $this->get_custom_data();
         $cmid = (int) ($data->cmid ?? 0);
         $source = (string) ($data->source ?? self::SOURCE_LEDGER);
