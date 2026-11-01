@@ -613,6 +613,55 @@ $this->getDataGenerator()->create_block('feedback_tracker', [
 course_access::reset_memo();  // flush memo for recycled courseids
 ```
 
+## Observer cost contract (`db/events.php`)
+
+Every observer runs inside the request of whoever caused the event: a
+student handing in, a teacher grading or saving an activity, an admin editing
+the calendar or deleting a group. **What a handler does in that request may
+depend on one person's rows or on the groups it touches, never on how many
+rows an activity, a course, a group or the site holds.** Work that does goes
+to an adhoc task.
+
+Every handler falls in one of four shapes; a new one must too.
+
+- **One person's rows.** `submission_changed`, `submission_graded`,
+  `workflow_state_changed`, `marker_changed`, `gradebook_changed` and
+  `group_membership_changed` write one student's (or
+  one team's) rows of one activity or course; `enrolment_changed` and
+  `user_deleted` delete one person's rows. Each refreshes only the rollup
+  tuples those rows report under.
+- **A bulk walk, queued.** An assign settings save (`course_module_updated`),
+  `identities_revealed` and `group_deleted` queue one `rederive_activity` or
+  `reattribute_users` task, and a calendar edit or a rule-changing settings
+  save (`local\calendar\observer`, `block_feedback_tracker_invalidate_rollups()`)
+  one `requeue_rollups` task. Each is queued with core's duplicate check, so
+  repeated saves share one walk. The activity and group walks page through
+  their rows with no ceiling and re-check `is_processable()` when they run;
+  `requeue_rollups` re-queues the scope's rollup tuples through one recordset
+  and walks again while the calendar version moves under it. Each task
+  starts with `process_memos::reset()` (see *Processing scope*), so a walk
+  reads the course as it stands when the task runs, not as an earlier task
+  of the same cron process memoised it.
+- **Set-based cleanup.** `course_deleted` deletes the course's rows with one
+  statement per table. `course_module_deleted` deletes the activity's rows the
+  same way and re-queues each touched (course, group) tuple once, so its
+  statements grow with the groups, not the rows.
+- **One tuple.** A group-scoped pause re-queues that group's rollup inline.
+
+No assign override or extension event is observed at all: rule dates are
+resolved by the writer and frozen at close (see *Rule dates freeze at close*).
+
+Two tests hold the bulk handlers to a cost that does not grow with the rows:
+`tests/local/sla/observer_cost_test.php` and
+`tests/local/calendar/observer_cost_test.php`. Each counts the request's
+statements (`perf_get_reads() + perf_get_writes()`) over 3 and over 60 rows
+or rollup tuples after one warm-up run (the first run in a test fills caches),
+asserts the two counts are equal, and then runs the queued task to prove it
+reaches all 60. A handler that gains a bulk path gets a case there. Judge a
+handler by those counts, not by how many loops or queries its source
+contains: a loop over one person's attempts or over a course's groups is
+within the contract.
+
 ## Reconciliation sweeps (`classes/task/reconcile_ledger.php`)
 
 Every sweep goes through `walk()`: a cheap **window** query fetches up to
