@@ -41,7 +41,7 @@ require_once($CFG->dirroot . '/blocks/feedback_tracker/lib.php');
 
 /**
  * Seeds N rows behind each handler that walks a set (the site's rollup tuples,
- * an activity's ledger or submissions, a group's members), calls the handler
+ * an activity's ledger or submissions, a deleted group's rows), calls the handler
  * with the event core would pass it, and reports the statements, the time and
  * the adhoc tasks it queued, as a table on STDERR.
  *
@@ -73,9 +73,8 @@ final class observer_cost_bench extends \advanced_testcase {
     /**
      * Every case with each N it is measured at.
      *
-     * `group_deleted` is also measured at 50, the most users it handles inside
-     * the request before it hands them to tasks. The per-user handlers are
-     * measured once: their cost depends on one student, not on a set.
+     * The per-user handler is measured once: its cost depends on one
+     * student, not on a set.
      *
      * @return array
      */
@@ -89,9 +88,7 @@ final class observer_cost_bench extends \advanced_testcase {
             'settings_invalidate_rollups' => [100, 1000, 10000, 100000],
             'course_module_updated' => [100, 1000, 10000, 100000],
             'identities_revealed' => [100, 1000, 10000, 100000],
-            'group_override' => [100, 1000, 10000, 100000],
-            'group_deleted' => [50, 100, 1000, 10000, 100000],
-            'user_override' => [1],
+            'group_deleted' => [100, 1000, 10000, 100000],
             'group_member_added' => [1],
         ];
         foreach ($sets as $case => $sizes) {
@@ -117,6 +114,7 @@ final class observer_cost_bench extends \advanced_testcase {
         $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->seed_default_platform_calendar();
 
         $run = $this->prepare($case, $n);
+        $this->analyze_seeded_tables();
 
         course_access::reset_memo();
         $tasks = $DB->count_records('task_adhoc');
@@ -192,13 +190,34 @@ final class observer_cost_bench extends \advanced_testcase {
     }
 
     /**
+     * Refresh the planner's statistics of the seeded tables on PostgreSQL.
+     *
+     * The seed is written inside the test's transaction, where autovacuum
+     * never sees it, so the planner would plan for an empty table and scan
+     * all N rows per point lookup that a site answers through an index.
+     * ANALYZE is allowed inside a transaction; MariaDB keeps its statistics
+     * as it writes.
+     *
+     * @return void
+     */
+    private function analyze_seeded_tables(): void {
+        global $DB;
+        if ($DB->get_dbfamily() !== 'postgres') {
+            return;
+        }
+        foreach (['block_feedback_tracker_sub', 'block_feedback_tracker_group', 'assign_submission'] as $table) {
+            $DB->execute('ANALYZE {' . $table . '}');
+        }
+    }
+
+    /**
      * Run the background tasks that took over a walk from the request, and
      * measure them: the work they do is the work the request no longer does.
      *
      * Only the walks are run ({@see \block_feedback_tracker\task\requeue_rollups},
-     * {@see \block_feedback_tracker\task\rederive_activity}); the backfill and
-     * re-attribution tasks they and the other handlers queue did their work in
-     * the background before this change too.
+     * {@see \block_feedback_tracker\task\rederive_activity},
+     * {@see \block_feedback_tracker\task\reattribute_users}); the backfill
+     * tasks they queue did their work in the background before this change too.
      *
      * @return array [statements, ms], both null when no walk was queued.
      */
@@ -207,6 +226,7 @@ final class observer_cost_bench extends \advanced_testcase {
         $classnames = [
             '\\' . \block_feedback_tracker\task\requeue_rollups::class,
             '\\' . \block_feedback_tracker\task\rederive_activity::class,
+            '\\' . \block_feedback_tracker\task\reattribute_users::class,
         ];
         [$insql, $params] = $DB->get_in_or_equal($classnames);
         if (!$DB->record_exists_select('task_adhoc', "classname $insql", $params)) {
@@ -311,18 +331,6 @@ final class observer_cost_bench extends \advanced_testcase {
                 );
                 return fn() => observer::identities_revealed($event);
 
-            case 'group_override':
-                $this->setup_assign();
-                $groupid = $this->seed_group_members($n);
-                $this->seed_ledger($n, 0);
-                $this->insert_group_override($groupid);
-                $event = \mod_assign\event\group_override_created::create([
-                    'context' => \context_module::instance((int) $this->cm->id),
-                    'objectid' => 1,
-                    'other' => ['assignid' => (int) $this->cm->instance, 'groupid' => $groupid],
-                ]);
-                return fn() => observer::override_changed($event);
-
             case 'group_deleted':
                 $this->setup_assign();
                 $groupid = (int) $this->getDataGenerator()->create_group(['courseid' => $this->course->id])->id;
@@ -332,17 +340,6 @@ final class observer_cost_bench extends \advanced_testcase {
                     'objectid' => $groupid,
                 ]);
                 return fn() => observer::group_deleted($event);
-
-            case 'user_override':
-                $this->setup_assign();
-                $this->seed_ledger(1, 0);
-                $event = \mod_assign\event\user_override_created::create([
-                    'context' => \context_module::instance((int) $this->cm->id),
-                    'objectid' => 1,
-                    'relateduserid' => self::first_userid(),
-                    'other' => ['assignid' => (int) $this->cm->instance],
-                ]);
-                return fn() => observer::user_rule_changed($event);
 
             case 'group_member_added':
                 $this->setup_assign();
@@ -464,41 +461,6 @@ final class observer_cost_bench extends \advanced_testcase {
             'status' => 'submitted',
             'groupid' => 0,
             'latest' => 1,
-        ]);
-    }
-
-    /**
-     * Create a group with N synthetic members.
-     *
-     * @param int $n
-     * @return int The group id.
-     */
-    private function seed_group_members(int $n): int {
-        $groupid = (int) $this->getDataGenerator()->create_group(['courseid' => $this->course->id])->id;
-        $now = time();
-        self::insert_chunked('groups_members', $n, fn(int $i) => [
-            'groupid' => $groupid,
-            'userid' => self::first_userid() + $i,
-            'timeadded' => $now,
-            'component' => '',
-            'itemid' => 0,
-        ]);
-        return $groupid;
-    }
-
-    /**
-     * Give a group a due-date override on the case's assign.
-     *
-     * @param int $groupid
-     * @return void
-     */
-    private function insert_group_override(int $groupid): void {
-        global $DB;
-        $DB->insert_record('assign_overrides', (object) [
-            'assignid' => (int) $this->cm->instance,
-            'groupid' => $groupid,
-            'sortorder' => 1,
-            'duedate' => time() + WEEKSECS,
         ]);
     }
 }

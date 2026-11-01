@@ -122,38 +122,11 @@ $observers = [
         'callback' => '\block_feedback_tracker\local\sla\observer::identities_revealed',
     ],
 
-    // Group overrides on assign.
-    [
-        'eventname' => '\mod_assign\event\group_override_created',
-        'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
-    ],
-    [
-        'eventname' => '\mod_assign\event\group_override_updated',
-        'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
-    ],
-    [
-        'eventname' => '\mod_assign\event\group_override_deleted',
-        'callback' => '\block_feedback_tracker\local\sla\observer::override_changed',
-    ],
-    /* User-level overrides and extensions move the dates one student is judged
-     * against, and no other event carries them. The reconciler's rule-drift
-     * sweep repairs a row whose event was lost, but only on its next pass. */
-    [
-        'eventname' => '\mod_assign\event\user_override_created',
-        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
-    ],
-    [
-        'eventname' => '\mod_assign\event\user_override_updated',
-        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
-    ],
-    [
-        'eventname' => '\mod_assign\event\user_override_deleted',
-        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
-    ],
-    [
-        'eventname' => '\mod_assign\event\extension_granted',
-        'callback' => '\block_feedback_tracker\local\sla\observer::user_rule_changed',
-    ],
+    /* No assign override or extension event is observed. The dates a row
+     * stores are resolved by the writer while its cycle is open and kept from
+     * the moment it closes, so they are the dates in force when the teacher
+     * answered; an open cycle takes the new dates at its next write. See
+     * submission_ledger::build_and_store(). */
 
     // Course / cm lifecycle.
     /* An assign's settings save: markingworkflow, markingallocation and

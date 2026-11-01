@@ -78,9 +78,9 @@ namespace block_feedback_tracker\local\sla;
  * extension over an override.
  *
  * The per-student resolution runs in SQL ({@see self::joins_sql()},
- * {@see self::date_sql()}) so the ledger writer, the re-dating after a group
- * change and the reconciler's rule-drift probe evaluate the very same
- * expressions and cannot disagree about a row.
+ * {@see self::date_sql()}), one query per student. {@see self::resolve_rule()}
+ * serves the ledger writer, which stores the dates while a cycle is open and
+ * keeps them once the cycle closes ({@see submission_ledger::build_and_store()}).
  */
 class rule_resolver {
     /**
@@ -116,7 +116,7 @@ class rule_resolver {
          * subqueries name the student id several times, and a named
          * placeholder may appear only once per statement. Moodle never removes
          * a {user} row (deleting an account only flags it), so the join finds
-         * the same student the reconciler's probe reads from the ledger. */
+         * the student whatever state their account is in. */
         $row = $DB->get_record_sql(
             'SELECT ' . self::select_sql('a', 'rule') . '
                FROM {assign} a
@@ -139,7 +139,7 @@ class rule_resolver {
      *                       with a ledger column of the same query.
      * @return string SQL.
      */
-    public static function select_sql(string $assign, string $prefix): string {
+    private static function select_sql(string $assign, string $prefix): string {
         $select = [];
         foreach (array_keys(self::FIELDS) as $key) {
             $select[] = self::date_sql($key, $assign) . ' AS ' . $prefix . $key;
@@ -155,33 +155,12 @@ class rule_resolver {
      * @param string $prefix The prefix given to select_sql().
      * @return array{timeopens:?int, timecloses:?int, timecutoff:?int, hasrule:int}
      */
-    public static function rule_from_row(?\stdClass $row, string $prefix): array {
+    private static function rule_from_row(?\stdClass $row, string $prefix): array {
         $rule = [];
         foreach (array_keys(self::FIELDS) as $key) {
             $rule[$key] = $row ? self::date_or_null($row->{$prefix . $key}) : null;
         }
         return self::with_hasrule($rule);
-    }
-
-    /**
-     * SQL that is true when a ledger row stores other dates than the ones
-     * {@see self::date_sql()} resolves for it now, over the aliases
-     * {@see self::joins_sql()} adds.
-     *
-     * A row it selects is one a re-resolve would change, and after the re-resolve
-     * it no longer selects it. The ledger stores NULL for "no date" where the
-     * expressions give 0, hence the COALESCE on the stored side.
-     *
-     * @param string $ledger Alias of the {block_feedback_tracker_sub} row.
-     * @param string $assign Alias of the {assign} row.
-     * @return string SQL predicate, parenthesised.
-     */
-    public static function drift_sql(string $ledger, string $assign): string {
-        $drift = [];
-        foreach (array_keys(self::FIELDS) as $key) {
-            $drift[] = "COALESCE($ledger.$key, 0) <> " . self::date_sql($key, $assign);
-        }
-        return '(' . implode(' OR ', $drift) . ')';
     }
 
     /**
@@ -201,7 +180,7 @@ class rule_resolver {
      *                       column, never a placeholder, for the same reason.
      * @return string SQL.
      */
-    public static function joins_sql(string $assignid, string $userid): string {
+    private static function joins_sql(string $assignid, string $userid): string {
         $rank = self::UNSORTED_RANK;
         return "LEFT JOIN {assign_overrides} ruo
                        ON ruo.id = (SELECT MIN(rru.id)
@@ -231,14 +210,14 @@ class rule_resolver {
      * SQL for one effective date over the aliases {@see self::joins_sql()} adds.
      *
      * Evaluates to the date, or to 0 when the student has none; the expression
-     * is never NULL. Compare a stored value with `COALESCE(stored, 0)`.
+     * is never NULL; {@see self::rule_from_row()} reads 0 as no date.
      *
      * @param string $key 'timeopens', 'timecloses' or 'timecutoff'.
      * @param string $assign Alias of the {assign} row in the caller's query.
      * @return string SQL expression.
      * @throws \coding_exception For an unknown key.
      */
-    public static function date_sql(string $key, string $assign): string {
+    private static function date_sql(string $key, string $assign): string {
         if (!isset(self::FIELDS[$key])) {
             throw new \coding_exception('Unknown rule column: ' . $key);
         }
