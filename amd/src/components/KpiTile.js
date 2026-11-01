@@ -15,7 +15,7 @@
 
 /**
  * One cell in the three-column KPI grid that sits below a group's score
- * (Effective / Perceived / SLA). Tiny uppercase label, mono numeric value
+ * (Effective / Perceived / On target). Tiny uppercase label, mono numeric value
  * with unit, faint sub-label.
  *
  * Stateless. Tone control is via a band-slug → CSS class mapping so the

@@ -305,7 +305,7 @@ class get_academic_days extends external_api {
             'groupid'  => new external_value(PARAM_INT, ''),
             'days'     => new external_multiple_structure(new external_single_structure([
                 'ymd'    => new external_value(PARAM_INT, 'YYYYMMDD'),
-                'paused' => new external_value(PARAM_BOOL, 'True when the day is paused (excluded from the SLA)'),
+                'paused' => new external_value(PARAM_BOOL, 'True when the day is paused (excluded from the time count)'),
                 'reason' => new external_value(PARAM_ALPHA, 'weekend | holiday | recess | "" when active'),
                 'band'   => new external_value(PARAM_ALPHA, 'Responsiveness band for active days; "" when paused'),
                 'eff_h'  => new external_value(

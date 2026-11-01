@@ -375,7 +375,7 @@ final class submission_browser_test extends \advanced_testcase {
     }
 
     /**
-     * In business-days mode the pending band's goal is the SLA goal in days,
+     * In business-days mode the pending band's goal is the target time in days,
      * as for the block's over-goal count, not the first bucket threshold.
      *
      * @return void

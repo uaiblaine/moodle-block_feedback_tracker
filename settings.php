@@ -105,7 +105,7 @@ if ($ADMIN->fulltree) {
         'business_days'
     );
 
-    // SLA goal in business days, the day-mode twin of sla_goal_hours. It bounds
+    // Target time in business days, the day-mode twin of sla_goal_hours. It bounds
     // the display-only day figures (compliance_pct_days, overgoal_days and the
     // report's business-days pending band); the score keeps sla_goal_hours, so
     // switching the display unit never moves the score.

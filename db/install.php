@@ -30,7 +30,7 @@
  *  - calver = 1 (monotonic version that keys the calendar and payload caches).
  *  - Mon-Fri 08:00-18:00 business hours in {block_feedback_tracker_chours}.
  *  - Default calendar-behaviour flags (excludeweekends, excludeholidays, ...).
- *  - Default score-formula weights (sum 1.0) and SLA thresholds.
+ *  - Default score-formula weights (sum 1.0) and the target-time thresholds.
  *
  * Idempotent: a config value is written only when unset, and the
  * business-hours rows only when none exist.
@@ -61,7 +61,7 @@ function xmldb_block_feedback_tracker_install() {
         'weight_pending'             => '0.10',
         'weight_trend'               => '0.10',
 
-        // SLA goal and bucket thresholds.
+        // Target time and bucket thresholds.
         'sla_goal_hours'             => '24',
         'sla_goal_days'              => '2',
         'bucket_thresholds_eff'      => '24,48,120',

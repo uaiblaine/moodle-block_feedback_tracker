@@ -85,7 +85,6 @@ class bootstrap {
             'card_perceived_sub' => get_string('card_perceived_sub', 'block_feedback_tracker'),
             'card_score_caption' => get_string('card_score_caption', 'block_feedback_tracker'),
             'card_sla' => get_string('card_sla', 'block_feedback_tracker'),
-            'card_sla_sub' => get_string('card_sla_sub', 'block_feedback_tracker'),
             'overall_eyebrow' => get_string('overall_eyebrow', 'block_feedback_tracker'),
             'pause_type_label' => get_string('pause_type_label', 'block_feedback_tracker'),
             'pause_upcoming_label' => get_string('pause_upcoming_label', 'block_feedback_tracker'),
@@ -111,7 +110,7 @@ class bootstrap {
     }
 
     /**
-     * Config bundle: score weights, SLA goal, band thresholds, feature
+     * Config bundle: score weights, target time, band thresholds, feature
      * toggles, and the separators, locale and time zone the JS formatters
      * (amd/src/lib/format.js) need. Fallbacks match the settings.php defaults,
      * for a site where a setting is not stored yet.
