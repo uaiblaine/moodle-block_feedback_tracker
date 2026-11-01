@@ -106,5 +106,12 @@ function xmldb_block_feedback_tracker_upgrade($oldversion) {
         upgrade_block_savepoint(true, 2026100506, 'feedback_tracker');
     }
 
+    if ($oldversion < 2026100516) {
+        // The reconciler's rule-drift sweep is gone; its keyset cursor is not read any more.
+        unset_config('reconcile_cursor_rules', 'block_feedback_tracker');
+
+        upgrade_block_savepoint(true, 2026100516, 'feedback_tracker');
+    }
+
     return true;
 }

@@ -71,7 +71,7 @@ final class upgrade_test extends \advanced_testcase {
 
         $this->assertTrue($dbman->table_exists($table));
         $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
-        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026100516', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**
@@ -95,7 +95,27 @@ final class upgrade_test extends \advanced_testcase {
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100505));
 
         $this->assertTrue($dbman->field_exists($table, $field));
-        $this->assertSame('2026100506', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026100516', (string) get_config('block_feedback_tracker', 'version'));
+    }
+
+    /**
+     * The 2026100516 step removes the cursor of the reconciler's rule sweep,
+     * which no code reads any more, and leaves the other sweeps' cursors.
+     *
+     * @return void
+     */
+    public function test_the_rule_cursor_step_removes_the_cursor(): void {
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        set_config('reconcile_cursor_rules', '1234', 'block_feedback_tracker');
+        set_config('reconcile_cursor_latest', '5678', 'block_feedback_tracker');
+        set_config('version', 2026100515, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026100515));
+
+        $this->assertFalse(get_config('block_feedback_tracker', 'reconcile_cursor_rules'));
+        $this->assertSame('5678', get_config('block_feedback_tracker', 'reconcile_cursor_latest'), 'Control.');
+        $this->assertSame('2026100516', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**

@@ -26,6 +26,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use block_feedback_tracker\task\reattribute_users;
 use block_feedback_tracker\task\rederive_activity;
 
 /**
@@ -41,12 +42,6 @@ use block_feedback_tracker\task\rederive_activity;
  * tracked earlier is still removed after the block is gone.
  */
 class observer {
-    /** Ceiling on users re-attributed from one deleted group. */
-    private const BULK_MAX_ROWS = 20000;
-
-    /** Users per re-attribution task, and rows re-dated inside the request after a group change. */
-    private const BULK_CHUNK = 50;
-
     /**
      * Resolve the attempt number core currently considers latest for a user.
      *
@@ -392,69 +387,6 @@ class observer {
     }
 
     /**
-     * Group override created / updated / deleted on an assign.
-     *
-     * @param \core\event\base $event
-     * @return void
-     */
-    public static function override_changed(\core\event\base $event): void {
-        $other = $event->other;
-        if (is_object($other)) {
-            $other = (array) $other;
-        }
-        $assignid = (int) ($other['assignid'] ?? 0);
-        $groupid = (int) ($other['groupid'] ?? 0);
-        if ($assignid <= 0 || $groupid <= 0) {
-            return;
-        }
-        global $DB;
-        $courseid = (int) $DB->get_field('assign', 'course', ['id' => $assignid], IGNORE_MISSING);
-        if (!course_access::is_processable($courseid)) {
-            return;
-        }
-        submission_ledger::re_resolve_rules_for_assign_group($assignid, $groupid);
-    }
-
-    /**
-     * User-level override created / updated / deleted, or an extension
-     * granted or revoked on an assign.
-     *
-     * Both change the dates one student's submission is judged against, and
-     * neither reaches the plugin any other way. `extension_granted` carries no
-     * payload beyond the student, so the date is read from
-     * {assign_user_flags}; the same handler serves both because the work is
-     * identical — re-resolve that user's rules from live state.
-     *
-     * @param \core\event\base $event
-     * @return void
-     */
-    public static function user_rule_changed(\core\event\base $event): void {
-        $userid = (int) ($event->relateduserid ?? 0);
-        if ($userid <= 0) {
-            return;
-        }
-
-        $other = $event->other;
-        if (is_object($other)) {
-            $other = (array) $other;
-        }
-        /* The override events carry the assign in other['assignid']; the
-         * extension event has no ->other at all and puts the assign instance
-         * in objectid. */
-        $assignid = (int) ($other['assignid'] ?? ($event->objectid ?? 0));
-        if ($assignid <= 0) {
-            return;
-        }
-
-        global $DB;
-        $courseid = (int) $DB->get_field('assign', 'course', ['id' => $assignid], IGNORE_MISSING);
-        if (!course_access::is_processable($courseid)) {
-            return;
-        }
-        submission_ledger::re_resolve_rules_for_assign_user($assignid, $userid);
-    }
-
-    /**
      * Course-module deleted. Only handles assign cms; others are ignored.
      *
      * @param \core\event\base $event
@@ -696,13 +628,13 @@ class observer {
     }
 
     /**
-     * Group member added / removed.
+     * Group member added or removed.
      *
-     * Moves the user's ledger rows to the group they report under now, and
-     * re-dates the rows whose governing group override the change replaced
-     * ({@see self::redate_after_group_change()}): core fires no other event
-     * for it, and the reconciler's rule-drift sweep reaches a given row only
-     * as its rotation through the whole ledger does.
+     * Moves the user's ledger rows to the group they report under now
+     * ({@see submission_ledger::reattribute_user()}): one user's rows in one
+     * course. The dates the rows store are not re-resolved here; an open
+     * cycle takes them at its next write, and a closed one keeps the dates it
+     * closed under.
      *
      * @param \core\event\base $event
      * @return void
@@ -717,55 +649,17 @@ class observer {
             return;
         }
         submission_ledger::reattribute_user($courseid, $userid);
-        self::redate_after_group_change($courseid, $userid);
     }
 
     /**
-     * Re-date one user's rows after a group change, inside the request while
-     * at most {@see self::BULK_CHUNK} rows move, otherwise in the background.
-     *
-     * The background path is {@see \block_feedback_tracker\task\reattribute_users}
-     * for this one user: it re-attributes again, which moves nothing the
-     * second time, and then re-dates without a limit.
-     *
-     * @param int $courseid
-     * @param int $userid
-     * @return void
-     */
-    private static function redate_after_group_change(int $courseid, int $userid): void {
-        if (submission_ledger::re_resolve_rules_for_group_change($courseid, $userid, self::BULK_CHUNK) !== null) {
-            return;
-        }
-        try {
-            $task = new \block_feedback_tracker\task\reattribute_users();
-            $task->set_custom_data(['courseid' => $courseid, 'userids' => [$userid]]);
-            \core\task\manager::queue_adhoc_task($task, true);
-        } catch (\Throwable $e) {
-            debugging(sprintf(
-                'block_feedback_tracker: could not queue the re-dating of user %d in course %d: %s',
-                $userid,
-                $courseid,
-                $e->getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Group deleted. Reattribute affected users' ledger rows to their new
-     * latest-joined groups (which excludes the now-deleted group), and re-date
-     * them.
+     * Group deleted. Queues one {@see reattribute_users} task, which moves the
+     * rows that reported under the group to the group each user reports under
+     * now.
      *
      * Core deletes the memberships without a group_member_removed event per
-     * member, so this is the only signal. The users are those whose rows
-     * reported under the deleted group; a former member whose rows report
-     * under another group of theirs keeps the deleted group's dates until the
-     * reconciler's rule-drift sweep reaches them, since nothing left in the
-     * database says they were a member.
-     *
-     * Up to {@see self::BULK_CHUNK} users are handled inside the request; a
-     * larger group is handed to {@see \block_feedback_tracker\task\reattribute_users}
-     * in chunks of that size. At most {@see self::BULK_MAX_ROWS} users are
-     * taken, with a debugging notice when the ceiling is reached.
+     * member, so this is the only signal. The rows are read in the task, not
+     * here: a group can hold any number of users, and the deletion runs in
+     * whoever's request removed it, a course reset included.
      *
      * @param \core\event\base $event
      * @return void
@@ -779,48 +673,6 @@ class observer {
         if (!course_access::is_processable($courseid)) {
             return;
         }
-        global $DB;
-        // One entry per user, not per ledger row: reattribute_user() moves all of a user's rows.
-        $userids = array_map('intval', array_keys($DB->get_records_sql(
-            'SELECT DISTINCT userid
-               FROM {block_feedback_tracker_sub}
-              WHERE courseid = :courseid AND groupid = :groupid
-           ORDER BY userid ASC',
-            ['courseid' => $courseid, 'groupid' => $groupid],
-            0,
-            self::BULK_MAX_ROWS
-        )));
-        if (empty($userids)) {
-            return;
-        }
-        if (count($userids) >= self::BULK_MAX_ROWS) {
-            debugging(sprintf(
-                'block_feedback_tracker: deleting group %d hit the %d-user ceiling; '
-                . 'the remaining users\' rows need a manual backfill of course %d.',
-                $groupid,
-                self::BULK_MAX_ROWS,
-                $courseid
-            ));
-        }
-        if (count($userids) <= self::BULK_CHUNK) {
-            foreach ($userids as $userid) {
-                submission_ledger::reattribute_user($courseid, $userid);
-                self::redate_after_group_change($courseid, $userid);
-            }
-            return;
-        }
-        foreach (array_chunk($userids, self::BULK_CHUNK) as $chunk) {
-            try {
-                $task = new \block_feedback_tracker\task\reattribute_users();
-                $task->set_custom_data(['courseid' => $courseid, 'userids' => $chunk]);
-                \core\task\manager::queue_adhoc_task($task);
-            } catch (\Throwable $e) {
-                debugging(sprintf(
-                    'block_feedback_tracker: could not queue the re-attribution of %d user(s): %s',
-                    count($chunk),
-                    $e->getMessage()
-                ));
-            }
-        }
+        reattribute_users::queue_group($courseid, $groupid);
     }
 }
