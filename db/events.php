@@ -23,6 +23,14 @@
  * as adhoc tasks; rollups are recomputed out of band. Why each event matters
  * is documented on its handler in {@see \block_feedback_tracker\local\sla\observer}.
  *
+ * Every handler runs inside the request of whoever caused the event, so its
+ * cost may depend on one person's rows or on the groups it touches, never on
+ * how many rows an activity, a course, a group or the site holds: a walk over
+ * those is queued as an adhoc task. A handler added here follows that
+ * contract, set out in the plugin's CLAUDE.md ("Observer cost contract"), and
+ * a bulk one gets a case in tests/local/sla/observer_cost_test.php or
+ * tests/local/calendar/observer_cost_test.php.
+ *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
