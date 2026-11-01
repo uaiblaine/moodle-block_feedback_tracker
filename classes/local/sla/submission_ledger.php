@@ -307,7 +307,6 @@ class submission_ledger {
 
         $cmid = (int) $cm->id;
         $groupid = group_resolver::resolve_group_for_user((int) $cm->course, $userid);
-        $rule = rule_resolver::resolve_rule((int) $assign->id, $userid);
 
         $flags = null;
         if (!empty($assign->markingworkflow)) {
@@ -327,7 +326,7 @@ class submission_ledger {
             'cycle DESC',
             'id, cycle, submissionstatus, timesubmitted, timegraded, timemarked, timereleased,
              timeclosed, closedsource, timedismissed, timeallocated, timeallocmarker,
-             allocmarkerid, allocattrib',
+             allocmarkerid, allocattrib, timeopens, timecloses, timecutoff, hasrule',
             0,
             1
         );
@@ -615,6 +614,24 @@ class submission_ledger {
             $timesubmitted,
             $assigngraded
         );
+
+        /* The dates the student was judged against, frozen when the cycle
+         * closes: an open cycle takes them from live state at every write, so
+         * the write that closes it stores the dates in force when the teacher
+         * answered, and a closed cycle keeps them through any later write (a
+         * re-grade, a settings save, a reconciler repair). Overrides and
+         * extensions fire no event the plugin observes, and core keeps no
+         * history of them, so this is the only record of the earlier dates.
+         * A cycle whose grade is withdrawn is open again and follows live
+         * state until it closes again. */
+        $rule = $storedclosed !== null && $timegraded !== null
+            ? [
+                'timeopens' => $existing->timeopens !== null ? (int) $existing->timeopens : null,
+                'timecloses' => $existing->timecloses !== null ? (int) $existing->timecloses : null,
+                'timecutoff' => $existing->timecutoff !== null ? (int) $existing->timecutoff : null,
+                'hasrule' => (int) $existing->hasrule,
+            ]
+            : rule_resolver::resolve_rule((int) $assign->id, $userid);
 
         $record = (object) [
             'courseid'         => (int) $cm->course,
@@ -1532,201 +1549,21 @@ class submission_ledger {
     }
 
     /**
-     * Re-resolve the rule columns for every ledger row tied to (assignid,
-     * groupid). Used when a group override is created / updated / deleted.
-     *
-     * Each member is resolved against all of their groups
-     * ({@see rule_resolver::resolve_rule()}), so a member of two overridden
-     * groups keeps whichever override core applies to them, and after a
-     * deletion falls back to their remaining groups rather than to the
-     * activity.
-     *
-     * @param int $assignid
-     * @param int $groupid
-     * @return void
-     */
-    public static function re_resolve_rules_for_assign_group(int $assignid, int $groupid): void {
-        global $DB;
-
-        if (!$DB->record_exists('assign', ['id' => $assignid])) {
-            return;
-        }
-
-        /* Selected by membership of the overridden group, not by the ledger's
-         * `groupid`: that column is the reporting attribution (the group a
-         * student last joined, see group_resolver) and need not match the
-         * group an override targets. Only that group's members can change:
-         * everybody else's governing override does not involve it. An edit
-         * that moves an override to another group names the new group only,
-         * so the old group's members are left to the reconciler's rule-drift
-         * sweep. */
-        $rows = $DB->get_records_sql(
-            "SELECT l.id, l.userid, l.courseid, l.groupid
-               FROM {block_feedback_tracker_sub} l
-               JOIN {groups_members} gm ON gm.userid = l.userid AND gm.groupid = :groupid
-              WHERE l.iteminstance = :assignid",
-            ['groupid' => $groupid, 'assignid' => $assignid]
-        );
-
-        $now = time();
-        $tuples = [];
-        $rules = [];
-        foreach ($rows as $row) {
-            $userid = (int) $row->userid;
-            $rules[$userid] ??= rule_resolver::resolve_rule($assignid, $userid);
-            $rule = $rules[$userid];
-            $DB->update_record('block_feedback_tracker_sub', (object) [
-                'id'           => $row->id,
-                'timeopens'    => $rule['timeopens'],
-                'timecloses'   => $rule['timecloses'],
-                'timecutoff'   => $rule['timecutoff'],
-                'hasrule'      => $rule['hasrule'],
-                'timemodified' => $now,
-            ]);
-            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
-                (int) $row->courseid, (int) $row->groupid,
-            ];
-        }
-
-        // Enqueue the reporting tuples touched, not the override group.
-        foreach ($tuples as [$courseid, $reportgroupid]) {
-            dirty_queue::enqueue($courseid, $reportgroupid, dirty_queue::REASON_PAUSE);
-        }
-    }
-
-    /**
-     * Re-resolve the rule columns for one user's ledger rows on one assign.
-     *
-     * Used when a user-level override or an extension changes: both alter the
-     * dates that submission is judged against, and neither is visible in any
-     * other signal the plugin receives. The extension is read from
-     * {assign_user_flags} by {@see rule_resolver::resolve_rule()}.
-     *
-     * @param int $assignid
-     * @param int $userid
-     * @return void
-     */
-    public static function re_resolve_rules_for_assign_user(int $assignid, int $userid): void {
-        global $DB;
-
-        if (!$DB->record_exists('assign', ['id' => $assignid])) {
-            return;
-        }
-        $rows = $DB->get_records('block_feedback_tracker_sub', [
-            'iteminstance' => $assignid,
-            'userid' => $userid,
-        ], '', 'id, courseid, groupid');
-        if (empty($rows)) {
-            return;
-        }
-
-        $rule = rule_resolver::resolve_rule($assignid, $userid);
-        $now = time();
-        $tuples = [];
-        foreach ($rows as $row) {
-            $DB->update_record('block_feedback_tracker_sub', (object) [
-                'id'           => $row->id,
-                'timeopens'    => $rule['timeopens'],
-                'timecloses'   => $rule['timecloses'],
-                'timecutoff'   => $rule['timecutoff'],
-                'hasrule'      => $rule['hasrule'],
-                'timemodified' => $now,
-            ]);
-            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
-                (int) $row->courseid, (int) $row->groupid,
-            ];
-        }
-        foreach ($tuples as [$courseid, $groupid]) {
-            dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_PAUSE);
-        }
-    }
-
-    /**
-     * Re-date one user's current rows in a course after their groups changed,
-     * writing only the rows whose dates move.
-     *
-     * A student's groups reach the dates only through the governing group
-     * override ({@see rule_resolver}). So a row is read only when its activity
-     * still carries a group override, or when it stores dates other than the
-     * activity's own: a row storing the activity's dates on an activity with
-     * no group override resolves to them again. On a course without group
-     * overrides that is one query over the user's rows, returning nothing. The
-     * second arm covers a deleted group, whose overrides core removes in an
-     * observer of its own ({@see assign_process_group_deleted_in_course()}),
-     * possibly before this runs.
-     *
-     * The rows are selected with {@see rule_resolver::drift_sql()}, as the
-     * reconciler's rule-drift sweep selects them, so a row written here is one
-     * that sweep would repair, and afterwards it has nothing to repair. Only
-     * the current cycle is written, as the writer and that sweep do.
-     *
-     * @param int $courseid
-     * @param int $userid
-     * @param int $limit Most rows to write, 0 for no limit. When more rows
-     *                   moved, nothing is written and null is returned, so the
-     *                   caller can hand the work to a background task.
-     * @return int|null Rows written, or null when there were more than $limit.
-     */
-    public static function re_resolve_rules_for_group_change(int $courseid, int $userid, int $limit = 0): ?int {
-        global $DB;
-
-        $rows = $DB->get_records_sql(
-            "SELECT l.id, l.courseid, l.groupid, " . rule_resolver::select_sql('a', 'rule') . "
-               FROM {block_feedback_tracker_sub} l
-               JOIN {assign} a ON a.id = l.iteminstance
-               " . rule_resolver::joins_sql('a.id', 'l.userid') . "
-              WHERE l.userid = :userid
-                AND l.courseid = :courseid
-                AND l.iscurrent = 1
-                AND (EXISTS (SELECT 1
-                               FROM {assign_overrides} gco
-                              WHERE gco.assignid = a.id AND gco.groupid IS NOT NULL)
-                     OR COALESCE(l.timeopens, 0) <> a.allowsubmissionsfromdate
-                     OR COALESCE(l.timecloses, 0) <> a.duedate
-                     OR COALESCE(l.timecutoff, 0) <> a.cutoffdate)
-                AND " . rule_resolver::drift_sql('l', 'a') . "
-           ORDER BY l.id ASC",
-            ['userid' => $userid, 'courseid' => $courseid],
-            0,
-            $limit > 0 ? $limit + 1 : 0
-        );
-        if ($limit > 0 && count($rows) > $limit) {
-            return null;
-        }
-
-        $now = time();
-        $tuples = [];
-        foreach ($rows as $row) {
-            $rule = rule_resolver::rule_from_row($row, 'rule');
-            $DB->update_record('block_feedback_tracker_sub', (object) [
-                'id'           => $row->id,
-                'timeopens'    => $rule['timeopens'],
-                'timecloses'   => $rule['timecloses'],
-                'timecutoff'   => $rule['timecutoff'],
-                'hasrule'      => $rule['hasrule'],
-                'timemodified' => $now,
-            ]);
-            $tuples[(int) $row->courseid . ':' . (int) $row->groupid] = [
-                (int) $row->courseid, (int) $row->groupid,
-            ];
-        }
-        foreach ($tuples as [$tuplecourseid, $groupid]) {
-            dirty_queue::enqueue($tuplecourseid, $groupid, dirty_queue::REASON_PAUSE);
-        }
-        return count($rows);
-    }
-
-    /**
      * Re-attribute every ledger row for a user in a course to whatever group
-     * they belong to now. Used when the user joins / leaves a group.
+     * they belong to now. Used when the user joins / leaves a group, and for
+     * each user of a deleted group.
      *
-     * Enqueues both the old (now-stale) and the new group.
+     * Enqueues both the old (now-stale) and the new group, unless the caller
+     * asks for the groups instead: a walk over many users then enqueues each
+     * tuple once rather than once per user.
      *
      * @param int $courseid
      * @param int $userid
-     * @return void
+     * @param bool $enqueue False to leave the enqueueing to the caller.
+     * @return int[] The groups the user's rows reported under before and after,
+     *               empty when the user has no row in the course.
      */
-    public static function reattribute_user(int $courseid, int $userid): void {
+    public static function reattribute_user(int $courseid, int $userid, bool $enqueue = true): array {
         global $DB;
 
         group_resolver::reset_memo();
@@ -1736,12 +1573,15 @@ class submission_ledger {
             'courseid' => $courseid,
             'userid' => $userid,
         ], '', 'id, groupid');
+        if (empty($rows)) {
+            return [];
+        }
 
         $now = time();
-        $oldgroupids = [];
+        $groupids = [$newgroupid => $newgroupid];
         foreach ($rows as $row) {
             $oldid = (int) $row->groupid;
-            $oldgroupids[$oldid] = true;
+            $groupids[$oldid] = $oldid;
             if ($oldid !== $newgroupid) {
                 $DB->update_record('block_feedback_tracker_sub', (object) [
                     'id'           => $row->id,
@@ -1751,12 +1591,12 @@ class submission_ledger {
             }
         }
 
-        foreach (array_keys($oldgroupids) as $oldgroupid) {
-            dirty_queue::enqueue($courseid, $oldgroupid, dirty_queue::REASON_SUBMISSION);
+        if ($enqueue) {
+            foreach ($groupids as $groupid) {
+                dirty_queue::enqueue($courseid, $groupid, dirty_queue::REASON_SUBMISSION);
+            }
         }
-        if (!empty($rows) && !isset($oldgroupids[$newgroupid])) {
-            dirty_queue::enqueue($courseid, $newgroupid, dirty_queue::REASON_SUBMISSION);
-        }
+        return array_values($groupids);
     }
 
     /**
