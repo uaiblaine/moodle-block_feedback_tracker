@@ -29,6 +29,7 @@ namespace block_feedback_tracker\local\calendar;
 
 use block_feedback_tracker\local\audit\recompute_log;
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\task\requeue_rollups;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
@@ -37,7 +38,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * the affected rollups. Its scoping is the interesting part: a site pause
  * touches everything, a course pause only that course, a group pause a single
  * tuple. Every edit also leaves one audit row and purges the calver-keyed
- * caches the bump made unreachable.
+ * caches the bump made unreachable. Site and course scopes are re-queued by a
+ * background task, so most assertions here count the queue after running it.
  */
 #[CoversClass(observer::class)]
 final class observer_test extends \advanced_testcase {
@@ -69,13 +71,35 @@ final class observer_test extends \advanced_testcase {
     }
 
     /**
-     * Queue rows currently held.
+     * Queue rows held once the re-queue tasks the edits queued have run.
      *
      * @return int
      */
     private function queued(): int {
         global $DB;
+        $this->run_requeue();
         return $DB->count_records('block_feedback_tracker_queue');
+    }
+
+    /**
+     * Run the queued re-queue tasks, discarding their cron output.
+     *
+     * @return void
+     */
+    private function run_requeue(): void {
+        ob_start();
+        $this->runAdhocTasks(requeue_rollups::class);
+        ob_end_clean();
+    }
+
+    /**
+     * Re-queue tasks waiting to run.
+     *
+     * @return int
+     */
+    private function requeue_tasks(): int {
+        global $DB;
+        return $DB->count_records('task_adhoc', ['classname' => '\\' . requeue_rollups::class]);
     }
 
     /**
@@ -185,6 +209,7 @@ final class observer_test extends \advanced_testcase {
             ['scopelevel' => 'group', 'scopeid' => (int) $group->id]
         ));
 
+        $this->assertSame(0, $this->requeue_tasks(), 'One tuple is queued in the request, without a task.');
         $this->assertSame(1, $this->queued());
         $this->assertTrue($DB->record_exists('block_feedback_tracker_queue', [
             'courseid' => (int) $course->id,
@@ -235,6 +260,7 @@ final class observer_test extends \advanced_testcase {
         $this->seed_rollups();
 
         observer::day_updated($this->event(\block_feedback_tracker\event\cal_day_updated::class));
+        $this->run_requeue();
         $this->assertSame(3, $DB->count_records('block_feedback_tracker_queue', [
             'reason' => dirty_queue::REASON_CALENDAR,
         ]));
@@ -244,9 +270,68 @@ final class observer_test extends \advanced_testcase {
             \block_feedback_tracker\event\cal_pause_updated::class,
             ['scopelevel' => 'site', 'scopeid' => 0]
         ));
+        $this->run_requeue();
         $this->assertSame(3, $DB->count_records('block_feedback_tracker_queue', [
             'reason' => dirty_queue::REASON_PAUSE,
         ]));
+    }
+
+    /**
+     * A site edit queues one walk and no tuple: the request costs the same
+     * however many tuples there are, and the walk queues them all.
+     *
+     * @return void
+     */
+    public function test_site_edit_queues_the_walk_not_the_tuples(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_rollups();
+
+        observer::day_updated($this->event(\block_feedback_tracker\event\cal_day_updated::class));
+
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_queue'), 'Nothing is queued in the request.');
+        $this->assertSame(1, $this->requeue_tasks());
+        $this->assertSame(3, $this->queued(), 'The walk queues every tuple.');
+    }
+
+    /**
+     * Consecutive edits of one scope share one walk, while an edit of another
+     * scope gets its own.
+     *
+     * @return void
+     */
+    public function test_consecutive_edits_of_one_scope_share_one_walk(): void {
+        $this->resetAfterTest();
+        $this->seed_rollups();
+        $course = ['scopelevel' => 'course', 'scopeid' => 8001];
+
+        observer::day_updated($this->event(\block_feedback_tracker\event\cal_day_updated::class));
+        observer::day_updated($this->event(\block_feedback_tracker\event\cal_day_updated::class));
+        observer::hours_updated($this->event(\block_feedback_tracker\event\cal_hours_updated::class));
+        $this->assertSame(1, $this->requeue_tasks(), 'Three calendar edits, one walk.');
+
+        observer::pause_updated($this->event(\block_feedback_tracker\event\cal_pause_updated::class, $course));
+        observer::pause_updated($this->event(\block_feedback_tracker\event\cal_pause_updated::class, $course));
+        $this->assertSame(2, $this->requeue_tasks(), 'Two pauses of one course add one walk of that course.');
+    }
+
+    /**
+     * A course pause without a course id queues nothing, rather than a walk
+     * of every course.
+     *
+     * @return void
+     */
+    public function test_course_pause_without_a_course_queues_nothing(): void {
+        $this->resetAfterTest();
+        $this->seed_rollups();
+
+        observer::pause_updated($this->event(
+            \block_feedback_tracker\event\cal_pause_updated::class,
+            ['scopelevel' => 'course', 'scopeid' => 0]
+        ));
+
+        $this->assertSame(0, $this->requeue_tasks());
+        $this->assertSame(0, $this->queued());
     }
 
     /**
