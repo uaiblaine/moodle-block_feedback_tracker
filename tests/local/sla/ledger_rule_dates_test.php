@@ -29,13 +29,11 @@ namespace block_feedback_tracker\local\sla;
 use block_feedback_tracker\local\calendar\academic_time;
 
 /**
- * The stored open / due / cut-off dates reach a ledger row through three
- * writers: the upsert, the group-override re-resolve and the per-student
- * re-resolve. They must store the same dates for the same student, whatever
- * group the row is attributed to, and follow the overrides, extensions and
- * group memberships core applies. rule_resolver_test pins the resolution
- * itself; these tests pin what reaches the ledger, through core's own events
- * where core has them.
+ * The stored open / due / cut-off dates reach a ledger row through the writer
+ * alone: resolved from live state while the cycle is open, kept once it has
+ * closed. Overrides and extensions changed through core reach an open cycle
+ * at its next write, and never a closed one. rule_resolver_test pins the
+ * resolution itself; these tests pin what reaches the ledger, and when.
  *
  * @covers \block_feedback_tracker\local\sla\submission_ledger
  * @covers \block_feedback_tracker\local\sla\rule_resolver
@@ -53,13 +51,13 @@ final class ledger_rule_dates_test extends \advanced_testcase {
     }
 
     /**
-     * A student in two overridden groups gets the lowest-sortorder override
-     * from every writer, including when the ledger attributes the row to the
-     * other group (the one joined last).
+     * A student in two overridden groups gets the lowest-sortorder override,
+     * also when the ledger attributes the row to the other group (the one
+     * joined last).
      *
      * @return void
      */
-    public function test_every_writer_stores_the_same_dates_for_a_member_of_two_groups(): void {
+    public function test_the_writer_stores_the_governing_override_for_a_member_of_two_groups(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
@@ -79,33 +77,18 @@ final class ledger_rule_dates_test extends \advanced_testcase {
             (int) $row->groupid,
             'Precondition: the row is attributed to the group whose override must not win.'
         );
-        $this->assertSame($due + 86400, (int) $row->timecloses, 'The upsert applies the lowest sortorder.');
-
-        $DB->set_field('block_feedback_tracker_sub', 'timecloses', 1, ['id' => $row->id]);
-        submission_ledger::re_resolve_rules_for_assign_group($assignid, $second);
-        $this->assertSame(
-            $due + 86400,
-            (int) $DB->get_field('block_feedback_tracker_sub', 'timecloses', ['id' => $row->id]),
-            'Re-resolving for the other group stores the same date.'
-        );
-
-        $DB->set_field('block_feedback_tracker_sub', 'timecloses', 1, ['id' => $row->id]);
-        submission_ledger::re_resolve_rules_for_assign_user($assignid, $userid);
-        $this->assertSame(
-            $due + 86400,
-            (int) $DB->get_field('block_feedback_tracker_sub', 'timecloses', ['id' => $row->id]),
-            'Re-resolving for the student stores the same date.'
-        );
+        $this->assertSame($due + 86400, (int) $row->timecloses, 'The lowest sortorder governs.');
     }
 
     /**
-     * Deleting a group override through core re-resolves its members against
-     * the groups they still belong to, not against the activity alone.
+     * Deleting a group override through core changes no row; the open cycle's
+     * next write falls back to the groups the student still belongs to, not
+     * to the activity alone.
      *
      * @return void
      */
-    public function test_a_deleted_group_override_falls_back_to_the_remaining_groups(): void {
-        global $CFG, $DB;
+    public function test_a_deleted_group_override_reaches_an_open_cycle_at_its_next_write(): void {
+        global $CFG;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
         $this->seed_calendar();
@@ -121,8 +104,13 @@ final class ledger_rule_dates_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
         $this->assertSame($due + 86400, $this->stored_close($cm, $userid), 'Sanity: the first group governs.');
 
+        /* Through assign::delete_override(), as this Moodle version's own pages
+         * delete an override; it fires group_override_deleted, which the plugin
+         * does not observe. */
         $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
         $assign->delete_override($firstoverride);
+        $this->assertSame($due + 86400, $this->stored_close($cm, $userid), 'The deletion itself writes nothing.');
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
         $this->assertSame(
             $due + 2 * 86400,
             $this->stored_close($cm, $userid),
@@ -130,16 +118,18 @@ final class ledger_rule_dates_test extends \advanced_testcase {
         );
 
         $assign->delete_override($secondoverride);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
         $this->assertSame($due, $this->stored_close($cm, $userid), 'With no override left, the activity date.');
     }
 
     /**
      * An extension granted through core reaches the stored due date and a
-     * cut-off it passes; revoking it restores both. The open date never moves.
+     * cut-off it passes at the open cycle's next write; revoking it restores
+     * both the same way. The open date never moves.
      *
      * @return void
      */
-    public function test_an_extension_reaches_the_stored_dates_and_is_withdrawn_with_it(): void {
+    public function test_an_extension_reaches_an_open_cycle_at_its_next_write(): void {
         global $CFG, $DB;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
         $this->resetAfterTest();
@@ -157,10 +147,11 @@ final class ledger_rule_dates_test extends \advanced_testcase {
         $this->insert_submission($assignid, $userid);
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
 
-        // Through core, so extension_granted reaches the observer as it does on a site.
         $assign = new \assign(\context_module::instance($cm->id), $cm, $course);
         $extended = $cutoff + 3 * 86400;
         $this->assertTrue($assign->save_user_extension($userid, $extended), 'Sanity: core granted it.');
+        $this->assertSame($due, $this->stored_close($cm, $userid), 'The grant itself writes nothing.');
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $userid], '*', MUST_EXIST);
         $this->assertSame($extended, (int) $row->timecloses, 'The extension replaces the due date.');
@@ -169,6 +160,7 @@ final class ledger_rule_dates_test extends \advanced_testcase {
 
         // The grant-extension form saves 0 when the extension is switched off.
         $this->assertTrue($assign->save_user_extension($userid, 0), 'Sanity: core revoked it.');
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['id' => $row->id], '*', MUST_EXIST);
         $this->assertSame($due, (int) $row->timecloses, 'A revoked extension gives the due date back.');
@@ -192,20 +184,107 @@ final class ledger_rule_dates_test extends \advanced_testcase {
         submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
         $this->assertSame($due, $this->stored_close($cm, $userid), 'Sanity: the activity date first.');
 
-        $DB->insert_record('assign_overrides', (object) [
-            'assignid' => $assignid,
-            'userid' => $userid,
-            'groupid' => null,
-            'sortorder' => null,
-            'allowsubmissionsfromdate' => null,
-            'duedate' => 0,
-            'cutoffdate' => null,
-        ]);
-        submission_ledger::re_resolve_rules_for_assign_user($assignid, $userid);
+        $this->user_override($assignid, $userid, 0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
 
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $userid], '*', MUST_EXIST);
         $this->assertNull($row->timecloses, 'The override removed the due date for this student.');
         $this->assertSame(0, (int) $row->hasrule, 'And no other date is left.');
+    }
+
+    /**
+     * The write that closes a cycle stores the dates in force then, and a
+     * later write of the closed cycle keeps them, whatever the override says
+     * by that time.
+     *
+     * @return void
+     */
+    public function test_a_closed_cycle_keeps_the_dates_it_closed_under(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $due = time() + 7 * 86400;
+        [$cm, $assignid, $course] = $this->build_environment(['duedate' => $due]);
+        $userid = $this->student($course);
+        $this->insert_submission($assignid, $userid);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        $override = $this->user_override($assignid, $userid, $due + 86400);
+
+        $this->insert_grade($assignid, $userid, 70.0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $userid], '*', MUST_EXIST);
+        $this->assertNotNull($row->timegraded, 'Precondition: the grade closed the cycle.');
+        $this->assertSame($due + 86400, (int) $row->timecloses, 'The closing write takes the dates in force.');
+
+        $DB->set_field('assign_overrides', 'duedate', $due + 5 * 86400, ['id' => $override]);
+        $DB->set_field('assign', 'cutoffdate', $due + 9 * 86400, ['id' => $assignid]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+
+        $after = $DB->get_record('block_feedback_tracker_sub', ['id' => $row->id], '*', MUST_EXIST);
+        $this->assertSame($due + 86400, (int) $after->timecloses, 'The closed cycle keeps its due date.');
+        $this->assertNull($after->timecutoff, 'And the cut-off it closed without.');
+        $this->assertSame((int) $row->hasrule, (int) $after->hasrule);
+    }
+
+    /**
+     * A grade withdrawn in the activity opens the cycle again, and its next
+     * write takes the dates from live state.
+     *
+     * @return void
+     */
+    public function test_a_withdrawn_grade_opens_the_dates_again(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $due = time() + 7 * 86400;
+        [$cm, $assignid, $course] = $this->build_environment(['duedate' => $due]);
+        $userid = $this->student($course);
+        $this->insert_submission($assignid, $userid);
+        $this->insert_grade($assignid, $userid, 70.0);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        $this->assertSame($due, $this->stored_close($cm, $userid), 'Sanity: closed under the activity date.');
+
+        $this->user_override($assignid, $userid, $due + 3 * 86400);
+        $DB->set_field('assign_grades', 'grade', -1, ['assignment' => $assignid, 'userid' => $userid]);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+
+        $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id, 'userid' => $userid], '*', MUST_EXIST);
+        $this->assertNull($row->timegraded, 'Precondition: the cycle is open again.');
+        $this->assertSame($due + 3 * 86400, (int) $row->timecloses);
+    }
+
+    /**
+     * Joining an overridden group through core moves the student's row to the
+     * group and leaves its dates; the open cycle's next write takes the
+     * group's date.
+     *
+     * @return void
+     */
+    public function test_a_group_change_moves_the_row_and_leaves_its_dates(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->seed_calendar();
+        $due = time() + 7 * 86400;
+        [$cm, $assignid, $course] = $this->build_environment(['duedate' => $due]);
+        $group = $this->group($course);
+        $this->group_override($assignid, $group, 1, $due + 2 * 86400);
+        $userid = $this->student($course);
+        $this->insert_submission($assignid, $userid);
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        $this->assertSame($due, $this->stored_close($cm, $userid), 'Sanity: the activity date first.');
+
+        // Through core, so group_member_added reaches the observer as it does on a site.
+        $this->getDataGenerator()->create_group_member(['groupid' => $group, 'userid' => $userid]);
+        group_resolver::reset_memo();
+
+        $this->assertSame(
+            $group,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'groupid', ['cmid' => $cm->id, 'userid' => $userid]),
+            'Control: the observer moved the row.'
+        );
+        $this->assertSame($due, $this->stored_close($cm, $userid), 'The move leaves the dates.');
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, $userid, 0);
+        $this->assertSame($due + 2 * 86400, $this->stored_close($cm, $userid));
     }
 
     /**
@@ -290,6 +369,45 @@ final class ledger_rule_dates_test extends \advanced_testcase {
             'allowsubmissionsfromdate' => null,
             'duedate' => $due,
             'cutoffdate' => null,
+        ]);
+    }
+
+    /**
+     * Insert a user override that sets only the due date.
+     *
+     * @param int $assignid
+     * @param int $userid
+     * @param int $due 0 removes the due date for the student.
+     * @return int The override id.
+     */
+    private function user_override(int $assignid, int $userid, int $due): int {
+        global $DB;
+        return (int) $DB->insert_record('assign_overrides', (object) [
+            'assignid' => $assignid,
+            'userid' => $userid,
+            'groupid' => null,
+            'sortorder' => null,
+            'allowsubmissionsfromdate' => null,
+            'duedate' => $due,
+            'cutoffdate' => null,
+        ]);
+    }
+
+    /**
+     * Grade attempt 0 an hour ago, after the four-day-old submission.
+     *
+     * @param int $assignid
+     * @param int $userid
+     * @param float $grade
+     * @return void
+     */
+    private function insert_grade(int $assignid, int $userid, float $grade): void {
+        global $DB;
+        $tgrade = time() - 3600;
+        $DB->insert_record('assign_grades', (object) [
+            'assignment' => $assignid, 'userid' => $userid, 'attemptnumber' => 0,
+            'grader' => 2, 'grade' => $grade,
+            'timecreated' => $tgrade, 'timemodified' => $tgrade,
         ]);
     }
 

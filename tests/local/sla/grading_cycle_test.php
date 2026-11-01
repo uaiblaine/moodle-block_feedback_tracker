@@ -730,13 +730,12 @@ final class grading_cycle_test extends \advanced_testcase {
     }
 
     /**
-     * A user-level override changes the dates one student is judged against,
-     * and the override events are what carry it to the ledger straight away;
-     * the reconciler's rule-drift sweep only catches up on a later pass.
+     * A user-level override changes the dates one student is judged against;
+     * an open cycle takes them at its next write.
      *
      * @return void
      */
-    public function test_user_override_re_resolves_that_users_rules(): void {
+    public function test_user_override_reaches_an_open_cycle_at_its_next_write(): void {
         global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
@@ -757,7 +756,12 @@ final class grading_cycle_test extends \advanced_testcase {
             'sortorder' => null, 'duedate' => $extended,
             'allowsubmissionsfromdate' => null, 'cutoffdate' => null, 'timelimit' => null,
         ]);
-        submission_ledger::re_resolve_rules_for_assign_user((int) $assign->id, (int) $student->id);
+        $this->assertSame(
+            $due,
+            (int) $DB->get_field('block_feedback_tracker_sub', 'timecloses', ['cmid' => $cm->id]),
+            'Nothing re-dates the row before it is written again.'
+        );
+        submission_ledger::upsert_for_cm_user_attempt((int) $cm->id, (int) $student->id, 0);
 
         $this->assertSame(
             $extended,
