@@ -204,6 +204,9 @@ final class save_pause_window_test extends \advanced_testcase {
 
         $now = time();
         save_pause_window::execute($id, 'course', (int) $to->id, 'other', $now + 60, $now + 120, '');
+        ob_start();
+        $this->runAdhocTasks(\block_feedback_tracker\task\requeue_rollups::class);
+        ob_end_clean();
 
         $this->assertTrue(
             $DB->record_exists('block_feedback_tracker_queue', ['courseid' => (int) $to->id, 'groupid' => 0]),
