@@ -752,7 +752,7 @@ class submission_browser {
      * distribution counts and band filter.
      *
      * @param float $eff Effective hours.
-     * @param float $goal SLA goal hours.
+     * @param float $goal Target time in hours.
      * @param float $crit Critical-min hours.
      * @return string
      */
@@ -774,7 +774,7 @@ class submission_browser {
      *
      * @param float $days Stored elapsed business days, or for a row not yet
      *                    backfilled the {@see self::estimated_days()} estimate.
-     * @param float $goal SLA goal in days ("within goal" upper bound).
+     * @param float $goal Target time in days ("within goal" upper bound).
      * @param float $crit Third day threshold (critical cutoff).
      * @return string
      */
@@ -802,7 +802,7 @@ class submission_browser {
 
     /**
      * The (goal, critical) elapsed-day bounds that partition pending work in
-     * business-days mode, the day-ruler twin of band_bounds(): the SLA goal in
+     * business-days mode, the day-ruler twin of band_bounds(): the target time in
      * days and the third day threshold. {@see rollup_service} bands the
      * block's over-goal and critical day counts on the same pair.
      *
