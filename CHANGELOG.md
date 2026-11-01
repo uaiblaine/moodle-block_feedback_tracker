@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2024100712`.
+Version `2024100713`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -33,6 +33,12 @@ Version `2024100712`.
   process may have filled, so a course that gained or lost the block in the
   meantime could be skipped or walked. `process_memos_test` now fails for any
   task whose `execute()` does not start with the reset.
+- **The plugin is called Feedback Flow everywhere it names itself, and Fluxo
+  de Devolutivas in Brazilian Portuguese.** The teacher dashboard's tag line
+  and the two page-view events (their names in the log and their
+  descriptions) still said "Feedback tracker", and five capability names in
+  Portuguese still translated the old name. The component,
+  `block_feedback_tracker`, is unchanged.
 
 ### Changed
 - **Single-column ledger updates go through `set_field_select()`** (issue

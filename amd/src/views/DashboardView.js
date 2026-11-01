@@ -367,7 +367,7 @@ export default function DashboardView({initial}) {
             <header class="bft-dashboard-header">
                 <div class="bft-dashboard-header-text">
                     <div class="bft-dashboard-brandtag">
-                        ${i18n.dashboard_brandtag || 'Feedback tracker'}
+                        ${i18n.dashboard_brandtag || 'Feedback Flow'}
                     </div>
                     <h1 class="bft-dashboard-h1">
                         ${greeting}
