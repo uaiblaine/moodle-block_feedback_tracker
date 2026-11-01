@@ -332,12 +332,17 @@ final class observer_lifecycle_test extends \advanced_testcase {
      * @return void
      */
     public function test_settings_save_with_no_measured_rows_dispatches_nothing(): void {
+        global $DB;
         $this->resetAfterTest();
         $this->seed_calendar();
         [$course, , $cm] = $this->build_environment();
 
         $this->fire_module_updated($cm, $course, 'assign');
 
+        // No walk at all: one with nothing to walk would still cost a task.
+        $this->assertSame(0, $DB->count_records('task_adhoc', [
+            'classname' => '\\' . \block_feedback_tracker\task\rederive_activity::class,
+        ]));
         $this->assertCount(0, $this->queued_descriptors());
     }
 
@@ -364,11 +369,15 @@ final class observer_lifecycle_test extends \advanced_testcase {
     }
 
     /**
-     * Every backfill descriptor queued so far, flattened across tasks.
+     * Every backfill descriptor queued so far, flattened across tasks, once
+     * the activity walks the observers queued have run.
      *
      * @return array
      */
     private function queued_descriptors(): array {
+        ob_start();
+        $this->runAdhocTasks(\block_feedback_tracker\task\rederive_activity::class);
+        ob_end_clean();
         $out = [];
         $tasks = \core\task\manager::get_adhoc_tasks('\block_feedback_tracker\task\backfill_one_submission');
         foreach ($tasks as $task) {
