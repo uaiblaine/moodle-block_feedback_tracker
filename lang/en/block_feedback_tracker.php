@@ -619,6 +619,7 @@ $string['task_recompute_pending'] = 'Feedback Flow: recompute pending submission
 $string['task_recompute_site_stats'] = 'Feedback Flow: recompute site-wide stats';
 $string['task_recompute_trend'] = 'Feedback Flow: recompute daily trend';
 $string['task_reconcile_ledger'] = 'Feedback Flow: reconcile the ledger against the assignment tables';
+$string['task_rederive_activity'] = 'Feedback Flow: re-derive the measurements of one assignment';
 $string['task_rederive_course'] = 'Feedback Flow: rebuild the measurements of a restored course';
 $string['task_requeue_rollups'] = 'Feedback Flow: re-queue the rollups after a calendar or settings change';
 $string['task_stamp_allocations'] = 'Feedback Flow: record marker allocations the reconciler found';
