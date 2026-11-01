@@ -30,10 +30,11 @@ use block_feedback_tracker\local\sla\course_access;
 use block_feedback_tracker\local\sla\process_memos;
 
 /**
- * The task finishes a group change the observer handed to the background. It
- * re-checks the course when it runs, skips ids that are not users, and
- * re-dates as well as re-attributes. Each test runs the task on a row it would
- * move and asserts on a control row it does move.
+ * The task moves a deleted group's rows to the group each user reports under
+ * now, walking the group in pages however many users it held, and still runs
+ * the per-user lists queued before the walk existed. It re-checks the course
+ * when it runs and skips ids that are not users. Pages of two users here stand
+ * for pages of five hundred.
  *
  * @covers \block_feedback_tracker\task\reattribute_users
  */
@@ -100,47 +101,71 @@ final class reattribute_users_test extends \advanced_testcase {
     }
 
     /**
-     * The task re-dates a row whose governing group override no longer
-     * applies, as well as moving it.
+     * The group walk moves every user whose rows reported under the group,
+     * over several pages, leaves another group's rows alone, and re-queues
+     * the two tuples the rows left and joined.
      *
      * @return void
      */
-    public function test_the_task_re_dates_the_rows_it_moves(): void {
+    public function test_the_group_walk_moves_every_user_over_several_pages(): void {
         global $DB;
         $this->resetAfterTest();
         $course = $this->getDataGenerator()->create_course();
         $this->getDataGenerator()->create_block('feedback_tracker', [
             'parentcontextid' => \context_course::instance($course->id)->id,
         ]);
-        $due = time() + 7 * 86400;
-        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id, 'duedate' => $due]);
-        $group = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
-        $DB->insert_record('assign_overrides', (object) [
-            'assignid' => $assign->id,
-            'groupid' => $group,
-            'userid' => null,
-            'sortorder' => 1,
-            'allowsubmissionsfromdate' => null,
-            'duedate' => $due + 2 * 86400,
-            'cutoffdate' => null,
-        ]);
-        $user = (int) $this->getDataGenerator()->create_and_enrol($course, 'student')->id;
-        $row = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker')->create_ledger_row([
+        $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
+        $deleted = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        $kept = (int) $this->getDataGenerator()->create_group(['courseid' => $course->id])->id;
+        for ($u = 1; $u <= 5; $u++) {
+            $generator->create_ledger_row(['courseid' => (int) $course->id, 'groupid' => $deleted, 'userid' => 900000 + $u]);
+        }
+        // A second row of one user, so the walk reads users, not rows.
+        $generator->create_ledger_row([
             'courseid' => (int) $course->id,
-            'groupid' => $group,
-            'cmid' => (int) $assign->cmid,
-            'iteminstance' => (int) $assign->id,
-            'userid' => $user,
-            'timeopens' => (int) $DB->get_field('assign', 'allowsubmissionsfromdate', ['id' => $assign->id]) ?: null,
-            'timecloses' => $due + 2 * 86400,
-            'hasrule' => 1,
+            'groupid' => $deleted,
+            'userid' => 900001,
+            'attemptnumber' => 1,
         ]);
+        $member = (int) $this->getDataGenerator()->create_and_enrol($course, 'student')->id;
+        $this->getDataGenerator()->create_group_member(['groupid' => $kept, 'userid' => $member]);
+        $keptrow = $generator->create_ledger_row(['courseid' => (int) $course->id, 'groupid' => $kept, 'userid' => $member]);
 
-        $this->run_task((int) $course->id, [$user]);
+        course_access::reset_memo();
+        $task = new class extends reattribute_users {
+            /** Users per page. */
+            protected const PAGE = 2;
+        };
+        $task->set_custom_data(['courseid' => (int) $course->id, 'groupid' => $deleted]);
+        ob_start();
+        $task->execute();
+        ob_end_clean();
 
-        $stored = $DB->get_record('block_feedback_tracker_sub', ['id' => $row], '*', MUST_EXIST);
-        $this->assertSame(0, (int) $stored->groupid, 'Moved out of the group the user is not in.');
-        $this->assertSame($due, (int) $stored->timecloses, 'And given the activity date back.');
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $deleted]));
+        $this->assertSame(6, $DB->count_records('block_feedback_tracker_sub', ['courseid' => $course->id, 'groupid' => 0]));
+        $this->assertSame($kept, (int) $DB->get_field('block_feedback_tracker_sub', 'groupid', ['id' => $keptrow]));
+        $queued = $DB->get_fieldset_select('block_feedback_tracker_queue', 'groupid', 'courseid = ?', [$course->id]);
+        sort($queued);
+        $this->assertSame([0, $deleted], array_map('intval', $queued), 'Both tuples are re-queued, once each.');
+    }
+
+    /**
+     * Queueing one deleted group twice keeps one task; another group gets its
+     * own.
+     *
+     * @return void
+     */
+    public function test_queue_group_collapses_one_group(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $classname = ['classname' => '\\' . reattribute_users::class];
+
+        reattribute_users::queue_group(8001, 11);
+        reattribute_users::queue_group(8001, 11);
+        $this->assertSame(1, $DB->count_records('task_adhoc', $classname));
+
+        reattribute_users::queue_group(8001, 12);
+        $this->assertSame(2, $DB->count_records('task_adhoc', $classname));
     }
 
     /**

@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Request cost of the observers that re-derive a whole activity.
+ * Request cost of the observers that walk an activity or a group.
  *
  * @package    block_feedback_tracker
  * @category   test
@@ -27,6 +27,7 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use block_feedback_tracker\task\reattribute_users;
 use block_feedback_tracker\task\rederive_activity;
 
 defined('MOODLE_INTERNAL') || die();
@@ -37,12 +38,14 @@ require_once($CFG->dirroot . '/mod/assign/locallib.php');
 /**
  * Saving an assignment's settings and revealing its identities used to read
  * the activity's rows and queue their backfill tasks inside the teacher's
- * request. The walk now runs in {@see rederive_activity}; these tests hold the
- * request to a cost that does not grow with the rows, so a loop over them
- * cannot come back unseen.
+ * request, and deleting a group read its users and moved some of them there.
+ * The walks now run in {@see rederive_activity} and {@see reattribute_users};
+ * these tests hold the request to a cost that does not grow with the rows, so
+ * a loop over them cannot come back unseen.
  *
  * @covers \block_feedback_tracker\local\sla\observer
  * @covers \block_feedback_tracker\task\rederive_activity
+ * @covers \block_feedback_tracker\task\reattribute_users
  */
 final class observer_cost_test extends \advanced_testcase {
     /** @var \stdClass Tracked course of the test. */
@@ -84,6 +87,37 @@ final class observer_cost_test extends \advanced_testcase {
         $fire = fn() => observer::identities_revealed($event);
 
         $this->assert_flat_cost($fire, fn(int $n) => $this->seed_submissions($n));
+    }
+
+    /**
+     * Deleting a group costs as many statements with 60 users as with 3, and
+     * the task it queued moves all 60.
+     *
+     * @return void
+     */
+    public function test_group_deletion_cost_does_not_grow_with_the_users(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->setup_activity();
+        $groupid = (int) $this->getDataGenerator()->create_group(['courseid' => $this->course->id])->id;
+        $fire = fn() => observer::group_deleted(\core\event\group_deleted::create([
+            'context' => \context_course::instance((int) $this->course->id),
+            'objectid' => $groupid,
+        ]));
+        $seed = fn(int $n) => $this->seed_ledger($n, $groupid);
+
+        // Warm up first: the first run in a test fills caches the later runs read.
+        $this->statements($fire, $seed, 1);
+        $few = $this->statements($fire, $seed, 3);
+        $many = $this->statements($fire, $seed, 60);
+
+        $this->assertSame($few, $many, 'The request must not touch each user.');
+        // Control: the task the request queued moves every user.
+        ob_start();
+        $this->runAdhocTasks(reattribute_users::class);
+        ob_end_clean();
+        $this->assertSame(0, $DB->count_records('block_feedback_tracker_sub', ['groupid' => $groupid]));
+        $this->assertSame(60, $DB->count_records('block_feedback_tracker_sub', ['groupid' => 0]));
     }
 
     /**
@@ -147,9 +181,10 @@ final class observer_cost_test extends \advanced_testcase {
      * Insert N ledger rows on the activity, one per synthetic student.
      *
      * @param int $n
+     * @param int $groupid The group the rows report under.
      * @return void
      */
-    private function seed_ledger(int $n): void {
+    private function seed_ledger(int $n, int $groupid = 0): void {
         $generator = $this->getDataGenerator()->get_plugin_generator('block_feedback_tracker');
         for ($i = 1; $i <= $n; $i++) {
             $generator->create_ledger_row([
@@ -157,6 +192,7 @@ final class observer_cost_test extends \advanced_testcase {
                 'cmid' => (int) $this->cm->id,
                 'iteminstance' => (int) $this->cm->instance,
                 'userid' => 9000 + $i,
+                'groupid' => $groupid,
             ]);
         }
     }
