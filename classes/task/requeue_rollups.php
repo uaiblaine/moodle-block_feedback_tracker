@@ -27,6 +27,7 @@ declare(strict_types=1);
 namespace block_feedback_tracker\task;
 
 use block_feedback_tracker\local\sla\dirty_queue;
+use block_feedback_tracker\local\sla\process_memos;
 
 /**
  * Queued by a calendar edit ({@see \block_feedback_tracker\local\calendar\observer})
@@ -87,6 +88,7 @@ class requeue_rollups extends \core\task\adhoc_task {
      * @return void
      */
     public function execute(): void {
+        process_memos::reset();
         $data = $this->get_custom_data();
         $courseid = (int) ($data->courseid ?? 0);
         $reason = (string) ($data->reason ?? dirty_queue::REASON_BULK);
