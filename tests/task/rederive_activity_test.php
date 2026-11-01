@@ -223,6 +223,33 @@ final class rederive_activity_test extends \advanced_testcase {
     }
 
     /**
+     * A course that gained the block after an earlier task of the same cron
+     * process memoised it as untracked is walked: the task decides on the
+     * block as it stands, not on the memo.
+     *
+     * @return void
+     */
+    public function test_a_stale_memo_does_not_skip_the_course(): void {
+        $this->resetAfterTest();
+        $course = $this->getDataGenerator()->create_course();
+        $assign = $this->getDataGenerator()->create_module('assign', ['course' => $course->id]);
+        $cm = get_coursemodule_from_instance('assign', (int) $assign->id);
+        $this->ledger($course, $cm, [['userid' => 9001]]);
+        \block_feedback_tracker\local\sla\course_access::reset_memo();
+        $this->assertFalse(
+            \block_feedback_tracker\local\sla\course_access::is_processable((int) $course->id),
+            'Precondition: the memo holds the course as untracked.'
+        );
+
+        $this->getDataGenerator()->create_block('feedback_tracker', [
+            'parentcontextid' => \context_course::instance($course->id)->id,
+        ]);
+        $this->small_window_task((int) $cm->id, rederive_activity::SOURCE_LEDGER)->execute();
+
+        $this->assertCount(1, $this->descriptors());
+    }
+
+    /**
      * Queueing one activity twice keeps one walk; another activity or source
      * gets its own.
      *
