@@ -26,6 +26,8 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\sla;
 
+use block_feedback_tracker\task\rederive_activity;
+
 /**
  * Thin observer handlers that turn assign / group / course events into
  * ledger upserts plus dirty-queue entries. All heavy lifting (academic-time
@@ -39,69 +41,11 @@ namespace block_feedback_tracker\local\sla;
  * tracked earlier is still removed after the block is gone.
  */
 class observer {
-    /** Ceiling on rows re-derived, or users re-attributed, from any one bulk-triggering event. */
+    /** Ceiling on users re-attributed from one deleted group. */
     private const BULK_MAX_ROWS = 20000;
 
-    /** Rows per adhoc backfill task, or users per re-attribution task, dispatched by a bulk handler. */
+    /** Users per re-attribution task, and rows re-dated inside the request after a group change. */
     private const BULK_CHUNK = 50;
-
-    /**
-     * Queue one adhoc backfill batch, logging rather than propagating a
-     * failure: an observer must never abort the action that triggered it.
-     *
-     * @param array $rows Row descriptors for backfill_one_submission.
-     * @return void
-     */
-    private static function queue_backfill(array $rows): void {
-        try {
-            $task = new \block_feedback_tracker\task\backfill_one_submission();
-            $task->set_custom_data(['rows' => $rows]);
-            \core\task\manager::queue_adhoc_task($task, true);
-        } catch (\Throwable $e) {
-            debugging(sprintf(
-                'block_feedback_tracker: could not queue backfill for %d row(s): %s',
-                count($rows),
-                $e->getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Chunk a set of backfill descriptors into adhoc tasks, with a debugging
-     * notice when the source query hit {@see self::BULK_MAX_ROWS}, so a
-     * truncated sweep is not mistaken for full coverage.
-     *
-     * The ceiling is judged on `$fetched`, the rows the query returned, not on
-     * the descriptor count: callers collapse many rows into one descriptor
-     * (every cycle of an attempt, every member of a team), so the descriptor
-     * count can sit far below the ceiling after the LIMIT has truncated.
-     *
-     * @param array $rows Row descriptors for backfill_one_submission.
-     * @param int $fetched Rows the source query returned, before collapsing.
-     * @param string $context Short description of the trigger, for the notice.
-     * @return void
-     */
-    private static function dispatch_backfill(array $rows, int $fetched, string $context): void {
-        $buffer = [];
-        foreach ($rows as $row) {
-            $buffer[] = $row;
-            if (count($buffer) >= self::BULK_CHUNK) {
-                self::queue_backfill($buffer);
-                $buffer = [];
-            }
-        }
-        if (!empty($buffer)) {
-            self::queue_backfill($buffer);
-        }
-        if ($fetched >= self::BULK_MAX_ROWS) {
-            debugging(sprintf(
-                'block_feedback_tracker: %s hit the %d-row ceiling; '
-                . 'the remaining submissions need a manual backfill.',
-                $context,
-                self::BULK_MAX_ROWS
-            ));
-        }
-    }
 
     /**
      * Resolve the attempt number core currently considers latest for a user.
@@ -302,8 +246,8 @@ class observer {
      * Until then core never fires `submission_graded`: `gradebook_item_update()`
      * returns false while blind marking is on without the markinganonymous
      * setting, and the event is triggered only when it succeeds. Every
-     * grading so far was invisible to the plugin, so the whole activity is
-     * re-derived in the background.
+     * grading so far was invisible to the plugin, so every submission of the
+     * activity is re-derived, by {@see rederive_activity} in the background.
      *
      * @param \core\event\base $event
      * @return void
@@ -321,31 +265,7 @@ class observer {
             return;
         }
 
-        /* Adhoc chunks rather than an inline loop, so a large cohort does not
-         * run the academic-time engine inside the teacher's request. */
-        $rows = $DB->get_records_sql(
-            "SELECT s.id, s.userid, s.attemptnumber
-               FROM {assign_submission} s
-              WHERE s.assignment = :assignid AND s.userid > 0
-           ORDER BY s.userid ASC",
-            ['assignid' => $assignid],
-            0,
-            self::BULK_MAX_ROWS
-        );
-        $descriptors = [];
-        foreach ($rows as $r) {
-            $descriptors[(int) $r->userid . ':' . (int) $r->attemptnumber] = [
-                'cmid' => $cmid,
-                'userid' => (int) $r->userid,
-                'attemptnumber' => (int) $r->attemptnumber,
-                'courseid' => $courseid,
-            ];
-        }
-        self::dispatch_backfill(
-            array_values($descriptors),
-            count($rows),
-            sprintf('identities_revealed on cmid %d', $cmid)
-        );
+        rederive_activity::queue($cmid, rederive_activity::SOURCE_SUBMISSIONS);
     }
 
     /**
@@ -359,9 +279,9 @@ class observer {
      * sweep can detect it.
      *
      * The ledger keeps no settings snapshot to compare against, so every row
-     * of the activity is re-derived from the live {assign} row, in adhoc
-     * chunks so a settings save does not run the academic-time engine for a
-     * whole cohort inside the teacher's request.
+     * of the activity is re-derived from the live {assign} row, by
+     * {@see rederive_activity} in the background: the request costs the same
+     * however many rows the activity has.
      *
      * @param \core\event\base $event
      * @return void
@@ -394,69 +314,7 @@ class observer {
             return;
         }
 
-        /* Route on the live teamsubmission flag, never on the stored
-         * teamgroupid: mod_assign's default team is groupid 0, so a team row
-         * for it looks exactly like an individual row. Routing those per
-         * member would send each member through the whole-group fan-out,
-         * quadratic in group size.
-         *
-         * The live flag also handles team submission being switched off, when
-         * a team descriptor built from the old teamgroupid would be a no-op
-         * (upsert_for_team_attempt() returns early). The settings form cannot
-         * do that once there are submissions (mod/assign/mod_form.php freezes
-         * the field), but a restore or a direct write can. */
-        $teamsubmission = (int) $DB->get_field_sql(
-            "SELECT a.teamsubmission
-               FROM {assign} a
-               JOIN {course_modules} cm ON cm.instance = a.id AND cm.course = a.course
-               JOIN {modules} m ON m.id = cm.module AND m.name = :modname
-              WHERE cm.id = :cmid",
-            ['modname' => 'assign', 'cmid' => $cmid],
-            IGNORE_MISSING
-        );
-
-        /* The row id comes first because get_records_sql() keys the result by
-         * the first column and keeps only the last row of a duplicate key: a
-         * userid-first projection would drop all but one attempt of a student
-         * who resubmitted. De-duplication happens below, on the real key. */
-        $rows = $DB->get_records_sql(
-            "SELECT l.id, l.userid, l.attemptnumber, l.teamgroupid
-               FROM {block_feedback_tracker_sub} l
-              WHERE l.cmid = :cmid
-           ORDER BY l.id ASC",
-            ['cmid' => $cmid],
-            0,
-            self::BULK_MAX_ROWS
-        );
-
-        $descriptors = [];
-        foreach ($rows as $r) {
-            if ($teamsubmission === 1) {
-                /* Once per (group, attempt), not once per member: each
-                 * descriptor already fans out to the whole group. */
-                $teamgroupid = (int) $r->teamgroupid;
-                $descriptors['t' . $teamgroupid . ':' . (int) $r->attemptnumber] = [
-                    'cmid' => $cmid,
-                    'userid' => 0,
-                    'groupid' => $teamgroupid,
-                    'attemptnumber' => (int) $r->attemptnumber,
-                    'courseid' => $courseid,
-                ];
-                continue;
-            }
-            $descriptors['u' . (int) $r->userid . ':' . (int) $r->attemptnumber] = [
-                'cmid' => $cmid,
-                'userid' => (int) $r->userid,
-                'attemptnumber' => (int) $r->attemptnumber,
-                'courseid' => $courseid,
-            ];
-        }
-
-        self::dispatch_backfill(
-            array_values($descriptors),
-            count($rows),
-            sprintf('course_module_updated on cmid %d', $cmid)
-        );
+        rederive_activity::queue($cmid, rederive_activity::SOURCE_LEDGER);
     }
 
     /**
@@ -906,9 +764,8 @@ class observer {
      *
      * Up to {@see self::BULK_CHUNK} users are handled inside the request; a
      * larger group is handed to {@see \block_feedback_tracker\task\reattribute_users}
-     * in chunks of that size, as the other bulk handlers hand theirs to the
-     * backfill task. At most {@see self::BULK_MAX_ROWS} users are taken, with a
-     * debugging notice when the ceiling is reached.
+     * in chunks of that size. At most {@see self::BULK_MAX_ROWS} users are
+     * taken, with a debugging notice when the ceiling is reached.
      *
      * @param \core\event\base $event
      * @return void
