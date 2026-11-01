@@ -30,7 +30,7 @@ namespace block_feedback_tracker\local\score;
  * Five-term weighted score on a 0-100 scale, mapped to a four-band label.
  *
  * Terms (all in [0, 1]):
- *  - compliance: compliance_pct / 100, the share of last-30d grades within the SLA goal
+ *  - compliance: compliance_pct / 100, the share of last-30d grades within the target time
  *  - median:     1 - median_eff_h / (2 * sla_goal); 0.5 at goal, 0 at 2x goal
  *  - critical:   1 - critical / max(pending, 1)
  *  - pending:    1 - pending / max(numgraded30d, 20)
@@ -58,7 +58,7 @@ class responsiveness_calculator {
     /** Default weight for the trend term. */
     public const DEFAULT_WEIGHT_TREND = 0.10;
 
-    /** Default SLA goal hours. */
+    /** Default target time in hours. */
     public const DEFAULT_SLA_GOAL_HOURS = 24.0;
     /** Minimum denominator of the pending term, used when numgraded30d is smaller. */
     public const PENDING_SOFT_CAP_MIN = 20;
