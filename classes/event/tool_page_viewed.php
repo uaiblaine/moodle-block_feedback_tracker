@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Feedback tracker tool page viewed event.
+ * Feedback Flow tool page viewed event.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -69,7 +69,7 @@ class tool_page_viewed extends \core\event\base {
      */
     public function get_description(): string {
         $page = isset($this->other['page']) ? (string) $this->other['page'] : '?';
-        return "The user with id '{$this->userid}' viewed the feedback tracker '{$page}' tool page.";
+        return "The user with id '{$this->userid}' viewed the Feedback Flow '{$page}' tool page.";
     }
 
     /**
