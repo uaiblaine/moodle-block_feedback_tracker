@@ -38,7 +38,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
  * decisions into every later task of the same process, and nothing else would
  * notice. The first test fills every memo and checks the reset empties it; the
  * second fails when a static property or a memo-reset method appears in
- * classes/ without being listed in the first.
+ * classes/ without being listed in the first; the third fails when a task
+ * does not call the reset first.
  */
 #[CoversClass(process_memos::class)]
 final class process_memos_test extends \basic_testcase {
@@ -145,6 +146,49 @@ final class process_memos_test extends \basic_testcase {
                 $this->assertArrayHasKey($class, self::MEMOS, "$delegate resets $class, whose memos no test fills.");
             }
         }
+    }
+
+    /**
+     * Every task of the plugin resets the memos before anything else in its
+     * execute(): a task left out decides on what an earlier task of the same
+     * cron process memoised.
+     *
+     * @return void
+     */
+    public function test_every_task_resets_the_memos_first(): void {
+        $tasks = [];
+        foreach ($this->plugin_classes() as $class) {
+            $reflection = new \ReflectionClass($class);
+            if (!$reflection->isSubclassOf(\core\task\task_base::class) || $reflection->isAbstract()) {
+                continue;
+            }
+            $method = $reflection->getMethod('execute');
+            if ($method->getDeclaringClass()->getName() !== $class) {
+                continue;
+            }
+            $tasks[] = $class;
+            $lines = array_slice(
+                file($method->getFileName()),
+                $method->getStartLine() - 1,
+                $method->getEndLine() - $method->getStartLine() + 1
+            );
+            $first = null;
+            $inbody = false;
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (!$inbody) {
+                    $inbody = str_ends_with($line, '{');
+                    continue;
+                }
+                if ($line === '' || str_starts_with($line, 'global ')) {
+                    continue;
+                }
+                $first = $line;
+                break;
+            }
+            $this->assertSame('process_memos::reset();', $first, "$class::execute() must call process_memos::reset() first.");
+        }
+        $this->assertContains(\block_feedback_tracker\task\drain_queue::class, $tasks, 'Precondition: the scan finds the tasks.');
     }
 
     /**
