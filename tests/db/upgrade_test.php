@@ -70,12 +70,12 @@ final class upgrade_test extends \advanced_testcase {
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042004));
 
         $this->assertTrue($dbman->field_exists($table, $field));
-        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026042014', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**
      * The 2026042006 step creates the per-marker slot table on a site that
-     * lacks it, with its unique index, and records its savepoint; on a site
+     * lacks it, with its unique index, and the steps after it run too; on a site
      * that has it (as the 5.3 branch's own step finds it) it changes nothing.
      *
      * @return void
@@ -95,10 +95,30 @@ final class upgrade_test extends \advanced_testcase {
 
         $this->assertTrue($dbman->table_exists($table));
         $this->assertTrue($dbman->index_exists($table, new \xmldb_index('uq_sub_marker', XMLDB_INDEX_UNIQUE, ['subid', 'marker'])));
-        $this->assertSame('2026042006', (string) get_config('block_feedback_tracker', 'version'));
+        $this->assertSame('2026042014', (string) get_config('block_feedback_tracker', 'version'));
 
         set_config('version', 2026042005, 'block_feedback_tracker');
         $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042005), 'An existing table is left as it is.');
+    }
+
+    /**
+     * The 2026042014 step removes the cursor of the reconciler's rule sweep,
+     * which no code reads any more, and leaves the other sweeps' cursors.
+     *
+     * @return void
+     */
+    public function test_the_rule_cursor_step_removes_the_cursor(): void {
+        $this->load_upgrade_lib();
+        $this->resetAfterTest();
+        set_config('reconcile_cursor_rules', '1234', 'block_feedback_tracker');
+        set_config('reconcile_cursor_latest', '5678', 'block_feedback_tracker');
+        set_config('version', 2026042013, 'block_feedback_tracker');
+
+        $this->assertTrue(xmldb_block_feedback_tracker_upgrade(2026042013));
+
+        $this->assertFalse(get_config('block_feedback_tracker', 'reconcile_cursor_rules'));
+        $this->assertSame('5678', get_config('block_feedback_tracker', 'reconcile_cursor_latest'), 'Control.');
+        $this->assertSame('2026042014', (string) get_config('block_feedback_tracker', 'version'));
     }
 
     /**
