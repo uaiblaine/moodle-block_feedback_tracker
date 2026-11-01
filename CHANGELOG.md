@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026042012`.
+Version `2026042013`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -55,6 +55,13 @@ Version `2026042012`.
   setting descriptions say the target time is a reference for the
   indicators, not a contractual commitment. Setting keys and stored values do
   not change.
+- **Saving an assignment's settings or revealing its identities re-derives
+  every row, in the background** (issue #120, stage 2). Both read up to
+  20,000 rows and queued the backfill tasks inside the teacher's request, and
+  an activity with more rows was re-derived only up to the 20,000th, with a
+  debugging notice as the only trace. The request now queues one
+  `rederive_activity` adhoc task, which walks the activity in windows of ids
+  with no ceiling; consecutive saves of one activity share one walk.
 
 ## [v5.2-r3] - 2026-10-23
 

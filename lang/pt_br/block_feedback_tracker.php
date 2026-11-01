@@ -619,6 +619,7 @@ $string['task_recompute_pending'] = 'Feedback Flow: recalcular envios pendentes'
 $string['task_recompute_site_stats'] = 'Feedback Flow: recalcular estatísticas gerais do site';
 $string['task_recompute_trend'] = 'Feedback Flow: recalcular tendência diária';
 $string['task_reconcile_ledger'] = 'Feedback Flow: reconciliar o registro com as tabelas da tarefa';
+$string['task_rederive_activity'] = 'Feedback Flow: reconstruir as medições de uma tarefa';
 $string['task_rederive_course'] = 'Feedback Flow: reconstruir as medições de um curso restaurado';
 $string['task_requeue_rollups'] = 'Feedback Flow: reenfileirar as consolidações após uma mudança no calendário ou nas configurações';
 $string['task_stamp_allocations'] = 'Feedback Flow: registrar alocações de corretor encontradas pela reconciliação';
