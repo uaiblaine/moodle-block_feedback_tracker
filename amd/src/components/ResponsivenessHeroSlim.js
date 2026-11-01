@@ -95,7 +95,7 @@ export default function ResponsivenessHeroSlim({score, band, bandlabel, effectiv
 
             <div class="bft-rh-slim-divider"></div>
             <div class="bft-rh-slim-stat">
-                <div class="bft-rh-slim-stat-label">${i18n.hero_sla_eyebrow || 'SLA'}</div>
+                <div class="bft-rh-slim-stat-label">${i18n.hero_sla_eyebrow || 'Within target'}</div>
                 <div class=${'bft-rh-slim-stat-val bft-mono bft-overall-score-tone-' + (band || 'pending')}>
                     ${compliancepct === null || compliancepct === undefined
                         ? '—'

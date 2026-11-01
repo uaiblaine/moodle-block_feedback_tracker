@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2024100709`.
+Version `2024100710`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -43,6 +43,15 @@ Version `2024100709`.
   caches, writes the audit row and queues one `requeue_rollups` adhoc task; the
   task walks the tuples in the background. Consecutive edits of one scope share
   one task. A group pause still re-queues its one tuple in the request.
+- **"SLA" is gone from the interface.** The target response time is now
+  "Target time" (pt_br "Prazo de retorno"), and the share answered within it
+  "Within target" (pt_br "Retorno dentro do prazo"; "No prazo" on the group
+  card, which drops its "within" caption). "Compliance" names the same figure
+  and is renamed with it, in the score simulator and in the score weight
+  setting. The pause-window capability, event and cache names drop "SLA". The
+  setting descriptions say the target time is a reference for the
+  indicators, not a contractual commitment. Setting keys and stored values do
+  not change.
 
 ## [v4.5-r3] - 2026-10-23
 
