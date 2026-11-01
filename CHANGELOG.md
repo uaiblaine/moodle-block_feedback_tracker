@@ -27,6 +27,12 @@ Version `2024100713`.
   `bootstrap::spike_i18n()`, built from the strings the real surfaces use, and
   the gauge and sparkline get their accessible names from it too. One new
   string, `spike_reroll`.
+- **The activity re-derivation and the rollup re-queue reset the process
+  memos first**, as every other task of the plugin does. `rederive_activity`
+  read whether its course is tracked from a memo another task of the same cron
+  process may have filled, so a course that gained or lost the block in the
+  meantime could be skipped or walked. `process_memos_test` now fails for any
+  task whose `execute()` does not start with the reset.
 - **The plugin is called Feedback Flow everywhere it names itself, and Fluxo
   de Devolutivas in Brazilian Portuguese.** The teacher dashboard's tag line
   and the two page-view events (their names in the log and their
