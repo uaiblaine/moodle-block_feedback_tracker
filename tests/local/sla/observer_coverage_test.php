@@ -289,6 +289,9 @@ final class observer_coverage_test extends \advanced_testcase {
         $this->assertGreaterThan($before, $DB->count_records('task_adhoc'));
 
         // Draining the queue must produce the grading the blind period hid.
+        ob_start();
+        $this->runAdhocTasks('\block_feedback_tracker\task\rederive_activity');
+        ob_end_clean();
         $this->runAdhocTasks('\block_feedback_tracker\task\backfill_one_submission');
         $row = $DB->get_record('block_feedback_tracker_sub', ['cmid' => $cm->id]);
         $this->assertNotEmpty($row);

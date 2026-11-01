@@ -137,6 +137,7 @@ final class observer_cost_bench extends \advanced_testcase {
         $this->resetDebugging();
         $queued = $DB->count_records('task_adhoc') - $tasks;
         [$bgstatements, $bgms] = $this->run_background();
+        $rederived = $this->rederived_rows();
 
         self::$results[] = [
             'case' => $case,
@@ -148,6 +149,7 @@ final class observer_cost_bench extends \advanced_testcase {
             'ceiling' => $ceiling,
             'bgstatements' => $bgstatements,
             'bgms' => $bgms,
+            'rederived' => $rederived,
         ];
         $this->assertGreaterThan(0, $reads + $writes, 'The handler must have done something, or the seed missed it.');
     }
@@ -167,12 +169,12 @@ final class observer_cost_bench extends \advanced_testcase {
             '',
             'observer_cost_bench on ' . $DB->get_dbfamily() . ', Moodle ' . $GLOBALS['CFG']->release,
             '| Case | N | Reads | Writes | Statements | ms | Tasks queued | Hit the 20,000-row ceiling '
-                . '| Background statements | Background ms |',
-            '|---|---:|---:|---:|---:|---:|---:|---|---:|---:|',
+                . '| Background statements | Background ms | Rows queued for re-derivation |',
+            '|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|',
         ];
         foreach (self::$results as $r) {
             $lines[] = sprintf(
-                '| %s | %d | %d | %d | %d | %.1f | %d | %s | %s | %s |',
+                '| %s | %d | %d | %d | %d | %.1f | %d | %s | %s | %s | %s |',
                 $r['case'],
                 $r['n'],
                 $r['reads'],
@@ -182,7 +184,8 @@ final class observer_cost_bench extends \advanced_testcase {
                 $r['tasks'],
                 $r['ceiling'] ? 'yes' : '',
                 $r['bgstatements'] === null ? '' : (string) $r['bgstatements'],
-                $r['bgms'] === null ? '' : sprintf('%.1f', $r['bgms'])
+                $r['bgms'] === null ? '' : sprintf('%.1f', $r['bgms']),
+                $r['rederived'] === null ? '' : (string) $r['rederived']
             );
         }
         fwrite(STDERR, implode("\n", $lines) . "\n");
@@ -192,25 +195,54 @@ final class observer_cost_bench extends \advanced_testcase {
      * Run the background tasks that took over a walk from the request, and
      * measure them: the work they do is the work the request no longer does.
      *
-     * Only {@see \block_feedback_tracker\task\requeue_rollups} is run; the
-     * backfill and re-attribution tasks the other handlers queue did their work
-     * in the background before this change too.
+     * Only the walks are run ({@see \block_feedback_tracker\task\requeue_rollups},
+     * {@see \block_feedback_tracker\task\rederive_activity}); the backfill and
+     * re-attribution tasks they and the other handlers queue did their work in
+     * the background before this change too.
      *
-     * @return array [statements, ms], both null when no such task was queued.
+     * @return array [statements, ms], both null when no walk was queued.
      */
     private function run_background(): array {
         global $DB;
-        $classname = '\\' . \block_feedback_tracker\task\requeue_rollups::class;
-        if (!$DB->record_exists('task_adhoc', ['classname' => $classname])) {
+        $classnames = [
+            '\\' . \block_feedback_tracker\task\requeue_rollups::class,
+            '\\' . \block_feedback_tracker\task\rederive_activity::class,
+        ];
+        [$insql, $params] = $DB->get_in_or_equal($classnames);
+        if (!$DB->record_exists_select('task_adhoc', "classname $insql", $params)) {
             return [null, null];
         }
         $before = $DB->perf_get_reads() + $DB->perf_get_writes();
         $started = hrtime(true);
         ob_start();
-        $this->runAdhocTasks($classname);
+        foreach ($classnames as $classname) {
+            $this->runAdhocTasks($classname);
+        }
         ob_end_clean();
         $ms = (hrtime(true) - $started) / 1e6;
         return [$DB->perf_get_reads() + $DB->perf_get_writes() - $before, $ms];
+    }
+
+    /**
+     * Rows the queued backfill tasks will re-derive: the coverage of a walk,
+     * which the request-side handlers capped at 20,000.
+     *
+     * @return int|null Null when no backfill task is queued.
+     */
+    private function rederived_rows(): ?int {
+        global $DB;
+        $rows = 0;
+        $tasks = $DB->get_recordset(
+            'task_adhoc',
+            ['classname' => '\\' . \block_feedback_tracker\task\backfill_one_submission::class]
+        );
+        $found = false;
+        foreach ($tasks as $task) {
+            $found = true;
+            $rows += count((array) (json_decode((string) $task->customdata)->rows ?? []));
+        }
+        $tasks->close();
+        return $found ? $rows : null;
     }
 
     /**
