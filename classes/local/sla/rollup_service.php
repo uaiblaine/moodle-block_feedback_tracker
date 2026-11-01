@@ -116,7 +116,7 @@ class rollup_service {
         $slagoal = (float) (get_config('block_feedback_tracker', 'sla_goal_hours') ?: 24);
         $thresholds = bucket::parse_thresholds_eff();
         $criticalmin = $thresholds[2];
-        /* Business-days SLA goal: the day-ruler twin of sla_goal_hours, and
+        /* Business-days target time: the day-ruler twin of sla_goal_hours, and
          * like it the bound of both the over-goal count and compliance. The
          * critical cutoff is the third day threshold, as the hour one is the
          * third hour threshold. All of these day figures are display-only; the

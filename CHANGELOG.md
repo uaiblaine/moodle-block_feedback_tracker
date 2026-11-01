@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026042011`.
+Version `2026042012`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -46,6 +46,15 @@ Version `2026042011`.
   one task. A group pause still re-queues its one tuple in the request.
   `tests/perf/observer_cost_bench.php` measures what each handler costs in the
   request; it is not part of the testsuite.
+- **"SLA" is gone from the interface.** The target response time is now
+  "Target time" (pt_br "Prazo de retorno"), and the share answered within it
+  "Within target" (pt_br "Retorno dentro do prazo"; "No prazo" on the group
+  card, which drops its "within" caption). "Compliance" names the same figure
+  and is renamed with it, in the score simulator and in the score weight
+  setting. The pause-window capability, event and cache names drop "SLA". The
+  setting descriptions say the target time is a reference for the
+  indicators, not a contractual commitment. Setting keys and stored values do
+  not change.
 
 ## [v5.2-r3] - 2026-10-23
 

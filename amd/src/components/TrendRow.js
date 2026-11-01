@@ -35,7 +35,7 @@ import {classifySpeed, speedLabel} from 'block_feedback_tracker/lib/trend';
  * @param {Array<number|null>} props.series  14-day sparkline values.
  * @param {object} props.i18n  Bundle with trend_faster / trend_slower / trend_stable / trend_window_label /
  *                             sparkline_aria.
- * @param {number|null} [props.goal]  Optional SLA goal line on the sparkline.
+ * @param {number|null} [props.goal]  Optional target-time line on the sparkline.
  * @returns {object|null} vnode
  */
 export default function TrendRow({pct, series, i18n, goal}) {
