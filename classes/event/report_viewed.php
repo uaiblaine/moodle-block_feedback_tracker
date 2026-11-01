@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Feedback tracker report viewed event.
+ * Feedback Flow report viewed event.
  *
  * @package    block_feedback_tracker
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
@@ -65,7 +65,7 @@ class report_viewed extends \core\event\base {
      */
     public function get_description(): string {
         $report = isset($this->other['report']) ? (string) $this->other['report'] : '?';
-        return "The user with id '{$this->userid}' viewed the feedback tracker '{$report}' report.";
+        return "The user with id '{$this->userid}' viewed the Feedback Flow '{$report}' report.";
     }
 
     /**
