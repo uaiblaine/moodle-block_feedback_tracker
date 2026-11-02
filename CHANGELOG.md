@@ -5,9 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v5.3-r4] - 2026-11-02
 
-Version `2026100521`.
+The client-side performance audit (the teacher dashboard shows 50 courses at a time and its services
+read once, not per course; the course report applies only the latest answer; a Read-only sessions
+check), course backup and restore, background walks for bulk changes, and the Feedback Flow name
+(version `2026100522`).
 
 ### Added
 - **A Read-only sessions check on the Performance overview report** (*Site
