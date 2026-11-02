@@ -37,7 +37,7 @@
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-import {html, useState, useMemo, useEffect} from 'block_feedback_tracker/lib/preact';
+import {html, useState, useMemo, useEffect, useRef} from 'block_feedback_tracker/lib/preact';
 import ResponsivenessModule from 'block_feedback_tracker/components/ResponsivenessModule';
 import InsightCard from 'block_feedback_tracker/components/InsightCard';
 import PriorityCard from 'block_feedback_tracker/components/PriorityCard';
@@ -56,6 +56,13 @@ import Notification from 'core/notification';
 
 /** Moodle user-preference name persisting the hero+insights collapse state. */
 const PREF_DASHBOARD_COLLAPSED = 'block_feedback_tracker_dashboard_collapsed';
+
+/**
+ * Course rows the table shows at first and adds on each "Show more". The table's cost grows with the rows it lays
+ * out, not with its JavaScript, so a viewer of hundreds of courses gets a load and a sort press as quick as a
+ * teacher of ten (docs/performance-audit/PLAN.md, A1). Pinned by tests/lockstep/dashboard_rows_rule_test.php.
+ */
+const DASHBOARD_ROWS_STEP = 50;
 
 /**
  * Pure client-side sort for the courses table.
@@ -194,6 +201,13 @@ export default function DashboardView({initial}) {
     const [collapsed, setCollapsed] = useState(Boolean(initial.dashboard_collapsed));
 
     const sorted = useMemo(() => sortCourses(courses, sortKey, sortOrder), [courses, sortKey, sortOrder]);
+    // The table shows the first `shown` rows of the sorted list; a sort reorders the whole list, and the hero's
+    // totals below cover every course whatever is shown.
+    const [shown, setShown] = useState(DASHBOARD_ROWS_STEP);
+    const visible = useMemo(() => sorted.slice(0, shown), [sorted, shown]);
+    // Index of the first row a "Show more" press revealed, focused once it is drawn (the button may be gone).
+    const revealedRef = useRef(null);
+    const coursesRef = useRef(null);
     const totals = useMemo(() => aggregate(courses, 'avgscore'), [courses]);
     const heroBand = bandForScore(totals.score, scoreThresholds);
     const heroBandLabel = (i18n.bands || {})[heroBand] || '';
@@ -321,6 +335,27 @@ export default function DashboardView({initial}) {
         }
     };
 
+    /**
+     * Reveal the next DASHBOARD_ROWS_STEP rows and note where they start.
+     */
+    const handleShowMore = () => {
+        revealedRef.current = shown;
+        setShown(shown + DASHBOARD_ROWS_STEP);
+    };
+
+    // Focus the first revealed row once it is drawn: the press that revealed it may have removed its own button.
+    useEffect(() => {
+        const index = revealedRef.current;
+        revealedRef.current = null;
+        if (index === null || !coursesRef.current) {
+            return;
+        }
+        const link = coursesRef.current.querySelectorAll('.bft-courses-row .bft-courses-name-link')[index];
+        if (link) {
+            link.focus();
+        }
+    }, [shown]);
+
     const priorities = (gradenow && Array.isArray(gradenow.submissions))
         ? gradenow.submissions.slice(0, 3) : [];
 
@@ -351,15 +386,30 @@ export default function DashboardView({initial}) {
             i18n=${i18n}
             variant="block" />`;
     } else {
-        coursesbody = html`<${CoursesTable}
-            rows=${sorted}
-            i18n=${i18n}
-            sortKey=${sortKey}
-            sortOrder=${sortOrder}
-            onSort=${handleSort}
-            thresholds=${scoreThresholds}
-            goal=${config.sla_goal_hours}
-            config=${config} />`;
+        const showing = (i18n.dashboard_showing || 'Showing {$a->shown} of {$a->total} courses')
+            .replace('{$a->shown}', formatCount(visible.length))
+            .replace('{$a->total}', formatCount(sorted.length));
+        coursesbody = html`
+            <${CoursesTable}
+                rows=${visible}
+                i18n=${i18n}
+                sortKey=${sortKey}
+                sortOrder=${sortOrder}
+                onSort=${handleSort}
+                thresholds=${scoreThresholds}
+                goal=${config.sla_goal_hours}
+                config=${config} />
+            ${sorted.length > DASHBOARD_ROWS_STEP && html`
+                <div class="bft-dashboard-more">
+                    <span class="bft-dashboard-more-count" aria-live="polite">${showing}</span>
+                    ${visible.length < sorted.length && html`
+                        <button type="button"
+                                class="bft-dashboard-more-btn"
+                                onClick=${handleShowMore}>${i18n.dashboard_showmore || 'Show more'}</button>
+                    `}
+                </div>
+            `}
+        `;
     }
 
     return html`
@@ -498,7 +548,7 @@ export default function DashboardView({initial}) {
                 </section>
             `}
 
-            <section class="bft-dashboard-courses">
+            <section class="bft-dashboard-courses" ref=${coursesRef}>
                 <div class="bft-dashboard-section-eyebrow">
                     ${i18n.dashboard_courses_title || 'Your courses'}
                 </div>
