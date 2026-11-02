@@ -406,6 +406,14 @@ export default function PendingReportView({initial}) {
 
     const firstRun = useRef(true);
     const firstRunDrafts = useRef(true);
+    // Number of the latest request of each kind: only its answer may change the screen, so a slow answer for a
+    // mode, filter, page or class the viewer has already left is dropped (SchoolComparison's pattern).
+    const pageTicket = useRef(0);
+    const draftsTicket = useRef(0);
+    const acaTicket = useRef(0);
+    // The class the drafts on screen belong to. Graded mode fetches no drafts, so a class changed there is
+    // fetched on the way back to pending.
+    const draftsGroup = useRef(null);
 
     /**
      * Pick the user-facing message for a failed fetch: a friendly connectivity
@@ -423,6 +431,8 @@ export default function PendingReportView({initial}) {
      * Fetch a page using the current mode + filters.
      */
     const fetchPage = async() => {
+        pageTicket.current += 1;
+        const ticket = pageTicket.current;
         setLoading(true);
         setError(null);
         const args = {courseid, groupid, sort: serverSort, order: sortOrder, search, page, perpage};
@@ -430,13 +440,20 @@ export default function PendingReportView({initial}) {
             const result = mode === 'graded'
                 ? await getGradedSubmissions(Object.assign({}, args, {bucket: filter}))
                 : await getPendingSubmissions(Object.assign({}, args, {band: filter}));
+            if (ticket !== pageTicket.current) {
+                return;
+            }
             setSubmissions(Array.isArray(result.submissions) ? result.submissions : []);
             setTotal(Number(result.total) || 0);
             setCounts(result.counts || {});
         } catch (e) {
-            setError(netMsg(e));
+            if (ticket === pageTicket.current) {
+                setError(netMsg(e));
+            }
         } finally {
-            setLoading(false);
+            if (ticket === pageTicket.current) {
+                setLoading(false);
+            }
         }
     };
 
@@ -459,15 +476,25 @@ export default function PendingReportView({initial}) {
         fetchPage();
     }, [mode, groupid, filter, serverSort, sortOrder, search, page]);
 
-    // Drafts depend only on the class filter.
+    // Drafts depend only on the class filter, and show in pending mode only.
     const fetchDrafts = async() => {
+        draftsTicket.current += 1;
+        const ticket = draftsTicket.current;
+        const forgroup = groupid;
         try {
             const result = await getPendingSubmissions({
                 courseid, groupid, status: 'draft', sort: 'recent', perpage,
             });
+            if (ticket !== draftsTicket.current) {
+                return;
+            }
             setDrafts(Array.isArray(result.submissions) ? result.submissions : []);
+            draftsGroup.current = forgroup;
         } catch (e) {
-            setDrafts([]);
+            if (ticket === draftsTicket.current) {
+                setDrafts([]);
+                draftsGroup.current = null;
+            }
         }
     };
     // Guard skips the mount run — the mount effect below chains the initial
@@ -477,8 +504,11 @@ export default function PendingReportView({initial}) {
             firstRunDrafts.current = false;
             return;
         }
+        if (mode === 'graded' || draftsGroup.current === groupid) {
+            return;
+        }
         fetchDrafts();
-    }, [groupid]);
+    }, [groupid, mode]);
 
     // Mount: the main table is what the teacher came for, so it fetches
     // first, in parallel with the lightweight hero scopes; drafts follow once
@@ -491,18 +521,27 @@ export default function PendingReportView({initial}) {
 
     // Academic-days heatmap loads on mount and on class change.
     const fetchAcademic = async() => {
+        acaTicket.current += 1;
+        const ticket = acaTicket.current;
         setAcaLoading(true);
         setAcaError(null);
         try {
             const result = await getAcademicDays({courseid, groupid});
+            if (ticket !== acaTicket.current) {
+                return;
+            }
             setAcaDays(Array.isArray(result.days) ? result.days : []);
             setAcaSummary(result.summary || null);
             setAcaEvents(Array.isArray(result.events) ? result.events : []);
         } catch (e) {
-            setAcaDays([]);
-            setAcaError(netMsg(e));
+            if (ticket === acaTicket.current) {
+                setAcaDays([]);
+                setAcaError(netMsg(e));
+            }
         } finally {
-            setAcaLoading(false);
+            if (ticket === acaTicket.current) {
+                setAcaLoading(false);
+            }
         }
     };
     useEffect(() => {
@@ -553,6 +592,11 @@ export default function PendingReportView({initial}) {
             return;
         }
         setMode(m);
+        // The two modes have different columns: the old mode's rows go with it, and the skeleton stands in
+        // until the new mode's first page lands.
+        setSubmissions([]);
+        setTotal(0);
+        setLoading(true);
         setFilter('');
         setCounts({});
         setPage(0);
