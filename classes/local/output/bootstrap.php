@@ -219,6 +219,8 @@ class bootstrap {
             'dashboard_col_critical' => get_string('dashboard_col_critical', 'block_feedback_tracker'),
             'dashboard_col_avgscore' => get_string('dashboard_col_avgscore', 'block_feedback_tracker'),
             'dashboard_refresh' => get_string('dashboard_refresh', 'block_feedback_tracker'),
+            'dashboard_showing' => get_string('dashboard_showing', 'block_feedback_tracker'),
+            'dashboard_showmore' => get_string('dashboard_showmore', 'block_feedback_tracker'),
             'dashboard_error' => get_string('dashboard_error', 'block_feedback_tracker'),
             'gradenow_loading' => get_string('gradenow_loading', 'block_feedback_tracker'),
             // Hero, slim-hero toggle, insights, priority list, table columns.
