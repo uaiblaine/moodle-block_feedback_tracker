@@ -292,14 +292,8 @@ purged), byte for byte the same (`fix4-equiv/`), the manager's including a momen
 (`fix4-ab.sh`, `fix4-ab.log`, flag off, the dashboard's answers cached after the warm load) moved nothing beyond
 noise: the last call of D2 was 1,055 / 973 ms before and 885 / 912 ms after, still the priority list.
 
-**S3, found here: PostgreSQL's JIT compiles the priority list's query on every call.** `EXPLAIN ANALYZE` of the
-manager's query (m503b, PostgreSQL 18.6, defaults `jit = on`, `jit_above_cost` 100,000): execution 488 ms, of which JIT
-304 ms (inlining 38, optimisation 140, emission 123); with `SET jit = off` 181-197 ms. The planner's estimate (2.6 M,
-the subplans of the marker-allocation filter over an `IN` of 500 courses) is what triggers it. A restructured query
-(top-N over the ledger first, the joins on the chosen rows only) runs in 25 ms with JIT off, but 108-137 ms once it
-re-checks that the user, course and module of each row exist (as the inner joins did), and ~500 ms with JIT on: no gain
-unless JIT is off. Left to the owner: a README line recommending `jit = off` for the site's database, measured, and
-whether the restructure is then worth its two-query shape.
+The priority list's remaining time is spent executing its query in the database. The audit measured that on
+one platform only, so it changes nothing there and gives no database advice.
 
 Gates: `group_access_test` (`test_prime_answers_as_each_course_alone`, `test_prime_reads_do_not_grow_with_the_courses`),
 `dashboard_scope_test` (`test_sql_visibility_keeps_each_courses_own_rows`, `test_sql_visibility_reads_do_not_grow_with_the_courses`),
