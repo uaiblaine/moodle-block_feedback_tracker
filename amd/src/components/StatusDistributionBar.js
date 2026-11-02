@@ -64,7 +64,8 @@ const segmentsFor = (mode, i18n) => {
 /**
  * @param {object} props
  * @param {string} props.mode                    'pending' | 'graded'.
- * @param {Object<string, number>} props.counts  Per-band counts for the mode.
+ * @param {Object<string, number>} props.counts  Per-band counts for the mode; empty until the mode's first
+ *                                               answer, when each segment shows a dash rather than a 0.
  * @param {string} props.active                  Currently-filtered band slug ('' = none).
  * @param {(slug: string) => void} props.onSelect  Filter click — passes '' to clear.
  * @param {(mode: string) => void} props.onModeChange  Pending ↔ graded toggle.
@@ -73,6 +74,7 @@ const segmentsFor = (mode, i18n) => {
  */
 export default function StatusDistributionBar({mode, counts, active, onSelect, onModeChange, i18n}) {
     const safecounts = counts || {};
+    const known = Object.keys(safecounts).length > 0;
     const segments = segmentsFor(mode, i18n);
     const total = segments.reduce((sum, s) => sum + (Number(safecounts[s.slug]) || 0), 0);
     const graded = mode === 'graded';
@@ -100,9 +102,9 @@ export default function StatusDistributionBar({mode, counts, active, onSelect, o
                                 class=${'bft-dist-seg bft-dist-seg-' + seg.tone + (dim ? ' bft-dist-seg-dim' : '')}
                                 style=${'flex: ' + Math.max(pct, 1).toFixed(2) + ' 1 0;'}
                                 aria-pressed=${active === seg.slug}
-                                aria-label=${seg.label + ' — ' + formatCount(n)}
+                                aria-label=${known ? seg.label + ' — ' + formatCount(n) : seg.label}
                                 onClick=${() => onSelect(active === seg.slug ? '' : seg.slug)}>
-                            <span class="bft-dist-seg-n bft-mono">${formatCount(n)}</span>
+                            <span class="bft-dist-seg-n bft-mono">${known ? formatCount(n) : '–'}</span>
                             <span class="bft-dist-seg-l">${seg.label}</span>
                         </button>
                     `;

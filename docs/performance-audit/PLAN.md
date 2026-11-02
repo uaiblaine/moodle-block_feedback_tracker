@@ -199,3 +199,28 @@ the slice starts at the step, grows by it, and the step is at most 100); mutatio
 `mutations/gates.conf`. Sweep `--changed main`: 4/4 red on pgsql and on MariaDB (D1-D3 and S1 of the stylesheet), each
 on the test its `#   ->` line names. Tier 2 gate, `mdl ci moodle-block_feedback_tracker --branch MOODLE_503_STABLE --php 8.4 --behat` on the final
 tree: all steps passed, PHPUnit 923 tests (14,497 assertions), Behat 24/24 scenarios.
+
+## Fix 2: the course report applies only the latest answer (branch `fix/report-request-guard`, version 2026100519)
+
+`fetchPage`, `fetchDrafts` and `fetchAcademic` each take a ticket and set state only while it is the latest (the
+error and loading paths too). A To grade / Graded switch drops the old mode's rows and shows the skeleton until the
+new mode's first page lands; the distribution bar shows a dash, not 0, while it has no counts. Drafts are fetched in
+pending mode only, for the class they belong to (B6).
+
+Checked in the browser on m503b (FTP000, manager; same scripts as the reproductions, first answer held):
+
+| Case | Before | After |
+|---|---|---|
+| Waiting, then Attention 150 ms later; Waiting's answer held 2.5 s | at 3.85 s: Waiting's 25 rows, "Page 1 of 2", under the Attention filter | at 3.85 s: Attention's 14 rows |
+| Graded, then To grade again; the graded answer held 1.5 s | the graded list under the To grade columns, "Grade" on each row, counts 0/0/0 | the To grade rows and counts (the late answer dropped) |
+| While the graded answer is on its way | pending rows under the Graded columns, "Review", counts 0/0/0 | the skeleton, counts "–" |
+| Class change in graded mode | page, drafts and academic days | page and academic days; drafts fetched on the way back to pending |
+
+No timing changes: the code adds a comparison per answer.
+
+Gates: `tests/lockstep/report_fetch_rules_test.php` reads `PendingReportView.js` (each fetch checks its ticket
+between the answer and its first setter and on its error path; graded mode fetches no drafts; a mode change drops
+the rows); mutation gates P1-P5 in `mutations/gates.conf`.
+Sweep `--changed main`: 5/5 red on pgsql and on MariaDB (P1-P5), each on the test its `#   ->` line names. Tier 2
+gate, `mdl ci moodle-block_feedback_tracker --branch MOODLE_503_STABLE --php 8.4 --behat` on the final tree: all
+steps passed, PHPUnit 928 tests (14,534 assertions), Behat 24/24 scenarios.
