@@ -1,5 +1,10 @@
 # Feedback Flow
 
+[![Moodle Plugin CI: main (Moodle 5.3)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml?query=branch%3Amain)
+[![Moodle Plugin CI: MOODLE_502_STABLE (Moodle 5.2)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml/badge.svg?branch=MOODLE_502_STABLE)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml?query=branch%3AMOODLE_502_STABLE)
+[![Moodle Plugin CI: MOODLE_501_STABLE (Moodle 5.1)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml/badge.svg?branch=MOODLE_501_STABLE)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml?query=branch%3AMOODLE_501_STABLE)
+[![Moodle Plugin CI: MOODLE_405_STABLE (Moodle 4.5)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml/badge.svg?branch=MOODLE_405_STABLE)](https://github.com/uaiblaine/moodle-block_feedback_tracker/actions/workflows/ci.yml?query=branch%3AMOODLE_405_STABLE)
+
 **Feedback Flow** helps teaching teams visualize — and value — how efficiently students receive feedback on their work, measured fairly in *working time* rather than raw calendar days.
 
 ## Why Feedback Flow?
