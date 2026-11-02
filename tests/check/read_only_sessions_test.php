@@ -28,8 +28,6 @@ namespace block_feedback_tracker\check\performance;
 use advanced_testcase;
 use core\check\manager;
 use core\check\result;
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\CoversFunction;
 
 /**
  * The check's verdict follows the site flag, and core finds the check through the plugin's callback.
@@ -38,9 +36,10 @@ use PHPUnit\Framework\Attributes\CoversFunction;
  * @category   test
  * @copyright  2026 Anderson Blaine <anderson@blaine.com.br>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ *
+ * @covers \block_feedback_tracker\check\performance\read_only_sessions
+ * @covers ::block_feedback_tracker_performance_checks
  */
-#[CoversClass(read_only_sessions::class)]
-#[CoversFunction('block_feedback_tracker_performance_checks')]
 final class read_only_sessions_test extends advanced_testcase {
     /**
      * A site with the flag set is told nothing is wrong.

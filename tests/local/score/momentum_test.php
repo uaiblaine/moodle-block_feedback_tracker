@@ -27,13 +27,12 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\local\score;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-
 /**
  * momentum_pcts() answers many groups from one ledger read with the rules momentum_pct() states: two 7-day windows
  * ending now, at least MOMENTUM_MIN_GRADES submitted grades in each, a positive prior median.
+ *
+ * @covers \block_feedback_tracker\local\score\responsiveness_calculator
  */
-#[CoversClass(responsiveness_calculator::class)]
 final class momentum_test extends \advanced_testcase {
     /** @var int A fixed "now", so the windows do not depend on the clock. */
     private const NOW = 1790000000;

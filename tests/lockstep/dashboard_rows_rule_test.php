@@ -27,15 +27,14 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\lockstep;
 
-use PHPUnit\Framework\Attributes\CoversNothing;
-
 /**
  * The plugin has no JavaScript test runner, so the rule is read from amd/src/views/DashboardView.js. The table's
  * cost grows with the rows it lays out, so a viewer of hundreds of courses waited on every row for a load and for a
  * sort press (docs/performance-audit/PLAN.md, A1). The view hands the table a slice of the sorted list that starts
  * at DASHBOARD_ROWS_STEP rows and grows by that step on each "Show more".
+ *
+ * @coversNothing
  */
-#[CoversNothing]
 final class dashboard_rows_rule_test extends \advanced_testcase {
     /** @var int The most rows a step may add; past a hundred the table's cost is back. */
     private const MAX_STEP = 100;

@@ -27,17 +27,15 @@ declare(strict_types=1);
 
 namespace block_feedback_tracker\lockstep;
 
-use PHPUnit\Framework\Attributes\CoversNothing;
-use PHPUnit\Framework\Attributes\DataProvider;
-
 /**
  * The plugin has no JavaScript test runner, so the rules are read from amd/src/views/PendingReportView.js. Answers
  * arrive in any order: an answer for a filter, page, class or mode the viewer has left painted its rows under the
  * new one (docs/performance-audit/PLAN.md, B3). Each fetch takes a ticket and sets state only while it is the
  * latest; drafts are not fetched in graded mode (B6); a mode change drops the old mode's rows, whose columns the new
  * mode does not have.
+ *
+ * @coversNothing
  */
-#[CoversNothing]
 final class report_fetch_rules_test extends \advanced_testcase {
     /**
      * The report view's source.
@@ -84,8 +82,9 @@ final class report_fetch_rules_test extends \advanced_testcase {
      * @param string $opening
      * @param string $ticket
      * @param string $setter
+     *
+     * @dataProvider fetch_provider
      */
-    #[DataProvider('fetch_provider')]
     public function test_a_superseded_answer_is_dropped(string $opening, string $ticket, string $setter): void {
         $body = $this->body($this->view_source(), $opening);
         $this->assertStringContainsString("{$ticket}.current += 1;\n        const ticket = {$ticket}.current;", $body);
