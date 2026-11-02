@@ -121,15 +121,37 @@ All settings live under *Site administration → Plugins → Blocks → Feedback
 - **Views**: `enable_admin_view_all` (off), `enable_teacher_simulator` (off), `show_perceived_time`, `show_paused_today_indicator`, `show_peer_context` and `exclude_grader_submissions` (on), `release_stops_clock` (off), `reconcile_active` (on), `retention_active` (off), `removal_cleanup_active` (off), `removal_grace_follow_recyclebin` (on), `removal_grace_seconds` (7 days), `display_time_unit` (business hours) and the group card's `group_title_fields` and `group_subtitle_fields` (empty).
 - **Tools**: links to the calendar editor, the recompute audit log, the bulk block removal and the data reset pages.
 
-## Read-only sessions
+## Performance: Redis and read-only sessions
 
-Every web service of the plugin is a read declared `readonlysession`, which core honours only when config.php sets
-`$CFG->enable_read_only_sessions = true;`. It is not an admin setting. Without it, the calls a dashboard or report
-load starts together wait for each other on the session lock: on a development site, three calls of 2 to 12 ms of
-work each finished 130, 240 and 360 ms after they started. Before enabling it, map every cache definition in session
-mode, this plugin's `dashboard_payload` among them, to a store other than the session store: core refuses to start a
-session otherwise. *Site administration > Reports > Performance overview* shows a check that says whether the flag
-is set.
+The teacher dashboard and the course report each start three or four web service calls at once when they load.
+Every one of them is a read declared `readonlysession`, but core honours that only when config.php sets
+`$CFG->enable_read_only_sessions = true;`. Without it each call holds the viewer's session lock, so the calls answer
+one after another: three calls of 2 to 12 ms of work finished 130, 240 and 360 ms after they started. With it they
+run side by side.
+
+Core refuses to start a session with the flag set while any cache definition in session mode is kept in the session
+store, which is where a default installation keeps them (this plugin's `dashboard_payload` among them). Moving the
+cache stores to Redis first is what makes the flag possible:
+
+1. Add a Redis store instance under *Site administration > Plugins > Caching > Configuration* and make it the
+   default store for the **application** and **session** modes (or map each session-mode definition to it).
+2. Then add `$CFG->enable_read_only_sessions = true;` to config.php. It is not an admin setting.
+
+*Site administration > Reports > Performance overview* shows a **Read-only sessions** check that warns while the
+flag is off.
+
+Measured on a development site (500 courses, 10,000 students, 470,000 submissions; Redis session handler; browser at
+4x CPU slowdown), as the time until the last of a page's parallel calls had answered, two rounds each:
+
+| Page | Default cache stores, flag off | Redis cache stores, flag off | Redis cache stores, flag on |
+|---|---|---|---|
+| Course report (3 calls) | 365 / 357 ms | 357 / 458 ms | **61 / 75 ms** |
+| Teacher dashboard, 10 courses (3 calls) | 359 / 351 ms | 347 / 348 ms | **54 / 57 ms** |
+| Teacher dashboard, 500 courses (3 calls) | 969 / 992 ms | 1,015 / 869 ms | **612 / 613 ms** |
+
+Redis alone changes nothing on these loads, because the session lock dominates; Redis with the flag makes them
+about six times quicker. On the 500-course dashboard what remains is the grader priority list's own work on the
+server, about 500 ms.
 
 ## Capabilities
 
