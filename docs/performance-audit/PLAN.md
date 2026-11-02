@@ -263,3 +263,54 @@ Redis alone moved nothing: the session lock dominates. With the flag the calls r
 46-75 ms; on D2 the last one is `get_grader_priority_list`'s own server work (S2, fix 4). The README's section became
 *Performance: Redis and read-only sessions* with these numbers and the two steps, at the owner's request, and the
 check's details carry the report's figures.
+
+## Fix 4: the cross-course scope at the course ceiling (branch `perf/scope-at-course-ceiling`, version 2026100521)
+
+Attributed statement by statement (`query_census.php`, the manager, cold): each of the three dashboard services
+paid 500 × `SELECT * FROM {course} WHERE id = ?`, one per course in `group_access::visible_group_ids()`, only to read
+the group mode; `get_insights` also paid 4,000 per-class ledger queries, two per class in
+`responsiveness_calculator::momentum_pct()`.
+
+- `group_access::prime()` reads the scope's courses and their contexts in one query and memoises each course's
+  answer through the same private `resolve()`; `dashboard_scope::sql_visibility()` primes before its loop.
+- `sql_visibility()` puts the courses the viewer sees whole in one `IN`; a restricted course keeps its own
+  `(courseid = :c AND groupid IN (...))` clause.
+- `momentum_pcts()` reads the two weeks of submitted grades of the candidate classes once and splits them in PHP;
+  `momentum_pct()` is one pair of it; `get_insights` asks once for all candidates.
+
+Server, CLI (`ws_reads.php`, `query_census.php`; before = `ws_reads.log`):
+
+| Service, manager of 500 courses | Before | After |
+|---|---|---|
+| `get_dashboard`, cold | 511 reads, 213 ms | 12 reads, 200 ms |
+| `get_grader_priority_list`, every call | 507 reads, 470-503 ms | 8 reads, 428-531 ms |
+| `get_insights`, cold | 4,514 reads, 592 ms | 14 reads, 211 ms |
+| teacher of 10: dashboard / priority / insights | 21 / 17 / 94 reads | 12 / 8 / 8 reads |
+
+Answers identical: `ws_dump.php` saved the three services' JSON for both viewers on `main` and on the branch (caches
+purged), byte for byte the same (`fix4-equiv/`), the manager's including a momentum-picked insight. The browser A/B
+(`fix4-ab.sh`, `fix4-ab.log`, flag off, the dashboard's answers cached after the warm load) moved nothing beyond
+noise: the last call of D2 was 1,055 / 973 ms before and 885 / 912 ms after, still the priority list.
+
+**S3, found here: PostgreSQL's JIT compiles the priority list's query on every call.** `EXPLAIN ANALYZE` of the
+manager's query (m503b, PostgreSQL 18.6, defaults `jit = on`, `jit_above_cost` 100,000): execution 488 ms, of which JIT
+304 ms (inlining 38, optimisation 140, emission 123); with `SET jit = off` 181-197 ms. The planner's estimate (2.6 M,
+the subplans of the marker-allocation filter over an `IN` of 500 courses) is what triggers it. A restructured query
+(top-N over the ledger first, the joins on the chosen rows only) runs in 25 ms with JIT off, but 108-137 ms once it
+re-checks that the user, course and module of each row exist (as the inner joins did), and ~500 ms with JIT on: no gain
+unless JIT is off. Left to the owner: a README line recommending `jit = off` for the site's database, measured, and
+whether the restructure is then worth its two-query shape.
+
+Gates: `group_access_test` (`test_prime_answers_as_each_course_alone`, `test_prime_reads_do_not_grow_with_the_courses`),
+`dashboard_scope_test` (`test_sql_visibility_keeps_each_courses_own_rows`, `test_sql_visibility_reads_do_not_grow_with_the_courses`),
+`tests/local/score/momentum_test.php`; mutation gates V1-V4 and M1-M2. The read-count tests make the viewer the current
+user, as a web service call does: for anyone else `has_capability()` checks the dirty-user cache flag on every call
+(`lib/accesslib.php:986`), two reads a course here.
+
+Gates run on the final tree: tier 3, `mdl ci moodle-block_feedback_tracker --matrix --behat`: 4/4 legs passed (PHP 8.3
+and 8.4 × pgsql and MariaDB; the leg logs did not come back from the CI host, so the counts are the single 8.4 pgsql
+leg's on the tree before the last two test-data edits: PHPUnit 939 tests, 14,626 assertions). Sweep `--changed
+main`: 7/7 red on pgsql and on MariaDB (V1-V4, M1-M3), each on the test its `#   ->` line names. The first sweep
+caught M2 green: three drafts could not move a median of five grades; the test now carries five, and an M3 case for
+rows without effective hours. Security diff read (`security-diff-read`, a `fleet-reader`): no finding; every course
+reaches the unrestricted `IN` only through its own `resolve()` answer, and a restricted course keeps its group clause.
