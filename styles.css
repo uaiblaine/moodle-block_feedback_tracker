@@ -2788,6 +2788,37 @@ body[data-bs-theme="dark"] :where(.block-feedback-tracker),
     overflow-x: auto;
 }
 
+/* "Showing N of M courses" and the Show more button under the courses table. */
+:where(.block-feedback-tracker) .bft-dashboard-more {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-top: 0.75rem;
+}
+
+:where(.block-feedback-tracker) .bft-dashboard-more-count {
+    color: var(--bft-text-muted);
+    font-size: var(--bft-fs-body);
+}
+
+:where(.block-feedback-tracker) .bft-dashboard-more-btn {
+    background: none;
+    border: 1px solid var(--bft-border-strong);
+    border-radius: 4px;
+    padding: 0.3rem 0.8rem;
+    font-size: var(--bft-fs-body);
+    line-height: 1.2;
+    color: var(--bft-text);
+    cursor: pointer;
+}
+
+:where(.block-feedback-tracker) .bft-dashboard-more-btn:hover,
+:where(.block-feedback-tracker) .bft-dashboard-more-btn:focus-visible {
+    background: var(--bft-surface-dim);
+}
+
 :where(.block-feedback-tracker) .bft-courses-table {
     border: 1px solid var(--bft-border);
     border-radius: 12px;
