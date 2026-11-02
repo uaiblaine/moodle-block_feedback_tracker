@@ -151,4 +151,93 @@ final class dashboard_scope_test extends \advanced_testcase {
 
         $this->assertSame([], dashboard_scope::visible_course_ids((int) $USER->id));
     }
+
+    /**
+     * Rollup rows a viewer may see through sql_visibility(), as "courseid:groupid" strings, sorted.
+     *
+     * @param int $userid
+     * @return string[]
+     */
+    private function visible_rollup_pairs(int $userid): array {
+        global $DB;
+        dashboard_scope::reset_memo();
+        group_access::reset_memo();
+        [$where, $params] = dashboard_scope::sql_visibility($userid, 'g.courseid', 'g.groupid', 'tv');
+        $rows = $DB->get_records_sql(
+            "SELECT g.id, g.courseid, g.groupid FROM {block_feedback_tracker_group} g WHERE $where",
+            $params
+        );
+        $pairs = array_map(static fn($r) => (int) $r->courseid . ':' . (int) $r->groupid, array_values($rows));
+        sort($pairs);
+        return $pairs;
+    }
+
+    /**
+     * The fragment keeps every row of a course the viewer sees whole, only the viewer's groups of a restricted
+     * course, nothing of a course where the viewer has no group, and nothing of a course outside the scope.
+     *
+     * @return void
+     */
+    public function test_sql_visibility_keeps_each_courses_own_rows(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $pgen = $gen->get_plugin_generator('block_feedback_tracker');
+        $whole = $pgen->create_tracked_course(['groupmode' => NOGROUPS]);
+        $restricted = $pgen->create_tracked_course(['groupmode' => SEPARATEGROUPS, 'groupmodeforce' => 1]);
+        $outsider = $pgen->create_tracked_course(['groupmode' => SEPARATEGROUPS, 'groupmodeforce' => 1]);
+        $notmine = $pgen->create_tracked_course(['groupmode' => NOGROUPS]);
+        $teacher = $gen->create_user();
+        foreach ([$whole, $restricted, $outsider] as $course) {
+            $gen->enrol_user($teacher->id, $course->id, 'editingteacher');
+        }
+        foreach ([$restricted, $outsider] as $course) {
+            $pgen->deny_capability('moodle/site:accessallgroups', \context_course::instance($course->id), 'editingteacher');
+        }
+        $own = (int) $gen->create_group(['courseid' => $restricted->id])->id;
+        $other = (int) $gen->create_group(['courseid' => $restricted->id])->id;
+        $outsidegroup = (int) $gen->create_group(['courseid' => $outsider->id])->id;
+        groups_add_member($own, $teacher->id);
+        $rows = [
+            [$whole->id, 0], [$restricted->id, $own], [$restricted->id, $other], [$restricted->id, 0],
+            [$outsider->id, $outsidegroup], [$notmine->id, 0],
+        ];
+        foreach ($rows as [$courseid, $groupid]) {
+            $pgen->create_rollup_row(['courseid' => (int) $courseid, 'groupid' => (int) $groupid]);
+        }
+
+        $expected = [(int) $whole->id . ':0', (int) $restricted->id . ':' . $own];
+        sort($expected);
+        $this->assertSame($expected, $this->visible_rollup_pairs((int) $teacher->id));
+    }
+
+    /**
+     * Building the fragment costs the same reads for two courses as for eight.
+     *
+     * @return void
+     */
+    public function test_sql_visibility_reads_do_not_grow_with_the_courses(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $pgen = $gen->get_plugin_generator('block_feedback_tracker');
+        $measure = function (int $count) use ($DB, $gen, $pgen): int {
+            $teacher = $gen->create_user();
+            for ($i = 0; $i < $count; $i++) {
+                $course = $pgen->create_tracked_course(['groupmode' => NOGROUPS]);
+                $gen->enrol_user($teacher->id, $course->id, 'editingteacher');
+            }
+            // As in a web service call, the viewer is the current user: has_capability() checks the dirty-user
+            // flag on every call for anyone else.
+            $this->setUser($teacher);
+            dashboard_scope::reset_memo();
+            dashboard_scope::visible_course_ids((int) $teacher->id);
+            group_access::reset_memo();
+            $before = $DB->perf_get_reads();
+            dashboard_scope::sql_visibility((int) $teacher->id, 'g.courseid', 'g.groupid', 'tr');
+            return $DB->perf_get_reads() - $before;
+        };
+        // A first run fills the caches a cold process would fill once.
+        $measure(2);
+        $this->assertSame($measure(2), $measure(8));
+    }
 }
