@@ -224,3 +224,42 @@ the rows); mutation gates P1-P5 in `mutations/gates.conf`.
 Sweep `--changed main`: 5/5 red on pgsql and on MariaDB (P1-P5), each on the test its `#   ->` line names. Tier 2
 gate, `mdl ci moodle-block_feedback_tracker --branch MOODLE_503_STABLE --php 8.4 --behat` on the final tree: all
 steps passed, PHPUnit 928 tests (14,534 assertions), Behat 24/24 scenarios.
+
+## Fix 3: a Read-only sessions check (branch `perf/read-only-sessions-check`, version 2026100520)
+
+block_compass PR 6's shape: `check\performance\read_only_sessions`, registered through
+`block_feedback_tracker_performance_checks()` in `lib.php`, warns on *Site administration > Reports > Performance
+overview* while `$CFG->enable_read_only_sessions` is unset; its details and a new README section say what to map
+first. All 12 services declared `readonlysession` are reads, and the only `$SESSION` access (`grader_filters`)
+reads.
+
+Why the probe timed out with the flag on (S1): core refuses to start any session while a cache definition in
+session mode is mapped to the session store. m503 and m503b both map session mode to `default_session`, so with the
+flag every page answered "The session caches can not be in the session store when enable_read_only_sessions is
+enabled", naming nine definitions, `block_feedback_tracker/dashboard_payload` among them. A site prerequisite, not a
+defect of the plugin; the check's details and the README say it. The gain was not measured here: that needs the
+stack's session caches remapped (`mdl redis <stack>`), an environment change left to the owner. The evidence stays
+the staircase of S1 and block_compass's measurement (four calls on one session: p95 989 ms against 75 ms).
+
+`admin/cli/checks.php --type=performance` on m503b lists `block_feedback_tracker_read_only_sessions` as a WARNING.
+Gates: `tests/check/read_only_sessions_test.php` (the verdict follows the flag; the callback returns the check; core
+collects it); mutation gates C1-C2. Sweep `--changed main`: 3/3 red on pgsql and on MariaDB (C1, C2 and R3 of the
+README), each on the tests its `#   ->` lines name. Tier 2 gate, `mdl ci moodle-block_feedback_tracker --branch
+MOODLE_503_STABLE --php 8.4` on the final tree: all steps passed, PHPUnit 932 tests (14,608 assertions).
+
+Measured after the owner approved `mdl redis m503b` (m503b's MUC application and session modes on its own Redis,
+2026-11-01), with `phase2b.sh` (`ONLYRO=1`, `fix3-ro-ab.log`): interleaved rounds, the flag set and unset with
+`admin/cli/cfg.php` (a trap unsets it), performance-info footer hidden, medians of 5 at 4x CPU, host load 3.2-4.3.
+The figure is the time until the last of the page's parallel plugin calls answered; the "default stores" column is
+`phase2b-ro.log`, the same series before the remap.
+
+| Page | Default stores, flag off | Redis, flag off | Redis, flag on |
+|---|---|---|---|
+| P1 course report (scopes, page, academic days) | 365 / 357 ms | 357 / 458 ms | **61 / 75 ms** |
+| D1 dashboard, 10 courses | 359 / 351 ms | 347 / 348 ms | **54 / 57 ms** |
+| D2 dashboard, 500 courses | 969 / 992 ms | 1,015 / 869 ms | **612 / 613 ms** |
+
+Redis alone moved nothing: the session lock dominates. With the flag the calls run side by side, each answering in
+46-75 ms; on D2 the last one is `get_grader_priority_list`'s own server work (S2, fix 4). The README's section became
+*Performance: Redis and read-only sessions* with these numbers and the two steps, at the owner's request, and the
+check's details carry the report's figures.
