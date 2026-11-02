@@ -5,11 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v4.5-r4] - 2026-11-02
 
-Version `2024100713`.
+The client-side performance audit (the teacher dashboard shows 50 courses at a time and its services
+read once, not per course; the course report applies only the latest answer; a Read-only sessions
+check), course backup and restore, background walks for bulk changes, and the Feedback Flow name
+(version `2024100718`).
 
 ### Added
+- **A Read-only sessions check on the Performance overview report** (*Site
+  administration > Reports > Performance overview*). Every web service of the
+  plugin is a read declared read-only, which core honours only when config.php
+  sets `$CFG->enable_read_only_sessions = true;`; without it the calls a
+  dashboard or report load starts together wait for each other on the session
+  lock (three calls of 2-12 ms of work finished 130, 240 and 360 ms after they
+  started, on a development site). The check warns while the flag is off, and
+  its details and the README's new *Performance: Redis and read-only sessions*
+  section say what to map first: core starts no session with the flag set
+  while a session-mode cache is kept in the session store, so the cache
+  stores move to Redis first. Measured with 500 courses, a course report's
+  calls all answered within 61-75 ms with Redis and the flag, against
+  357-458 ms without; Redis alone changed nothing (client-side performance
+  audit, finding S1). Four new strings,
+  `checkreadonlysessions` and its `_details`, `_ok` and `_warning`.
 - **Course backup and restore** (issue #118), chosen by a new setting,
   `block_feedback_tracker/backup_ledger`. By default (`rederive`) a backup
   carries nothing of the plugin, and a restore queues `rederive_course`, which
@@ -20,6 +38,18 @@ Version `2024100713`.
   the rule dates with the course start, and then rebuilds the rest. A restore follows the file, not the setting.
 
 ### Fixed
+- **The course report shows only the answer to the latest request.** Its table
+  page, drafts and academic-days strip each took the last answer to arrive, so
+  a slow answer for a filter, page, class or mode the teacher had already left
+  painted its rows under the new one: pressing Waiting then Attention could
+  leave Waiting's rows under the Attention filter, and Graded then To grade
+  could leave the graded list, each row offering "Grade", under the To grade
+  columns. Each request now carries a number and only the latest one changes
+  the screen. Switching between To grade and Graded drops the old mode's rows
+  and shows the loading skeleton until the new mode's page lands, instead of
+  drawing the old rows under the new columns, and the distribution bar shows a
+  dash rather than 0 while it has no counts. Graded mode no longer fetches the
+  drafts it does not show (client-side performance audit, findings B3 and B6).
 - **The component smoke test page (`pages/spike_react.php`) shows its labels in
   the viewer's language** (issue #122). The demo card spelt its
   card title, band labels, counts, metrics, score breakdown and button in
@@ -41,6 +71,27 @@ Version `2024100713`.
   `block_feedback_tracker`, is unchanged.
 
 ### Changed
+- **The teacher dashboard's services no longer read once per course.** The
+  scope the dashboard, the grader priority list and the insights share read
+  each visible course on its own to learn its group mode, and the SQL they
+  built had one clause per course. The courses (with their contexts) are now
+  read in one query, the courses a viewer sees whole share one `IN` list, and
+  a restricted course keeps its own course-and-groups clause. The insights'
+  week-over-week momentum, which ran two ledger queries per class, now reads
+  the two weeks once. For a manager of 500 courses (2,000 classes): the
+  dashboard 511 -> 12 reads, the priority list 507 -> 8 on every call, the
+  insights 4,514 -> 14 reads and 592 -> 211 ms on a cold cache. The answers
+  are identical, checked on both viewers of the audit's fixture (client-side
+  performance audit, finding S2).
+- **The teacher dashboard shows 50 courses at a time.** The courses table lists
+  the first 50 of the chosen order, with "Showing 50 of 500 courses" and a
+  **Show more** button that adds 50 more and moves focus to the first new row.
+  Sorting still orders every course, and the headline figures still cover all
+  of them. A viewer of hundreds of courses paid for laying out every row: at
+  500 courses the page blocked for 481-605 ms while loading and took 320-408 ms
+  to answer a sort press (client-side performance audit,
+  `docs/performance-audit/PLAN.md`, finding A1). Two new strings,
+  `dashboard_showing` and `dashboard_showmore`.
 - **Single-column ledger updates go through `set_field_select()`** (issue
   #119): the `iscurrent` and `islatest` writes of `submission_ledger` and the
   release's `timegraded` close. Two writes keep a raw `UPDATE`, each with a
