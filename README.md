@@ -121,6 +121,16 @@ All settings live under *Site administration → Plugins → Blocks → Feedback
 - **Views**: `enable_admin_view_all` (off), `enable_teacher_simulator` (off), `show_perceived_time`, `show_paused_today_indicator`, `show_peer_context` and `exclude_grader_submissions` (on), `release_stops_clock` (off), `reconcile_active` (on), `retention_active` (off), `removal_cleanup_active` (off), `removal_grace_follow_recyclebin` (on), `removal_grace_seconds` (7 days), `display_time_unit` (business hours) and the group card's `group_title_fields` and `group_subtitle_fields` (empty).
 - **Tools**: links to the calendar editor, the recompute audit log, the bulk block removal and the data reset pages.
 
+## Read-only sessions
+
+Every web service of the plugin is a read declared `readonlysession`, which core honours only when config.php sets
+`$CFG->enable_read_only_sessions = true;`. It is not an admin setting. Without it, the calls a dashboard or report
+load starts together wait for each other on the session lock: on a development site, three calls of 2 to 12 ms of
+work each finished 130, 240 and 360 ms after they started. Before enabling it, map every cache definition in session
+mode, this plugin's `dashboard_payload` among them, to a store other than the session store: core refuses to start a
+session otherwise. *Site administration > Reports > Performance overview* shows a check that says whether the flag
+is set.
+
 ## Capabilities
 
 | Capability | Context | Given by default to | What it allows |
