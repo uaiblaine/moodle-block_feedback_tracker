@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026100517`.
+Version `2026100518`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -42,6 +42,15 @@ Version `2026100517`.
   `block_feedback_tracker`, is unchanged.
 
 ### Changed
+- **The teacher dashboard shows 50 courses at a time.** The courses table lists
+  the first 50 of the chosen order, with "Showing 50 of 500 courses" and a
+  **Show more** button that adds 50 more and moves focus to the first new row.
+  Sorting still orders every course, and the headline figures still cover all
+  of them. A viewer of hundreds of courses paid for laying out every row: at
+  500 courses the page blocked for 481-605 ms while loading and took 320-408 ms
+  to answer a sort press (client-side performance audit,
+  `docs/performance-audit/PLAN.md`, finding A1). Two new strings,
+  `dashboard_showing` and `dashboard_showmore`.
 - **Single-column ledger updates go through `set_field_select()`** (issue
   #119): the `iscurrent` and `islatest` writes of `submission_ledger` and the
   release's `timegraded` close. Two writes keep a raw `UPDATE`, each with a
