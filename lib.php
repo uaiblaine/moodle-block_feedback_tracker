@@ -206,3 +206,17 @@ function block_feedback_tracker_user_preferences(): array {
         ],
     ];
 }
+
+/**
+ * The plugin's checks on the Performance overview report (report_performance).
+ *
+ * Core collects them through this callback: \core\check\manager::get_performance_checks() calls every plugin's
+ * <component>_performance_checks() in lib.php and stamps each check with the component.
+ *
+ * @return \core\check\check[] The read-only sessions check.
+ */
+function block_feedback_tracker_performance_checks(): array {
+    return [
+        new \block_feedback_tracker\check\performance\read_only_sessions(),
+    ];
+}

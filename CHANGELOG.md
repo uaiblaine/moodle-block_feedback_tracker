@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026100519`.
+Version `2026100520`.
 
 ### Added
+- **A Read-only sessions check on the Performance overview report** (*Site
+  administration > Reports > Performance overview*). Every web service of the
+  plugin is a read declared read-only, which core honours only when config.php
+  sets `$CFG->enable_read_only_sessions = true;`; without it the calls a
+  dashboard or report load starts together wait for each other on the session
+  lock (three calls of 2-12 ms of work finished 130, 240 and 360 ms after they
+  started, on a development site). The check warns while the flag is off, and
+  its details and the README's new *Read-only sessions* section say what to
+  map first (client-side performance audit, finding S1). Four new strings,
+  `checkreadonlysessions` and its `_details`, `_ok` and `_warning`.
 - **Course backup and restore** (issue #118), chosen by a new setting,
   `block_feedback_tracker/backup_ledger`. By default (`rederive`) a backup
   carries nothing of the plugin, and a restore queues `rederive_course`, which
