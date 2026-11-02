@@ -242,7 +242,7 @@ stack's session caches remapped (`mdl redis <stack>`), an environment change lef
 the staircase of S1 and block_compass's measurement (four calls on one session: p95 989 ms against 75 ms).
 
 `admin/cli/checks.php --type=performance` on m503b lists `block_feedback_tracker_read_only_sessions` as a WARNING.
-Gates: `tests/check/read_only_sessions_test.php` (the verdict follows the flag; the callback returns the check; core
+Gates: `tests/check/performance/read_only_sessions_test.php` (the verdict follows the flag; the callback returns the check; core
 collects it); mutation gates C1-C2. Sweep `--changed main`: 3/3 red on pgsql and on MariaDB (C1, C2 and R3 of the
 README), each on the tests its `#   ->` lines name. Tier 2 gate, `mdl ci moodle-block_feedback_tracker --branch
 MOODLE_503_STABLE --php 8.4` on the final tree: all steps passed, PHPUnit 932 tests (14,608 assertions).
