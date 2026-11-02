@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026100518`.
+Version `2026100519`.
 
 ### Added
 - **Course backup and restore** (issue #118), chosen by a new setting,
@@ -21,6 +21,18 @@ Version `2026100518`.
   and then rebuilds the rest. A restore follows the file, not the setting.
 
 ### Fixed
+- **The course report shows only the answer to the latest request.** Its table
+  page, drafts and academic-days strip each took the last answer to arrive, so
+  a slow answer for a filter, page, class or mode the teacher had already left
+  painted its rows under the new one: pressing Waiting then Attention could
+  leave Waiting's rows under the Attention filter, and Graded then To grade
+  could leave the graded list, each row offering "Grade", under the To grade
+  columns. Each request now carries a number and only the latest one changes
+  the screen. Switching between To grade and Graded drops the old mode's rows
+  and shows the loading skeleton until the new mode's page lands, instead of
+  drawing the old rows under the new columns, and the distribution bar shows a
+  dash rather than 0 while it has no counts. Graded mode no longer fetches the
+  drafts it does not show (client-side performance audit, findings B3 and B6).
 - **The component smoke test page (`pages/spike_react.php`) shows its labels in
   the viewer's language** (issue #122). The demo card spelt its
   card title, band labels, counts, metrics, score breakdown and button in
