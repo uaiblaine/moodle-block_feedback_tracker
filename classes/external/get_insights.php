@@ -201,22 +201,19 @@ class get_insights extends external_api {
         // First pass: any group with sharp momentum wins, no matter what the
         // 30-day trend looks like. Momentum needs MOMENTUM_MIN_GRADES grades
         // in the last 7 days, a window inside the numgraded30d count, so a
-        // group with fewer than that in the rollup window cannot qualify.
-        // Skipping those saves the two ledger queries per group that
-        // momentum_pct() issues. The filter drops only rows momentum_pct()
-        // would return null for while trend_window_days is at least 7 and the
-        // rollup row is current.
+        // group with fewer than that in the rollup window cannot qualify and
+        // is not asked about. The filter drops only rows momentum_pcts() would
+        // return null for while trend_window_days is at least 7 and the rollup
+        // row is current. Every remaining group is answered by one ledger read.
         $mingrades = \block_feedback_tracker\local\score\responsiveness_calculator::MOMENTUM_MIN_GRADES;
+        $candidates = array_filter($rows, static fn ($r) => (int) $r->numgraded30d >= $mingrades);
+        $pcts = \block_feedback_tracker\local\score\responsiveness_calculator::momentum_pcts(
+            array_map(static fn ($r) => [(int) $r->courseid, (int) $r->groupid], array_values($candidates))
+        );
         $best = null;
         $bestpct = 0.0;
-        foreach ($rows as $r) {
-            if ((int) $r->numgraded30d < $mingrades) {
-                continue;
-            }
-            $pct = \block_feedback_tracker\local\score\responsiveness_calculator::momentum_pct(
-                (int) $r->courseid,
-                (int) $r->groupid
-            );
+        foreach ($candidates as $r) {
+            $pct = $pcts[(int) $r->courseid . ':' . (int) $r->groupid] ?? null;
             if ($pct === null || $pct >= $thresh) {
                 continue;
             }

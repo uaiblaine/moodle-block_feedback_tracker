@@ -137,7 +137,9 @@ class dashboard_scope {
      * @param string $prefix     Unique named-param prefix for this call site.
      * @return array{0:string, 1:array<string, mixed>}  [wherefragment, params].
      *                           wherefragment is MATCH_ALL / MATCH_NONE, or an
-     *                           OR-joined clause already wrapped in parentheses.
+     *                           OR-joined clause already wrapped in parentheses:
+     *                           one IN over the courses the user sees whole, then
+     *                           one (course AND groups) clause per restricted course.
      */
     public static function sql_visibility(int $userid, string $coursecol, string $groupcol, string $prefix): array {
         $scope = self::visible_course_ids($userid);
@@ -148,15 +150,16 @@ class dashboard_scope {
             return [self::MATCH_NONE, []];
         }
         global $DB;
+        group_access::prime($scope, $userid);
         $clauses = [];
         $params = [];
+        $whole = [];
         $i = 0;
         foreach ($scope as $cid) {
             $visible = group_access::visible_group_ids($cid, $userid);
             $ckey = $prefix . 'c' . $i;
             if ($visible === null) {
-                $clauses[] = "$coursecol = :$ckey";
-                $params[$ckey] = $cid;
+                $whole[] = $cid;
             } else if (!empty($visible)) {
                 [$gsql, $gparams] = $DB->get_in_or_equal($visible, SQL_PARAMS_NAMED, $prefix . 'g' . $i . '_');
                 $clauses[] = "($coursecol = :$ckey AND $groupcol $gsql)";
@@ -164,6 +167,11 @@ class dashboard_scope {
                 $params += $gparams;
             }
             $i++;
+        }
+        if ($whole) {
+            [$wsql, $wparams] = $DB->get_in_or_equal($whole, SQL_PARAMS_NAMED, $prefix . 'w');
+            array_unshift($clauses, "$coursecol $wsql");
+            $params += $wparams;
         }
         if (empty($clauses)) {
             return [self::MATCH_NONE, []];
