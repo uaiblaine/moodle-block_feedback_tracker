@@ -53,6 +53,9 @@ namespace block_feedback_tracker\local\sla;
  *                 must short-circuit to an empty result.
  */
 class group_access {
+    /** @var string The course fields the group mode is read from ({@see groups_get_course_groupmode()}). */
+    private const COURSE_FIELDS = 'id, groupmode';
+
     /** @var array Per-process memo keyed by "courseid:userid". */
     private static array $memo = [];
 
@@ -70,7 +73,58 @@ class group_access {
         }
 
         global $DB;
-        $course = $DB->get_record('course', ['id' => $courseid], '*', MUST_EXIST);
+        $course = $DB->get_record('course', ['id' => $courseid], self::COURSE_FIELDS, MUST_EXIST);
+        return self::$memo[$key] = self::resolve($course, $userid);
+    }
+
+    /**
+     * Resolve and memoise the visible groups of many courses for one user, reading the courses in one query.
+     *
+     * The cross-course surfaces ask for every course of the viewer's dashboard, and a course read each made their
+     * cost grow with the viewer's courses. Courses already memoised are not read again; a course that no longer
+     * exists is left out, so a later visible_group_ids() call for it fails as it always did.
+     *
+     * @param int[] $courseids
+     * @param int $userid
+     * @return void
+     */
+    public static function prime(array $courseids, int $userid): void {
+        global $DB;
+        $missing = [];
+        foreach ($courseids as $courseid) {
+            if (!array_key_exists((int) $courseid . ':' . $userid, self::$memo)) {
+                $missing[(int) $courseid] = true;
+            }
+        }
+        if (!$missing) {
+            return;
+        }
+        // The course contexts come in the same query, so resolve() reads none either.
+        [$insql, $params] = $DB->get_in_or_equal(array_keys($missing), SQL_PARAMS_NAMED, 'gac');
+        $params['gactx'] = CONTEXT_COURSE;
+        $ctxfields = \context_helper::get_preload_record_columns_sql('ctx');
+        $courses = $DB->get_records_sql(
+            "SELECT c.id, c.groupmode, $ctxfields
+               FROM {course} c
+               JOIN {context} ctx ON ctx.instanceid = c.id AND ctx.contextlevel = :gactx
+              WHERE c.id $insql",
+            $params
+        );
+        foreach ($courses as $course) {
+            \context_helper::preload_from_record($course);
+            self::$memo[(int) $course->id . ':' . $userid] = self::resolve($course, $userid);
+        }
+    }
+
+    /**
+     * The visible group IDs for one course record (see the class docblock for the shapes).
+     *
+     * @param \stdClass $course A course row with COURSE_FIELDS.
+     * @param int $userid
+     * @return int[]|null
+     */
+    private static function resolve(\stdClass $course, int $userid): ?array {
+        $courseid = (int) $course->id;
         $ctx = \context_course::instance($courseid);
         $groupmode = (int) groups_get_course_groupmode($course);
         // Resolved through dashboard_scope so a full-site grant also lifts the
@@ -78,12 +132,12 @@ class group_access {
         $canaccessall = dashboard_scope::can_access_all_groups($ctx, $userid);
 
         if ($groupmode === NOGROUPS || $canaccessall) {
-            return self::$memo[$key] = null;
+            return null;
         }
 
         if ($groupmode === VISIBLEGROUPS) {
             $allnamed = groups_get_all_groups($courseid);
-            return self::$memo[$key] = array_map(static fn($g) => (int) $g->id, $allnamed);
+            return array_map(static fn($g) => (int) $g->id, $allnamed);
         }
 
         // SEPARATEGROUPS — only the user's own groups.
@@ -94,7 +148,7 @@ class group_access {
                 $own[(int) $gid] = true;
             }
         }
-        return self::$memo[$key] = array_keys($own);
+        return array_keys($own);
     }
 
     /**

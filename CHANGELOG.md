@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Version `2026042018`.
+Version `2026042019`.
 
 ### Added
 - **A Read-only sessions check on the Performance overview report** (*Site
@@ -69,6 +69,18 @@ Version `2026042018`.
   `block_feedback_tracker`, is unchanged.
 
 ### Changed
+- **The teacher dashboard's services no longer read once per course.** The
+  scope the dashboard, the grader priority list and the insights share read
+  each visible course on its own to learn its group mode, and the SQL they
+  built had one clause per course. The courses (with their contexts) are now
+  read in one query, the courses a viewer sees whole share one `IN` list, and
+  a restricted course keeps its own course-and-groups clause. The insights'
+  week-over-week momentum, which ran two ledger queries per class, now reads
+  the two weeks once. For a manager of 500 courses (2,000 classes): the
+  dashboard 511 -> 12 reads, the priority list 507 -> 8 on every call, the
+  insights 4,514 -> 14 reads and 592 -> 211 ms on a cold cache. The answers
+  are identical, checked on both viewers of the audit's fixture (client-side
+  performance audit, finding S2).
 - **The teacher dashboard shows 50 courses at a time.** The courses table lists
   the first 50 of the chosen order, with "Showing 50 of 500 courses" and a
   **Show more** button that adds 50 more and moves focus to the first new row.

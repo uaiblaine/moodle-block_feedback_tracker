@@ -215,4 +215,101 @@ final class group_access_test extends \advanced_testcase {
 
         $this->assertTrue(group_access::can_see_group((int) $course->id, (int) $teacher->id, 999999));
     }
+
+    /**
+     * Build one course of each kind the gate distinguishes, with one teacher enrolled in all of them who holds
+     * accessallgroups nowhere: no groups, visible groups, separate groups as a member of one group, and separate
+     * groups as a member of none.
+     *
+     * @return array [teacher id, course ids keyed by kind, the group the teacher belongs to, every visible-mode group id]
+     */
+    private function four_kinds(): array {
+        $gen = $this->getDataGenerator();
+        $courses = [
+            'none' => $this->generator()->create_tracked_course(['groupmode' => NOGROUPS]),
+            'visible' => $this->generator()->create_tracked_course(['groupmode' => VISIBLEGROUPS, 'groupmodeforce' => 1]),
+            'member' => $this->generator()->create_tracked_course(['groupmode' => SEPARATEGROUPS, 'groupmodeforce' => 1]),
+            'outsider' => $this->generator()->create_tracked_course(['groupmode' => SEPARATEGROUPS, 'groupmodeforce' => 1]),
+        ];
+        $teacher = $gen->create_user();
+        foreach ($courses as $course) {
+            $gen->enrol_user($teacher->id, $course->id, 'editingteacher');
+            $this->generator()->deny_capability(
+                'moodle/site:accessallgroups',
+                \context_course::instance($course->id),
+                'editingteacher'
+            );
+        }
+        $visiblegroups = [
+            (int) $gen->create_group(['courseid' => $courses['visible']->id])->id,
+            (int) $gen->create_group(['courseid' => $courses['visible']->id])->id,
+        ];
+        $own = $gen->create_group(['courseid' => $courses['member']->id]);
+        $gen->create_group(['courseid' => $courses['member']->id]);
+        $gen->create_group(['courseid' => $courses['outsider']->id]);
+        groups_add_member($own->id, $teacher->id);
+        $ids = array_map(static fn($c) => (int) $c->id, $courses);
+        return [(int) $teacher->id, $ids, (int) $own->id, $visiblegroups];
+    }
+
+    /**
+     * prime() leaves the same answer in the memo as visible_group_ids() computes alone, for every kind of course.
+     *
+     * @return void
+     */
+    public function test_prime_answers_as_each_course_alone(): void {
+        $this->resetAfterTest();
+        [$teacherid, $ids, $own, $visiblegroups] = $this->four_kinds();
+        group_access::reset_memo();
+        $alone = [];
+        foreach ($ids as $kind => $courseid) {
+            $alone[$kind] = group_access::visible_group_ids($courseid, $teacherid);
+        }
+        sort($visiblegroups);
+        $this->assertNull($alone['none']);
+        $sorted = $alone['visible'];
+        sort($sorted);
+        $this->assertSame($visiblegroups, $sorted);
+        $this->assertSame([$own], $alone['member']);
+        $this->assertSame([], $alone['outsider']);
+
+        group_access::reset_memo();
+        group_access::prime(array_values($ids), $teacherid);
+        global $DB;
+        $reads = $DB->perf_get_reads();
+        foreach ($ids as $kind => $courseid) {
+            $this->assertSame($alone[$kind], group_access::visible_group_ids($courseid, $teacherid), $kind);
+        }
+        $this->assertSame($reads, $DB->perf_get_reads(), 'prime() must leave every answer in the memo');
+    }
+
+    /**
+     * prime() reads the courses in one query, so its cost does not grow with the course count.
+     *
+     * @return void
+     */
+    public function test_prime_reads_do_not_grow_with_the_courses(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $teacher = $this->getDataGenerator()->create_user();
+        $courseids = [];
+        for ($i = 0; $i < 8; $i++) {
+            $course = $this->generator()->create_tracked_course(['groupmode' => NOGROUPS]);
+            $this->getDataGenerator()->enrol_user($teacher->id, $course->id, 'editingteacher');
+            $courseids[] = (int) $course->id;
+        }
+        // As in a web service call, the viewer is the current user: has_capability() checks the dirty-user flag
+        // on every call for anyone else.
+        $this->setUser($teacher);
+        $measure = function (array $ids) use ($DB, $teacher): int {
+            group_access::reset_memo();
+            \core\context_helper::reset_caches();
+            $before = $DB->perf_get_reads();
+            group_access::prime($ids, (int) $teacher->id);
+            return $DB->perf_get_reads() - $before;
+        };
+        // A first run fills the caches a cold process would fill once.
+        $measure($courseids);
+        $this->assertSame($measure(array_slice($courseids, 0, 2)), $measure($courseids));
+    }
 }
