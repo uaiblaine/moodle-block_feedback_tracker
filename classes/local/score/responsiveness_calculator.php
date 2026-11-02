@@ -173,17 +173,8 @@ class responsiveness_calculator {
      * by the dashboard's "Most improved" insight to spot sharp recoveries
      * before the 30-day trend catches up. Never feeds the score.
      *
-     * Both windows are 7-day slices of timegraded ending at `$now`:
-     *   - recent window: [now - 7d, now)
-     *   - prior  window: [now - 14d, now - 7d)
-     *
-     * Returns the % change of the recent median vs the prior median, negative
-     * meaning faster turnaround. Returns null when either window has fewer
-     * than {@see self::MOMENTUM_MIN_GRADES} grades (too small a sample) or the
-     * prior median is not positive.
-     *
-     * Runs up to two ledger queries per call and caches nothing; its caller
-     * {@see \block_feedback_tracker\external\get_insights} caches its result.
+     * One pair of {@see self::momentum_pcts()}, which states the windows and
+     * the rules.
      *
      * @param int $courseid
      * @param int $groupid
@@ -191,60 +182,85 @@ class responsiveness_calculator {
      * @return float|null
      */
     public static function momentum_pct(int $courseid, int $groupid, ?int $now = null): ?float {
+        return self::momentum_pcts([[$courseid, $groupid]], $now)[$courseid . ':' . $groupid];
+    }
+
+    /**
+     * Week-over-week change in median effective hours for many groups, read in one ledger query.
+     *
+     * Both windows are 7-day slices of timegraded ending at `$now`:
+     *   - recent window: [now - 7d, now)
+     *   - prior  window: [now - 14d, now - 7d)
+     *
+     * Each value is the % change of the recent median vs the prior median, negative
+     * meaning faster turnaround, or null when either window has fewer than
+     * {@see self::MOMENTUM_MIN_GRADES} grades (too small a sample) or the prior
+     * median is not positive. Caches nothing; its caller
+     * {@see \block_feedback_tracker\external\get_insights} caches its result.
+     *
+     * @param array $pairs List of [courseid, groupid] pairs.
+     * @param int|null $now
+     * @return array<string, float|null> Keyed "courseid:groupid", one entry per pair.
+     */
+    public static function momentum_pcts(array $pairs, ?int $now = null): array {
+        global $DB;
         $now = $now ?? time();
         $weeksec = 7 * 86400;
         $recentstart = $now - $weeksec;
         $priorstart = $now - 2 * $weeksec;
 
-        $recentvals = self::weekly_effective_hours($courseid, $groupid, $recentstart, $now);
-        if (count($recentvals) < self::MOMENTUM_MIN_GRADES) {
-            return null;
+        $recent = [];
+        $prior = [];
+        $courseids = [];
+        foreach ($pairs as [$courseid, $groupid]) {
+            $key = (int) $courseid . ':' . (int) $groupid;
+            $recent[$key] = [];
+            $prior[$key] = [];
+            $courseids[(int) $courseid] = true;
         }
-        $priorvals = self::weekly_effective_hours($courseid, $groupid, $priorstart, $recentstart);
-        if (count($priorvals) < self::MOMENTUM_MIN_GRADES) {
-            return null;
+        if (!$courseids) {
+            return [];
         }
-        $recentmedian = \block_feedback_tracker\local\sla\stats::median($recentvals);
-        $priormedian = \block_feedback_tracker\local\sla\stats::median($priorvals);
-        if ($priormedian === null || $priormedian <= 0.0) {
-            return null;
-        }
-        return round(100.0 * ($recentmedian - $priormedian) / $priormedian, 2);
-    }
 
-    /**
-     * Fetch effective-hours values for grades in [$start, $end) for one
-     * (course, group). Used by {@see self::momentum_pct()}.
-     *
-     * @param int $courseid
-     * @param int $groupid
-     * @param int $start
-     * @param int $end
-     * @return array<int, float>
-     */
-    private static function weekly_effective_hours(int $courseid, int $groupid, int $start, int $end): array {
-        global $DB;
-        $rows = $DB->get_records_select(
+        [$insql, $params] = $DB->get_in_or_equal(array_keys($courseids), SQL_PARAMS_NAMED, 'mc');
+        $params += [
+            'start' => $priorstart,
+            'end' => $now,
+            'substatus' => \block_feedback_tracker\local\sla\submission_status::SUBMITTED,
+        ];
+        $rows = $DB->get_recordset_select(
             'block_feedback_tracker_sub',
-            'courseid = :courseid AND groupid = :groupid'
-                . ' AND timegraded IS NOT NULL'
-                . ' AND timegraded >= :start AND timegraded < :end'
+            "courseid $insql AND timegraded IS NOT NULL AND timegraded >= :start AND timegraded < :end"
                 . ' AND submissionstatus = :substatus',
-            [
-                'courseid' => $courseid,
-                'groupid'  => $groupid,
-                'start'    => $start,
-                'end'      => $end,
-                'substatus' => \block_feedback_tracker\local\sla\submission_status::SUBMITTED,
-            ],
+            $params,
             '',
-            'id, effectivehours'
+            'id, courseid, groupid, timegraded, effectivehours'
         );
-        $out = [];
         foreach ($rows as $r) {
-            if ($r->effectivehours !== null) {
-                $out[] = (float) $r->effectivehours;
+            $key = (int) $r->courseid . ':' . (int) $r->groupid;
+            if (!array_key_exists($key, $recent) || $r->effectivehours === null) {
+                continue;
             }
+            if ((int) $r->timegraded >= $recentstart) {
+                $recent[$key][] = (float) $r->effectivehours;
+            } else {
+                $prior[$key][] = (float) $r->effectivehours;
+            }
+        }
+        $rows->close();
+
+        $out = [];
+        foreach ($recent as $key => $recentvals) {
+            $out[$key] = null;
+            if (count($recentvals) < self::MOMENTUM_MIN_GRADES || count($prior[$key]) < self::MOMENTUM_MIN_GRADES) {
+                continue;
+            }
+            $recentmedian = \block_feedback_tracker\local\sla\stats::median($recentvals);
+            $priormedian = \block_feedback_tracker\local\sla\stats::median($prior[$key]);
+            if ($priormedian === null || $priormedian <= 0.0) {
+                continue;
+            }
+            $out[$key] = round(100.0 * ($recentmedian - $priormedian) / $priormedian, 2);
         }
         return $out;
     }
